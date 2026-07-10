@@ -5,12 +5,18 @@ import type {
   LatLng,
 } from "@loopforge/osm-types";
 import {
-  fetchRoundTrip,
+  fetchRouteThroughWaypoints,
   getBrouterConfig,
   surfaceBreakdownFromSegments,
 } from "@loopforge/brouter";
 import { buildGpx } from "@loopforge/gpx";
 import { scoreRoute } from "@loopforge/scoring";
+import {
+  backtrackRatio,
+  buildLoopWaypoints,
+  overlapRatio,
+  scoreLoopQuality,
+} from "./loop-waypoints";
 
 const DIRECTION_BEARING: Record<Direction, number> = {
   N: 0,
@@ -175,19 +181,59 @@ async function generateRouteWithBrouter(
     throw new Error("BRouter is not configured");
   }
 
-  const routed = await fetchRoundTrip(config, {
-    start: request.start,
-    bikeType: request.bikeType,
-    distanceKm: request.distanceKm,
-    direction: request.direction,
-  });
+  const variants = 8;
+  let best: Awaited<ReturnType<typeof fetchRouteThroughWaypoints>> | null = null;
+  let bestScore = Infinity;
 
-  return buildGeneratedRoute(request, routed.coordinates, {
+  for (let variant = 0; variant < variants; variant++) {
+    try {
+      const waypoints = buildLoopWaypoints(
+        request.start,
+        request.distanceKm,
+        request.direction,
+        variant,
+      );
+      const routed = await fetchRouteThroughWaypoints(config, {
+        start: request.start,
+        bikeType: request.bikeType,
+        waypoints,
+      });
+
+      const quality = scoreLoopQuality(
+        routed.coordinates,
+        request.distanceKm,
+        routed.distanceKm,
+      );
+
+      if (quality < bestScore) {
+        bestScore = quality;
+        best = routed;
+      }
+
+      // Good enough: low overlap and minimal backtracking
+      if (
+        overlapRatio(routed.coordinates) < 0.08 &&
+        backtrackRatio(routed.coordinates) < 0.05 &&
+        Math.abs(routed.distanceKm - request.distanceKm) / request.distanceKm <
+          0.2
+      ) {
+        break;
+      }
+    } catch {
+      // try next variant
+    }
+  }
+
+  if (!best) {
+    throw new Error("Could not generate loop through waypoints");
+  }
+
+  return buildGeneratedRoute(request, best.coordinates, {
     placeholder: false,
-    elevationGainM: routed.elevationGainM,
-    segments: routed.segments,
-    mapGeojson: routed.mapGeojson ?? undefined,
-    gpx: routed.gpx || undefined,
+    elevationGainM: best.elevationGainM,
+    segments: best.segments,
+    mapGeojson: best.mapGeojson ?? undefined,
+    gpx: best.gpx || undefined,
   });
 }
 

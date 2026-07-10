@@ -29,6 +29,12 @@ export interface RoundTripParams {
   direction: Direction;
 }
 
+export interface WaypointRouteParams {
+  start: LatLng;
+  bikeType: BikeType;
+  waypoints: LatLng[];
+}
+
 export interface BrouterRouteResult {
   coordinates: [number, number][];
   distanceKm: number;
@@ -53,8 +59,10 @@ interface BrouterGeoJson {
 function parseWayTags(raw: string): OsmTags {
   const tags: OsmTags = {};
   for (const part of raw.split(" ")) {
-    const [key, value] = part.split("=");
-    if (!key || !value) continue;
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    const key = part.slice(0, eq);
+    const value = part.slice(eq + 1);
     if (key === "highway") tags.highway = value;
     if (key === "surface") tags.surface = value;
     if (key === "tracktype") tags.tracktype = value;
@@ -103,6 +111,16 @@ function distanceFromCoordinates(coords: [number, number][]): number {
   return meters;
 }
 
+function filterCoordinates(coords: [number, number][]): [number, number][] {
+  return coords.filter(
+    ([lng, lat]) =>
+      Number.isFinite(lng) &&
+      Number.isFinite(lat) &&
+      Math.abs(lat) <= 90 &&
+      !(lng === 0 && lat === 0),
+  );
+}
+
 function surfaceBreakdownFromSegments(
   segments: { tags: OsmTags; distanceM: number }[],
 ): import("@loopforge/osm-types").SurfaceBreakdownItem[] {
@@ -131,6 +149,82 @@ function surfaceBreakdownFromSegments(
       color,
     }))
     .sort((a, b) => b.share - a.share);
+}
+
+async function fetchBrouterRoute(
+  config: BrouterConfig,
+  bikeType: BikeType,
+  points: LatLng[],
+  trackName: string,
+): Promise<BrouterRouteResult> {
+  const lonlats = points.map((p) => `${p.lng},${p.lat}`).join("|");
+  const query = new URLSearchParams({
+    lonlats,
+    profile: BIKE_PROFILE[bikeType],
+    format: "geojson",
+  });
+
+  const response = await fetch(`${config.baseUrl}/brouter?${query.toString()}`, {
+    signal: AbortSignal.timeout(120_000),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text.trim() || `BRouter HTTP ${response.status}`);
+  }
+
+  const geojson = (await response.json()) as BrouterGeoJson;
+  const feature = geojson.features[0];
+  if (!feature?.geometry?.coordinates?.length) {
+    throw new Error("BRouter returned an empty route");
+  }
+
+  const coordinates = filterCoordinates(feature.geometry.coordinates);
+  if (coordinates.length < 2) {
+    throw new Error("BRouter returned invalid route coordinates");
+  }
+
+  const messages = feature.properties.messages as string[][] | undefined;
+  const segments = parseSegmentsFromMessages(messages);
+  const mapGeojson = buildColoredGeoJson(messages);
+  const distanceKm = distanceFromCoordinates(coordinates) / 1000;
+  const elevationGainM = Number(feature.properties["filtered ascend"] ?? 0);
+
+  const gpxResponse = await fetch(
+    `${config.baseUrl}/brouter?${new URLSearchParams({
+      ...Object.fromEntries(query),
+      format: "gpx",
+      trackname: trackName,
+    }).toString()}`,
+    { signal: AbortSignal.timeout(120_000) },
+  );
+
+  const gpx = gpxResponse.ok ? await gpxResponse.text() : "";
+
+  return {
+    coordinates,
+    distanceKm,
+    elevationGainM,
+    segments,
+    mapGeojson,
+    gpx,
+  };
+}
+
+/** Route through explicit waypoints and return to start (closed loop). */
+export async function fetchRouteThroughWaypoints(
+  config: BrouterConfig,
+  params: WaypointRouteParams,
+): Promise<BrouterRouteResult> {
+  await ensureBrouterServer(config);
+
+  const loop = [params.start, ...params.waypoints, params.start];
+  return fetchBrouterRoute(
+    config,
+    params.bikeType,
+    loop,
+    `Loopforge ${params.bikeType}`,
+  );
 }
 
 async function fetchRoundTripAttempt(
@@ -168,13 +262,7 @@ async function fetchRoundTripAttempt(
     throw new Error("BRouter returned an empty route");
   }
 
-  const coordinates = feature.geometry.coordinates.filter(
-    ([lng, lat]) =>
-      Number.isFinite(lng) &&
-      Number.isFinite(lat) &&
-      Math.abs(lat) <= 90 &&
-      !(lng === 0 && lat === 0),
-  );
+  const coordinates = filterCoordinates(feature.geometry.coordinates);
   if (coordinates.length < 2) {
     throw new Error("BRouter returned invalid route coordinates");
   }
@@ -205,6 +293,7 @@ async function fetchRoundTripAttempt(
   };
 }
 
+/** Legacy BRouter round-trip mode — can produce backtracking spurs. */
 export async function fetchRoundTrip(
   config: BrouterConfig,
   params: RoundTripParams,
