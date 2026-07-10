@@ -107,6 +107,51 @@ export function getSurfaceStyle(
     };
   }
 
+  if (tags.highway === "footway") {
+    return {
+      category: "path",
+      label: tags.footway === "crossing" ? "Przejście dla pieszych" : "Chodnik",
+      color: "#22d3ee",
+      dash: [1.5, 2],
+    };
+  }
+
+  if (tags.highway === "pedestrian") {
+    return {
+      category: "path",
+      label: "Strefa piesza",
+      color: "#22d3ee",
+      dash: [1.5, 2],
+    };
+  }
+
+  if (tags.highway === "steps") {
+    return {
+      category: "path",
+      label: "Schody",
+      color: "#f87171",
+      dash: [1, 1.5],
+    };
+  }
+
+  if (tags.highway === "service") {
+    return {
+      category: "residential",
+      label: "Droga dojazdowa",
+      color: "#78716c",
+      dash: DASH.residential,
+    };
+  }
+
+  if (tags.highway === "unclassified") {
+    return {
+      category: "residential",
+      label: "Droga nieklasyfikowana",
+      color: "#a8a29e",
+      dash: DASH.residential,
+    };
+  }
+
   if (tags.highway === "path" || tags.highway === "bridleway") {
     return {
       category: "path",
@@ -155,6 +200,8 @@ export const SURFACE_LEGEND: Array<{
   { label: "Utwardzony szuter", color: "#eab308", category: "compacted", dash: "—  —" },
   { label: "Ziemia / teren", color: "#b45309", category: "dirt", dash: "· · ·" },
   { label: "Ścieżka / trail", color: "#84cc16", category: "path", dash: "· ·" },
+  { label: "Chodnik / strefa piesza", color: "#22d3ee", category: "path", dash: "· ·" },
+  { label: "Schody", color: "#f87171", category: "path", dash: "· ·" },
   { label: "Leśna ścieżka", color: "#15803d", category: "forest", dash: "— · —" },
   { label: "Inne / brak tagu OSM", color: "#c084fc", category: "unknown", dash: "— —" },
 ];
@@ -164,6 +211,12 @@ export function colorForBreakdownLabel(label: string): string {
     Asfalt: "#94a3b8",
     Utwardzona: "#94a3b8",
     Beton: "#cbd5e1",
+    Chodnik: "#22d3ee",
+    "Przejście dla pieszych": "#22d3ee",
+    "Strefa piesza": "#22d3ee",
+    Schody: "#f87171",
+    "Droga dojazdowa": "#78716c",
+    "Droga nieklasyfikowana": "#a8a29e",
     "Droga główna": "#64748b",
     "Droga lokalna": "#a8a29e",
     "Polna droga": "#f59e0b",
