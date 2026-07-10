@@ -12,12 +12,22 @@ export type Direction =
 
 export type RideProfile = "flow" | "technical" | "fast";
 
+import type { SurfaceCategory } from "./surface-style";
+export type { SurfaceCategory, SurfaceStyle } from "./surface-style";
+export {
+  getSurfaceStyle,
+  parseOsmTagString,
+  colorForBreakdownLabel,
+  SURFACE_LEGEND,
+} from "./surface-style";
+
 export interface LatLng {
   lat: number;
   lng: number;
 }
 
 export interface OsmTags {
+  [key: string]: string | undefined;
   highway?: string;
   surface?: string;
   tracktype?: string;
@@ -60,7 +70,10 @@ export interface RouteSegmentFeature {
   type: "Feature";
   properties: {
     surface: string;
+    label: string;
+    category: SurfaceCategory;
     color: string;
+    dash: number[];
     highway?: string;
   };
   geometry: LineStringGeometry;

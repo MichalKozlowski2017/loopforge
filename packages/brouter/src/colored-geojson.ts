@@ -1,54 +1,8 @@
 import type { OsmTags, RouteMapGeoJson, RouteSegmentFeature } from "@loopforge/osm-types";
+import { getSurfaceStyle, parseOsmTagString } from "@loopforge/osm-types";
 
-const SURFACE_COLORS: Record<string, string> = {
-  asphalt: "#94a3b8",
-  paved: "#94a3b8",
-  concrete: "#cbd5e1",
-  gravel: "#f59e0b",
-  compacted: "#eab308",
-  fine_gravel: "#fbbf24",
-  dirt: "#b45309",
-  ground: "#92400e",
-  grass: "#65a30d",
-  sand: "#fcd34d",
-  cobblestone: "#78716c",
-  unpaved: "#d97706",
-  mud: "#78350f",
-};
-
-function parseWayTags(raw: string): OsmTags {
-  const tags: OsmTags = {};
-  for (const part of raw.split(" ")) {
-    const eq = part.indexOf("=");
-    if (eq === -1) continue;
-    const key = part.slice(0, eq);
-    const value = part.slice(eq + 1);
-    if (key === "highway") tags.highway = value;
-    if (key === "surface") tags.surface = value;
-    if (key === "tracktype") tags.tracktype = value;
-    if (key === "mtb:scale") tags["mtb:scale"] = value;
-  }
-  return tags;
-}
-
-export function colorForSurface(tags: OsmTags): string {
-  if (tags.surface && SURFACE_COLORS[tags.surface]) {
-    return SURFACE_COLORS[tags.surface];
-  }
-  if (tags.highway === "cycleway") return "#22c55e";
-  if (tags.highway === "track") return "#f59e0b";
-  if (tags.highway === "path" || tags.highway === "bridleway") return "#84cc16";
-  if (tags.highway === "primary" || tags.highway === "secondary") {
-    return "#64748b";
-  }
-  if (tags.highway === "tertiary" || tags.highway === "residential") {
-    return "#a8a29e";
-  }
-  return "#c084fc";
-}
-
-function tagsKey(tags: OsmTags): string {
-  return `${tags.highway ?? ""}|${tags.surface ?? ""}`;
+function tagsKey(tags: Record<string, string>): string {
+  return `${tags.highway ?? ""}|${tags.surface ?? ""}|${tags.forest ?? ""}|${tags.natural ?? ""}`;
 }
 
 function microToCoord(lon: string, lat: string): [number, number] {
@@ -62,17 +16,20 @@ export function buildColoredGeoJson(
 
   const features: RouteSegmentFeature[] = [];
   let currentCoords: [number, number][] = [];
-  let currentTags: OsmTags = {};
+  let currentTags: Record<string, string> = {};
   let currentKey = "";
 
   const flush = () => {
     if (currentCoords.length < 2) return;
-    const label = currentTags.surface ?? currentTags.highway ?? "nieznane";
+    const style = getSurfaceStyle(currentTags as OsmTags);
     features.push({
       type: "Feature",
       properties: {
-        surface: label,
-        color: colorForSurface(currentTags),
+        surface: currentTags.surface ?? currentTags.highway ?? "nieznane",
+        label: style.label,
+        category: style.category,
+        color: style.color,
+        dash: style.dash,
         highway: currentTags.highway,
       },
       geometry: {
@@ -89,7 +46,7 @@ export function buildColoredGeoJson(
     const wayTags = row[9] ?? "";
     if (!lon || !lat || !wayTags) continue;
 
-    const tags = parseWayTags(wayTags);
+    const tags = parseOsmTagString(wayTags);
     const key = tagsKey(tags);
     const coord = microToCoord(lon, lat);
 
@@ -111,12 +68,4 @@ export function buildColoredGeoJson(
   return { type: "FeatureCollection", features };
 }
 
-export const SURFACE_LEGEND = [
-  { label: "Asfalt", color: "#94a3b8" },
-  { label: "Ścieżka rowerowa", color: "#22c55e" },
-  { label: "Gravel / szuter", color: "#f59e0b" },
-  { label: "Utwardzony", color: "#eab308" },
-  { label: "Ziemia / dirt", color: "#b45309" },
-  { label: "Ścieżka / trail", color: "#84cc16" },
-  { label: "Inne", color: "#c084fc" },
-] as const;
+export { getSurfaceStyle as colorForSurface } from "@loopforge/osm-types";

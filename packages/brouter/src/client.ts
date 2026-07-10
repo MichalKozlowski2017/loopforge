@@ -1,4 +1,5 @@
 import type { BikeType, Direction, LatLng, OsmTags, RouteMapGeoJson } from "@loopforge/osm-types";
+import { getSurfaceStyle } from "@loopforge/osm-types";
 import type { BrouterConfig } from "./config";
 import { buildColoredGeoJson } from "./colored-geojson";
 import { ensureBrouterServer } from "./server";
@@ -108,8 +109,8 @@ function surfaceBreakdownFromSegments(
   const totals: Record<string, number> = {};
   let sum = 0;
   for (const segment of segments) {
-    const key = segment.tags.surface ?? segment.tags.highway ?? "unknown";
-    totals[key] = (totals[key] ?? 0) + segment.distanceM;
+    const { label } = getSurfaceStyle(segment.tags);
+    totals[label] = (totals[label] ?? 0) + segment.distanceM;
     sum += segment.distanceM;
   }
   if (sum === 0) return totals;
