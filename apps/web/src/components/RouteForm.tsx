@@ -14,8 +14,12 @@ export interface RouteFormValues {
 interface RouteFormProps {
   values: RouteFormValues;
   loading: boolean;
+  pickOnMap: boolean;
+  locationStatus: "loading" | "ready" | "denied" | "unavailable" | "manual";
   onChange: (values: RouteFormValues) => void;
   onSubmit: () => void;
+  onUseMyLocation: () => void;
+  onTogglePickOnMap: () => void;
 }
 
 const BIKE_TYPES: { value: BikeType; label: string }[] = [
@@ -45,8 +49,12 @@ const PROFILES: { value: RideProfile; label: string; hint: string }[] = [
 export function RouteForm({
   values,
   loading,
+  pickOnMap,
+  locationStatus,
   onChange,
   onSubmit,
+  onUseMyLocation,
+  onTogglePickOnMap,
 }: RouteFormProps) {
   return (
     <form
@@ -144,43 +152,81 @@ export function RouteForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label
-            htmlFor="lat"
-            className="mb-2 block text-sm font-medium text-zinc-300"
+      <div>
+        <label className="mb-2 block text-sm font-medium text-zinc-300">
+          Punkt startu
+        </label>
+        <div className="mb-2 flex gap-2">
+          <button
+            type="button"
+            onClick={onUseMyLocation}
+            disabled={locationStatus === "loading"}
+            className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${
+              locationStatus === "ready"
+                ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-300"
+                : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-500"
+            }`}
           >
-            Szer. geogr.
-          </label>
-          <input
-            id="lat"
-            type="number"
-            step="0.0001"
-            value={values.lat}
-            onChange={(event) =>
-              onChange({ ...values, lat: Number(event.target.value) })
-            }
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
-          />
-        </div>
-        <div>
-          <label
-            htmlFor="lng"
-            className="mb-2 block text-sm font-medium text-zinc-300"
+            {locationStatus === "loading" ? "Szukam GPS…" : "Moja lokalizacja"}
+          </button>
+          <button
+            type="button"
+            onClick={onTogglePickOnMap}
+            className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${
+              pickOnMap
+                ? "border-emerald-500 bg-emerald-500/10 text-emerald-300"
+                : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-500"
+            }`}
           >
-            Dł. geogr.
-          </label>
-          <input
-            id="lng"
-            type="number"
-            step="0.0001"
-            value={values.lng}
-            onChange={(event) =>
-              onChange({ ...values, lng: Number(event.target.value) })
-            }
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
-          />
+            {pickOnMap ? "Kliknij mapę…" : "Ustaw na mapie"}
+          </button>
         </div>
+        {locationStatus === "denied" ? (
+          <p className="mb-2 text-xs text-amber-400/90">
+            Brak dostępu do lokalizacji — ustaw punkt na mapie lub wpisz współrzędne.
+          </p>
+        ) : null}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label
+              htmlFor="lat"
+              className="mb-2 block text-xs font-medium text-zinc-400"
+            >
+              Szer. geogr.
+            </label>
+            <input
+              id="lat"
+              type="number"
+              step="0.0001"
+              value={values.lat}
+              onChange={(event) =>
+                onChange({ ...values, lat: Number(event.target.value) })
+              }
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="lng"
+              className="mb-2 block text-xs font-medium text-zinc-400"
+            >
+              Dł. geogr.
+            </label>
+            <input
+              id="lng"
+              type="number"
+              step="0.0001"
+              value={values.lng}
+              onChange={(event) =>
+                onChange({ ...values, lng: Number(event.target.value) })
+              }
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+        <p className="mt-1.5 text-[11px] text-zinc-500">
+          Zielony marker na mapie — przeciągnij lub kliknij „Ustaw na mapie”.
+        </p>
       </div>
 
       <button

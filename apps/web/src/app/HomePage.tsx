@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { StoredRoute } from "@loopforge/osm-types";
 import {
   RouteForm,
@@ -11,6 +11,7 @@ import {
 } from "@/components/RouteForm";
 import { SurfaceBreakdown } from "@/components/SurfaceBreakdown";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
+import { useGeolocation } from "@/lib/use-geolocation";
 
 const MapView = dynamic(
   () => import("@/components/MapView").then((mod) => mod.MapView),
@@ -22,13 +23,14 @@ const MapView = dynamic(
   },
 );
 
+const FALLBACK_START = { lat: 52.2297, lng: 21.0122 };
+
 const DEFAULT_FORM: RouteFormValues = {
   bikeType: "gravel",
   distanceKm: 45,
   direction: "NE",
   profile: "flow",
-  lat: 52.2297,
-  lng: 21.0122,
+  ...FALLBACK_START,
 };
 
 export default function HomePage() {
@@ -40,6 +42,29 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
+  const [pickOnMap, setPickOnMap] = useState(false);
+  const [locationMode, setLocationMode] = useState<
+    "loading" | "ready" | "denied" | "unavailable" | "manual"
+  >("loading");
+
+  const applyStart = useCallback((lat: number, lng: number) => {
+    setForm((current) => ({ ...current, lat, lng }));
+  }, []);
+
+  const { status: geoStatus, refresh: refreshGeolocation } = useGeolocation(
+    (lat, lng) => {
+      applyStart(lat, lng);
+      setLocationMode("ready");
+    },
+    !routeIdFromUrl,
+  );
+
+  useEffect(() => {
+    if (routeIdFromUrl) return;
+    if (geoStatus === "denied") setLocationMode("denied");
+    if (geoStatus === "unavailable") setLocationMode("unavailable");
+    if (geoStatus === "loading") setLocationMode("loading");
+  }, [geoStatus, routeIdFromUrl]);
 
   useEffect(() => {
     if (!routeIdFromUrl) return;
@@ -58,12 +83,31 @@ export default function HomePage() {
           lat: data.start.lat,
           lng: data.start.lng,
         });
+        setLocationMode("manual");
       });
   }, [routeIdFromUrl]);
+
+  function handleStartChange(start: { lat: number; lng: number }) {
+    applyStart(start.lat, start.lng);
+    setLocationMode("manual");
+    setPickOnMap(false);
+  }
+
+  function handleFormChange(values: RouteFormValues) {
+    setForm(values);
+    setLocationMode("manual");
+  }
+
+  function handleUseMyLocation() {
+    setPickOnMap(false);
+    setLocationMode("loading");
+    refreshGeolocation();
+  }
 
   async function handleGenerate() {
     setLoading(true);
     setError(null);
+    setPickOnMap(false);
 
     try {
       const response = await fetch("/api/routes/generate", {
@@ -114,15 +158,19 @@ export default function HomePage() {
         <div className="mb-6">
           <h1 className="text-2xl font-semibold">Kuźnia pętli</h1>
           <p className="mt-2 text-sm text-zinc-400">
-            Generuj pętlę po drogach OSM — wymaga lokalnego BRoutera.
+            Start domyślnie z GPS. Ustaw marker na mapie lub przeciągnij go.
           </p>
         </div>
 
         <RouteForm
           values={form}
           loading={loading}
-          onChange={setForm}
+          pickOnMap={pickOnMap}
+          locationStatus={locationMode}
+          onChange={handleFormChange}
           onSubmit={handleGenerate}
+          onUseMyLocation={handleUseMyLocation}
+          onTogglePickOnMap={() => setPickOnMap((active) => !active)}
         />
 
         {error ? (
@@ -217,8 +265,11 @@ export default function HomePage() {
       <section className="relative min-h-[50vh] flex-1 p-4 lg:min-h-0">
         <MapView
           center={[form.lng, form.lat]}
+          start={{ lat: form.lat, lng: form.lng }}
           route={route?.geojson ?? null}
           mapGeojson={route?.mapGeojson ?? null}
+          pickStart={pickOnMap}
+          onStartChange={handleStartChange}
         />
         {route?.mapGeojson ? <SurfaceLegend /> : null}
       </section>

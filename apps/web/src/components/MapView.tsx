@@ -4,10 +4,18 @@ import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import type { RouteFeature, RouteMapGeoJson } from "@loopforge/osm-types";
 
+export interface StartPoint {
+  lat: number;
+  lng: number;
+}
+
 interface MapViewProps {
   center: [number, number];
+  start: StartPoint;
   route?: RouteFeature | null;
   mapGeojson?: RouteMapGeoJson | null;
+  pickStart?: boolean;
+  onStartChange?: (start: StartPoint) => void;
 }
 
 function fitToCoordinates(
@@ -22,10 +30,20 @@ function fitToCoordinates(
   map.fitBounds(bounds, { padding: 48, maxZoom: 13 });
 }
 
-export function MapView({ center, route, mapGeojson }: MapViewProps) {
+export function MapView({
+  center,
+  start,
+  route,
+  mapGeojson,
+  pickStart = false,
+  onStartChange,
+}: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
+  const markerRef = useRef<maplibregl.Marker | null>(null);
+  const onStartChangeRef = useRef(onStartChange);
+  onStartChangeRef.current = onStartChange;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -34,7 +52,7 @@ export function MapView({ center, route, mapGeojson }: MapViewProps) {
       container: containerRef.current,
       style: "https://tiles.openfreemap.org/styles/liberty",
       center,
-      zoom: 11,
+      zoom: 13,
     });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
@@ -46,12 +64,65 @@ export function MapView({ center, route, mapGeojson }: MapViewProps) {
     });
 
     return () => {
+      markerRef.current?.remove();
+      markerRef.current = null;
       popupRef.current?.remove();
       popupRef.current = null;
       map.remove();
       mapRef.current = null;
     };
-  }, [center]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- init once
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (!markerRef.current) {
+      const marker = new maplibregl.Marker({
+        color: "#10b981",
+        draggable: true,
+      })
+        .setLngLat([start.lng, start.lat])
+        .addTo(map);
+
+      marker.on("dragend", () => {
+        const { lat, lng } = marker.getLngLat();
+        onStartChangeRef.current?.({ lat, lng });
+      });
+
+      markerRef.current = marker;
+    } else {
+      markerRef.current.setLngLat([start.lng, start.lat]);
+    }
+  }, [start.lat, start.lng]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const canvas = map.getCanvas();
+    canvas.style.cursor = pickStart ? "crosshair" : "";
+
+    const handleClick = (event: maplibregl.MapMouseEvent) => {
+      if (!pickStart) return;
+      const { lat, lng } = event.lngLat;
+      onStartChangeRef.current?.({ lat, lng });
+    };
+
+    map.on("click", handleClick);
+    return () => {
+      map.off("click", handleClick);
+      canvas.style.cursor = "";
+    };
+  }, [pickStart]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || route || mapGeojson?.features.length) return;
+
+    map.flyTo({ center: [start.lng, start.lat], zoom: Math.max(map.getZoom(), 12) });
+  }, [start.lng, start.lat, route, mapGeojson]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -102,14 +173,14 @@ export function MapView({ center, route, mapGeojson }: MapViewProps) {
           },
         });
 
-        map.on("mouseenter", segmentsLayerId, () => {
+        const onMouseEnter = () => {
           map.getCanvas().style.cursor = "pointer";
-        });
-        map.on("mouseleave", segmentsLayerId, () => {
-          map.getCanvas().style.cursor = "";
+        };
+        const onMouseLeave = () => {
+          map.getCanvas().style.cursor = pickStart ? "crosshair" : "";
           popupRef.current?.remove();
-        });
-        map.on("mousemove", segmentsLayerId, (event) => {
+        };
+        const onMouseMove = (event: maplibregl.MapLayerMouseEvent) => {
           const feature = event.features?.[0];
           if (!feature?.properties) return;
           const label = String(feature.properties.label ?? "Nawierzchnia");
@@ -117,7 +188,11 @@ export function MapView({ center, route, mapGeojson }: MapViewProps) {
             ?.setLngLat(event.lngLat)
             .setHTML(`<span style="font:12px system-ui">${label}</span>`)
             .addTo(map);
-        });
+        };
+
+        map.on("mouseenter", segmentsLayerId, onMouseEnter);
+        map.on("mouseleave", segmentsLayerId, onMouseLeave);
+        map.on("mousemove", segmentsLayerId, onMouseMove);
 
         const allCoords = mapGeojson.features.flatMap(
           (feature) => feature.geometry.coordinates,
@@ -152,7 +227,16 @@ export function MapView({ center, route, mapGeojson }: MapViewProps) {
     } else {
       map.once("load", syncRoute);
     }
-  }, [route, mapGeojson]);
+  }, [route, mapGeojson, pickStart]);
 
-  return <div ref={containerRef} className="h-full w-full rounded-xl" />;
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="h-full w-full rounded-xl" />
+      {pickStart ? (
+        <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-emerald-500/50 bg-zinc-950/90 px-4 py-1.5 text-xs text-emerald-300 shadow-lg">
+          Kliknij mapę, aby ustawić punkt startu
+        </div>
+      ) : null}
+    </div>
+  );
 }

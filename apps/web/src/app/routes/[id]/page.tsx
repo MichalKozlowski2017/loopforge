@@ -95,6 +95,7 @@ export default function RouteDetailPage() {
       <section className="relative min-h-[50vh] flex-1 p-4 lg:min-h-0">
         <MapView
           center={[route.start.lng, route.start.lat]}
+          start={route.start}
           route={route.geojson}
           mapGeojson={route.mapGeojson ?? null}
         />
