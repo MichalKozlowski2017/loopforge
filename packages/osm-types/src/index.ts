@@ -48,10 +48,16 @@ export interface GenerateRouteRequest {
   profile?: RideProfile;
 }
 
+export interface SurfaceBreakdownItem {
+  label: string;
+  share: number;
+  color: string;
+}
+
 export interface RouteMetrics {
   distanceKm: number;
   elevationGainM: number;
-  surfaceBreakdown: Record<string, number>;
+  surfaceBreakdown: SurfaceBreakdownItem[];
   score: number;
 }
 

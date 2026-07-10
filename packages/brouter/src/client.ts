@@ -105,19 +105,32 @@ function distanceFromCoordinates(coords: [number, number][]): number {
 
 function surfaceBreakdownFromSegments(
   segments: { tags: OsmTags; distanceM: number }[],
-): Record<string, number> {
-  const totals: Record<string, number> = {};
+): import("@loopforge/osm-types").SurfaceBreakdownItem[] {
+  const totals = new Map<string, { distanceM: number; color: string }>();
   let sum = 0;
+
   for (const segment of segments) {
-    const { label } = getSurfaceStyle(segment.tags);
-    totals[label] = (totals[label] ?? 0) + segment.distanceM;
+    const style = getSurfaceStyle(segment.tags);
+    const existing = totals.get(style.label) ?? {
+      distanceM: 0,
+      color: style.color,
+    };
+    totals.set(style.label, {
+      distanceM: existing.distanceM + segment.distanceM,
+      color: style.color,
+    });
     sum += segment.distanceM;
   }
-  if (sum === 0) return totals;
-  for (const key of Object.keys(totals)) {
-    totals[key] = totals[key] / sum;
-  }
-  return totals;
+
+  if (sum === 0) return [];
+
+  return [...totals.entries()]
+    .map(([label, { distanceM, color }]) => ({
+      label,
+      share: distanceM / sum,
+      color,
+    }))
+    .sort((a, b) => b.share - a.share);
 }
 
 async function fetchRoundTripAttempt(

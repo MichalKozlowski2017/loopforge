@@ -134,7 +134,11 @@ function buildGeneratedRoute(
   const surfaceBreakdown =
     options.segments.length > 0
       ? surfaceBreakdownFromSegments(options.segments)
-      : { gravel: 0.55, compacted: 0.3, asphalt: 0.15 };
+      : [
+          { label: "Gravel", share: 0.55, color: "#f59e0b" },
+          { label: "Utwardzony szuter", share: 0.3, color: "#eab308" },
+          { label: "Asfalt", share: 0.15, color: "#94a3b8" },
+        ];
 
   return {
     id,

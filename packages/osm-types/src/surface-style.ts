@@ -160,13 +160,37 @@ export const SURFACE_LEGEND: Array<{
 ];
 
 export function colorForBreakdownLabel(label: string): string {
+  const direct: Record<string, string> = {
+    Asfalt: "#94a3b8",
+    Utwardzona: "#94a3b8",
+    Beton: "#cbd5e1",
+    "Droga główna": "#64748b",
+    "Droga lokalna": "#a8a29e",
+    "Polna droga": "#f59e0b",
+    "Szuter / gravel": "#f59e0b",
+    "Drobny szuter": "#fbbf24",
+    "Utwardzony szuter": "#eab308",
+    Nieutwardzona: "#d97706",
+    Ziemia: "#b45309",
+    "Teren naturalny": "#92400e",
+    Trawa: "#65a30d",
+    Piasek: "#fcd34d",
+    Kostka: "#78716c",
+    Błoto: "#78350f",
+    "Ścieżka rowerowa": "#22c55e",
+    Ścieżka: "#84cc16",
+    "Leśna ścieżka": "#15803d",
+    Nieznane: "#c084fc",
+  };
+
+  if (direct[label]) return direct[label];
+  if (label.startsWith("Inne (")) return "#c084fc";
+
   const exact = SURFACE_LEGEND.find((item) => item.label === label);
   if (exact) return exact.color;
 
-  const partial = SURFACE_LEGEND.find(
-    (item) =>
-      label.includes(item.label.split(" /")[0]) ||
-      item.label.includes(label),
+  const partial = SURFACE_LEGEND.find((item) =>
+    label.includes(item.label.split(" /")[0]),
   );
   return partial?.color ?? "#c084fc";
 }
