@@ -56,9 +56,25 @@ export interface RouteFeature {
   geometry: LineStringGeometry;
 }
 
+export interface RouteSegmentFeature {
+  type: "Feature";
+  properties: {
+    surface: string;
+    color: string;
+    highway?: string;
+  };
+  geometry: LineStringGeometry;
+}
+
+export interface RouteMapGeoJson {
+  type: "FeatureCollection";
+  features: RouteSegmentFeature[];
+}
+
 export interface GeneratedRoute {
   id: string;
   geojson: RouteFeature;
+  mapGeojson?: RouteMapGeoJson;
   metrics: RouteMetrics;
   gpx: string;
   createdAt: string;
@@ -68,5 +84,7 @@ export interface StoredRoute extends GeneratedRoute {
   bikeType: BikeType;
   direction: Direction;
   start: LatLng;
+  profile?: RideProfile;
   rating?: "up" | "down";
+  notes?: string;
 }

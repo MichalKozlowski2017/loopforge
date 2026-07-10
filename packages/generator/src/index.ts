@@ -121,6 +121,7 @@ function buildGeneratedRoute(
     placeholder: boolean;
     elevationGainM: number;
     segments: { tags: import("@loopforge/osm-types").OsmTags; distanceM: number }[];
+    mapGeojson?: import("@loopforge/osm-types").RouteMapGeoJson;
     gpx?: string;
   },
 ): GeneratedRoute {
@@ -150,6 +151,7 @@ function buildGeneratedRoute(
         coordinates,
       },
     },
+    mapGeojson: options.mapGeojson,
     metrics: {
       distanceKm: actualKm,
       elevationGainM: options.elevationGainM,
@@ -180,6 +182,7 @@ async function generateRouteWithBrouter(
     placeholder: false,
     elevationGainM: routed.elevationGainM,
     segments: routed.segments,
+    mapGeojson: routed.mapGeojson ?? undefined,
     gpx: routed.gpx || undefined,
   });
 }

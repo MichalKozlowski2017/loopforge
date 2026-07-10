@@ -2,15 +2,27 @@
 
 import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
-
-import type { RouteFeature } from "@loopforge/osm-types";
+import type { RouteFeature, RouteMapGeoJson } from "@loopforge/osm-types";
 
 interface MapViewProps {
   center: [number, number];
   route?: RouteFeature | null;
+  mapGeojson?: RouteMapGeoJson | null;
 }
 
-export function MapView({ center, route }: MapViewProps) {
+function fitToCoordinates(
+  map: maplibregl.Map,
+  coords: [number, number][],
+): void {
+  if (coords.length === 0) return;
+  const bounds = coords.reduce(
+    (b, coord) => b.extend(coord),
+    new maplibregl.LngLatBounds(coords[0], coords[0]),
+  );
+  map.fitBounds(bounds, { padding: 48, maxZoom: 13 });
+}
+
+export function MapView({ center, route, mapGeojson }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
 
@@ -39,10 +51,38 @@ export function MapView({ center, route }: MapViewProps) {
 
     const sourceId = "route";
     const layerId = "route-line";
+    const segmentsSourceId = "route-segments";
+    const segmentsLayerId = "route-segments-line";
 
     const syncRoute = () => {
+      if (map.getLayer(segmentsLayerId)) map.removeLayer(segmentsLayerId);
+      if (map.getSource(segmentsSourceId)) map.removeSource(segmentsSourceId);
       if (map.getLayer(layerId)) map.removeLayer(layerId);
       if (map.getSource(sourceId)) map.removeSource(sourceId);
+
+      if (mapGeojson?.features.length) {
+        map.addSource(segmentsSourceId, {
+          type: "geojson",
+          data: mapGeojson,
+        });
+
+        map.addLayer({
+          id: segmentsLayerId,
+          type: "line",
+          source: segmentsSourceId,
+          paint: {
+            "line-color": ["get", "color"],
+            "line-width": 5,
+            "line-opacity": 0.92,
+          },
+        });
+
+        const allCoords = mapGeojson.features.flatMap(
+          (feature) => feature.geometry.coordinates,
+        );
+        fitToCoordinates(map, allCoords);
+        return;
+      }
 
       if (!route) return;
 
@@ -62,17 +102,7 @@ export function MapView({ center, route }: MapViewProps) {
         },
       });
 
-      const coords = route.geometry.coordinates;
-      if (coords.length > 0) {
-        const bounds = coords.reduce(
-          (b, coord) => b.extend(coord as [number, number]),
-          new maplibregl.LngLatBounds(
-            coords[0] as [number, number],
-            coords[0] as [number, number],
-          ),
-        );
-        map.fitBounds(bounds, { padding: 48, maxZoom: 13 });
-      }
+      fitToCoordinates(map, route.geometry.coordinates);
     };
 
     if (map.isStyleLoaded()) {
@@ -80,7 +110,7 @@ export function MapView({ center, route }: MapViewProps) {
     } else {
       map.once("load", syncRoute);
     }
-  }, [route]);
+  }, [route, mapGeojson]);
 
   return <div ref={containerRef} className="h-full w-full rounded-xl" />;
 }

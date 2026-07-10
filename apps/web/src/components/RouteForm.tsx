@@ -1,11 +1,12 @@
 "use client";
 
-import type { BikeType, Direction } from "@loopforge/osm-types";
+import type { BikeType, Direction, RideProfile } from "@loopforge/osm-types";
 
 export interface RouteFormValues {
   bikeType: BikeType;
   distanceKm: number;
   direction: Direction;
+  profile: RideProfile;
   lat: number;
   lng: number;
 }
@@ -33,6 +34,12 @@ const DIRECTIONS: Direction[] = [
   "SW",
   "W",
   "NW",
+];
+
+const PROFILES: { value: RideProfile; label: string; hint: string }[] = [
+  { value: "flow", label: "Flow", hint: "Płynna jazda" },
+  { value: "technical", label: "Techniczny", hint: "Więcej off-road" },
+  { value: "fast", label: "Szybki", hint: "Priorytet asfaltu" },
 ];
 
 export function RouteForm({
@@ -66,6 +73,29 @@ export function RouteForm({
               }`}
             >
               {type.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="mb-2 block text-sm font-medium text-zinc-300">
+          Podprofil
+        </label>
+        <div className="grid grid-cols-3 gap-2">
+          {PROFILES.map((profile) => (
+            <button
+              key={profile.value}
+              type="button"
+              title={profile.hint}
+              onClick={() => onChange({ ...values, profile: profile.value })}
+              className={`rounded-lg border px-2 py-2 text-sm transition ${
+                values.profile === profile.value
+                  ? "border-emerald-500 bg-emerald-500/10 text-emerald-300"
+                  : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-500"
+              }`}
+            >
+              {profile.label}
             </button>
           ))}
         </div>

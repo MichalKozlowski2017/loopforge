@@ -1,5 +1,6 @@
-import type { BikeType, Direction, LatLng, OsmTags } from "@loopforge/osm-types";
+import type { BikeType, Direction, LatLng, OsmTags, RouteMapGeoJson } from "@loopforge/osm-types";
 import type { BrouterConfig } from "./config";
+import { buildColoredGeoJson } from "./colored-geojson";
 import { ensureBrouterServer } from "./server";
 
 const DIRECTION_BEARING: Record<Direction, number> = {
@@ -32,6 +33,7 @@ export interface BrouterRouteResult {
   distanceKm: number;
   elevationGainM: number;
   segments: { tags: OsmTags; distanceM: number }[];
+  mapGeojson: RouteMapGeoJson | null;
   gpx: string;
 }
 
@@ -153,9 +155,9 @@ async function fetchRoundTripAttempt(
   }
 
   const coordinates = feature.geometry.coordinates;
-  const segments = parseSegmentsFromMessages(
-    feature.properties.messages as string[][] | undefined,
-  );
+  const messages = feature.properties.messages as string[][] | undefined;
+  const segments = parseSegmentsFromMessages(messages);
+  const mapGeojson = buildColoredGeoJson(messages);
   const distanceKm = distanceFromCoordinates(coordinates) / 1000;
   const elevationGainM = Number(feature.properties["filtered ascend"] ?? 0);
 
@@ -175,6 +177,7 @@ async function fetchRoundTripAttempt(
     distanceKm,
     elevationGainM,
     segments,
+    mapGeojson,
     gpx,
   };
 }

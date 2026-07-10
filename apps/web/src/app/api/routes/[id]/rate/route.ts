@@ -6,13 +6,16 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
-  const body = (await request.json()) as { rating?: "up" | "down" };
+  const body = (await request.json()) as {
+    rating?: "up" | "down";
+    notes?: string;
+  };
 
   if (body.rating !== "up" && body.rating !== "down") {
     return NextResponse.json({ error: "Nieprawidłowa ocena" }, { status: 400 });
   }
 
-  const updated = await updateRouteRating(id, body.rating);
+  const updated = await updateRouteRating(id, body.rating, body.notes);
   if (!updated) {
     return NextResponse.json({ error: "Trasa nie znaleziona" }, { status: 404 });
   }

@@ -27,6 +27,7 @@ export async function POST(request: Request) {
       ...generated,
       bikeType: body.bikeType,
       direction: body.direction,
+      profile: body.profile,
       start: body.start,
     };
 

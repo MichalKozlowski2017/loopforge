@@ -23,12 +23,17 @@ export async function saveRoute(route: StoredRoute): Promise<void> {
 export async function updateRouteRating(
   id: string,
   rating: "up" | "down",
+  notes?: string,
 ): Promise<StoredRoute | null> {
   const routes = await loadRoutes();
   const index = routes.findIndex((route) => route.id === id);
   if (index === -1) return null;
 
-  routes[index] = { ...routes[index], rating };
+  routes[index] = {
+    ...routes[index],
+    rating,
+    ...(notes !== undefined ? { notes } : {}),
+  };
   await fs.writeFile(ROUTES_PATH, JSON.stringify(routes, null, 2), "utf8");
   return routes[index];
 }
