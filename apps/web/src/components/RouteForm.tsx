@@ -121,7 +121,7 @@ export function RouteForm({
           type="number"
           min={10}
           max={200}
-          step={5}
+          step={1}
           value={values.distanceKm}
           onChange={(event) =>
             onChange({ ...values, distanceKm: Number(event.target.value) })
