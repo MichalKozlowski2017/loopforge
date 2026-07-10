@@ -47,15 +47,13 @@ export default function HomePage() {
     "loading" | "ready" | "denied" | "unavailable" | "manual"
   >("loading");
 
-  const applyStart = useCallback((lat: number, lng: number) => {
+  const onGeolocation = useCallback((lat: number, lng: number) => {
     setForm((current) => ({ ...current, lat, lng }));
+    setLocationMode("ready");
   }, []);
 
   const { status: geoStatus, refresh: refreshGeolocation } = useGeolocation(
-    (lat, lng) => {
-      applyStart(lat, lng);
-      setLocationMode("ready");
-    },
+    onGeolocation,
     !routeIdFromUrl,
   );
 
@@ -88,7 +86,11 @@ export default function HomePage() {
   }, [routeIdFromUrl]);
 
   function handleStartChange(start: { lat: number; lng: number }) {
-    applyStart(start.lat, start.lng);
+    setForm((current) => ({
+      ...current,
+      lat: start.lat,
+      lng: start.lng,
+    }));
     setLocationMode("manual");
     setPickOnMap(false);
   }

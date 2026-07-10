@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type GeolocationStatus =
   | "loading"
@@ -17,6 +17,9 @@ export function useGeolocation(
   onPosition: (lat: number, lng: number) => void,
   enabled = true,
 ): GeolocationState {
+  const onPositionRef = useRef(onPosition);
+  onPositionRef.current = onPosition;
+
   const [status, setStatus] = useState<GeolocationStatus>(
     enabled ? "loading" : "unavailable",
   );
@@ -30,13 +33,16 @@ export function useGeolocation(
     setStatus("loading");
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        onPosition(position.coords.latitude, position.coords.longitude);
+        onPositionRef.current(
+          position.coords.latitude,
+          position.coords.longitude,
+        );
         setStatus("ready");
       },
       () => setStatus("denied"),
       { enableHighAccuracy: true, timeout: 12_000, maximumAge: 60_000 },
     );
-  }, [onPosition]);
+  }, []);
 
   useEffect(() => {
     if (!enabled) return;
