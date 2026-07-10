@@ -4,6 +4,11 @@ import type {
   GeneratedRoute,
   LatLng,
 } from "@loopforge/osm-types";
+import {
+  fetchRoundTrip,
+  getBrouterConfig,
+  surfaceBreakdownFromSegments,
+} from "@loopforge/brouter";
 import { buildGpx } from "@loopforge/gpx";
 import { scoreRoute } from "@loopforge/scoring";
 
@@ -79,7 +84,7 @@ function lineCoordinates(
   return coords;
 }
 
-function buildLoopCoordinates(
+function buildPlaceholderLoop(
   start: LatLng,
   direction: Direction,
   distanceKm: number,
@@ -109,23 +114,26 @@ function totalDistanceKm(coords: [number, number][]): number {
   return meters / 1000;
 }
 
-/**
- * Phase 0 placeholder generator — geometric loop until BRouter is wired.
- * Produces a rough rectangular loop in the chosen direction for map preview.
- */
-export function generateRoute(request: GenerateRouteRequest): GeneratedRoute {
-  const { start, bikeType, distanceKm, direction } = request;
-  const coordinates = buildLoopCoordinates(start, direction, distanceKm);
-  const actualKm = totalDistanceKm(coordinates);
-
-  const mockSegments = [
-    { tags: { highway: "track", surface: "gravel" }, distanceM: actualKm * 500 },
-    { tags: { highway: "cycleway", surface: "compacted" }, distanceM: actualKm * 500 },
-  ];
-
-  const score = scoreRoute(mockSegments, bikeType);
+function buildGeneratedRoute(
+  request: GenerateRouteRequest,
+  coordinates: [number, number][],
+  options: {
+    placeholder: boolean;
+    elevationGainM: number;
+    segments: { tags: import("@loopforge/osm-types").OsmTags; distanceM: number }[];
+    gpx?: string;
+  },
+): GeneratedRoute {
+  const { start, bikeType, direction, distanceKm } = request;
+  const actualKm =
+    coordinates.length > 1 ? totalDistanceKm(coordinates) : distanceKm;
+  const score = scoreRoute(options.segments, bikeType);
   const id = crypto.randomUUID();
   const name = `Loopforge ${bikeType} ${Math.round(actualKm)}km`;
+  const surfaceBreakdown =
+    options.segments.length > 0
+      ? surfaceBreakdownFromSegments(options.segments)
+      : { gravel: 0.55, compacted: 0.3, asphalt: 0.15 };
 
   return {
     id,
@@ -135,7 +143,7 @@ export function generateRoute(request: GenerateRouteRequest): GeneratedRoute {
         bikeType,
         direction,
         score,
-        placeholder: true,
+        placeholder: options.placeholder,
       },
       geometry: {
         type: "LineString",
@@ -144,15 +152,72 @@ export function generateRoute(request: GenerateRouteRequest): GeneratedRoute {
     },
     metrics: {
       distanceKm: actualKm,
-      elevationGainM: Math.round(actualKm * 12),
-      surfaceBreakdown: {
-        gravel: 0.55,
-        compacted: 0.3,
-        asphalt: 0.15,
-      },
+      elevationGainM: options.elevationGainM,
+      surfaceBreakdown,
       score,
     },
-    gpx: buildGpx(name, coordinates, start),
+    gpx: options.gpx ?? buildGpx(name, coordinates, start),
     createdAt: new Date().toISOString(),
   };
+}
+
+async function generateRouteWithBrouter(
+  request: GenerateRouteRequest,
+): Promise<GeneratedRoute> {
+  const config = getBrouterConfig();
+  if (!config) {
+    throw new Error("BRouter is not configured");
+  }
+
+  const routed = await fetchRoundTrip(config, {
+    start: request.start,
+    bikeType: request.bikeType,
+    distanceKm: request.distanceKm,
+    direction: request.direction,
+  });
+
+  return buildGeneratedRoute(request, routed.coordinates, {
+    placeholder: false,
+    elevationGainM: routed.elevationGainM,
+    segments: routed.segments,
+    gpx: routed.gpx || undefined,
+  });
+}
+
+function generatePlaceholderRoute(request: GenerateRouteRequest): GeneratedRoute {
+  const coordinates = buildPlaceholderLoop(
+    request.start,
+    request.direction,
+    request.distanceKm,
+  );
+  const actualKm = totalDistanceKm(coordinates);
+
+  return buildGeneratedRoute(request, coordinates, {
+    placeholder: true,
+    elevationGainM: Math.round(actualKm * 12),
+    segments: [
+      {
+        tags: { highway: "track", surface: "gravel" },
+        distanceM: actualKm * 500,
+      },
+      {
+        tags: { highway: "cycleway", surface: "compacted" },
+        distanceM: actualKm * 500,
+      },
+    ],
+  });
+}
+
+export async function generateRoute(
+  request: GenerateRouteRequest,
+): Promise<GeneratedRoute> {
+  if (getBrouterConfig()) {
+    try {
+      return await generateRouteWithBrouter(request);
+    } catch (error) {
+      console.error("[loopforge] BRouter failed, using placeholder:", error);
+    }
+  }
+
+  return generatePlaceholderRoute(request);
 }

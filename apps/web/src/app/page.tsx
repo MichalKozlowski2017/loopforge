@@ -81,7 +81,7 @@ export default function HomePage() {
           </p>
           <h1 className="mt-1 text-2xl font-semibold">Kuźnia pętli</h1>
           <p className="mt-2 text-sm text-zinc-400">
-            Faza 0 — podgląd na mapie, placeholder do czasu podpięcia BRouter.
+            Generuj pętlę po drogach OSM — wymaga lokalnego BRoutera.
           </p>
         </div>
 

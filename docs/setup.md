@@ -19,27 +19,43 @@ java -version
 
 ## BRouter (Faza 0)
 
-1. Pobierz BRouter 1.7.x z [brouter.de](http://brouter.de/brouter/en/)
-2. Rozpakuj JAR + segmenty dla Europy/Polski
-3. Ustaw w `.env.local`:
-
 ```bash
-BROUTER_PATH=/ścieżka/do/brouter.jar
-BROUTER_SEGMENTS_DIR=/ścieżka/do/segments4
-BROUTER_PROFILES_DIR=./infra/brouter-profiles
+pnpm setup:brouter   # pobiera JAR + segmenty PL, tworzy .env.local
+pnpm dev             # BRouter startuje automatycznie przy generowaniu
 ```
 
-4. Profile w `infra/brouter-profiles/`: `road.xml`, `gravel.xml`, `mtb.xml`, `general.xml`
+Opcjonalnie osobny terminal:
+
+```bash
+pnpm brouter
+```
+
+### Ręczna instalacja
+
+1. Pobierz BRouter 1.7.x z [brouter.de](http://brouter.de/brouter/en/) lub `pnpm setup:brouter`
+2. Segmenty `.rd5` dla Polski: `E15_N50`, `E20_N50` (Warszawa i okolice)
+3. `apps/web/.env.local`:
+
+```bash
+BROUTER_JAR=../../infra/brouter/brouter-1.7.9/brouter-1.7.9-all.jar
+BROUTER_SEGMENTS_DIR=../../infra/brouter/segments4
+BROUTER_PROFILES_DIR=../../infra/brouter/brouter-1.7.9/profiles2
+BROUTER_CUSTOM_PROFILES_DIR=../../infra/brouter/customprofiles
+BROUTER_PORT=17777
+```
+
+Profile BRouter (`.brf`): `gravel`, `fastbike`, `mtb`, `trekking` — mapowane na tryby Loopforge.
 
 ## Zmienne środowiskowe (Faza 0)
 
 Plik `apps/web/.env.local`:
 
 ```bash
-# Faza 0 — tylko BRouter, bez Supabase
-BROUTER_PATH=
-BROUTER_SEGMENTS_DIR=
-BROUTER_PROFILES_DIR=../../infra/brouter-profiles
+# Faza 0 — BRouter (patrz pnpm setup:brouter)
+BROUTER_JAR=../../infra/brouter/brouter-1.7.9/brouter-1.7.9-all.jar
+BROUTER_SEGMENTS_DIR=../../infra/brouter/segments4
+BROUTER_PROFILES_DIR=../../infra/brouter/brouter-1.7.9/profiles2
+BROUTER_CUSTOM_PROFILES_DIR=../../infra/brouter/customprofiles
 ```
 
 ## Zmienne (Faza 1+)

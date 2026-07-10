@@ -21,7 +21,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const generated = generateRoute(body);
+    const generated = await generateRoute(body);
 
     const stored = {
       ...generated,

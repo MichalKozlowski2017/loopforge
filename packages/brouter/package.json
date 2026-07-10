@@ -1,5 +1,5 @@
 {
-  "name": "@loopforge/generator",
+  "name": "@loopforge/brouter",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,10 +11,7 @@
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
-    "@loopforge/brouter": "workspace:*",
-    "@loopforge/gpx": "workspace:*",
-    "@loopforge/osm-types": "workspace:*",
-    "@loopforge/scoring": "workspace:*"
+    "@loopforge/osm-types": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20",

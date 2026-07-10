@@ -12,10 +12,10 @@ build/
 .vscode/*
 !.vscode/extensions.json
 
-# BRouter / OSM data (duże pliki)
-*.osm.pbf
-segments*/
-brouter*.jar
+# BRouter / OSM data (duże pliki — pobierz: pnpm setup:brouter)
+infra/brouter/segments4/*.rd5
+infra/brouter/brouter-*.zip
+infra/brouter/**/*.apk
 
 # Supabase local
 .supabase/

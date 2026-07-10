@@ -5,6 +5,8 @@
   "description": "Generator tras rowerowych dla Polski — Loopforge",
   "scripts": {
     "dev": "pnpm --filter @loopforge/web dev",
+    "brouter": "bash infra/scripts/start-brouter.sh",
+    "setup:brouter": "bash infra/scripts/setup-brouter.sh",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck"

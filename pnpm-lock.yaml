@@ -54,8 +54,24 @@ importers:
         specifier: ^5
         version: 5.9.3
 
+  packages/brouter:
+    dependencies:
+      '@loopforge/osm-types':
+        specifier: workspace:*
+        version: link:../osm-types
+    devDependencies:
+      '@types/node':
+        specifier: ^20
+        version: 20.19.43
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
   packages/generator:
     dependencies:
+      '@loopforge/brouter':
+        specifier: workspace:*
+        version: link:../brouter
       '@loopforge/gpx':
         specifier: workspace:*
         version: link:../gpx
@@ -66,6 +82,9 @@ importers:
         specifier: workspace:*
         version: link:../scoring
     devDependencies:
+      '@types/node':
+        specifier: ^20
+        version: 20.19.43
       typescript:
         specifier: ^5
         version: 5.9.3
@@ -82,9 +101,6 @@ importers:
 
   packages/osm-types:
     devDependencies:
-      '@types/geojson':
-        specifier: ^7946.0.16
-        version: 7946.0.16
       typescript:
         specifier: ^5
         version: 5.9.3
