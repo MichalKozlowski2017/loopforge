@@ -1,0 +1,27 @@
+node_modules/
+.next/
+.turbo/
+dist/
+build/
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# BRouter / OSM data (duże pliki)
+*.osm.pbf
+segments*/
+brouter*.jar
+
+# Supabase local
+.supabase/
+
+# Vercel
+.vercel
+
+# Java
+*.class

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Placeholder BRouter profile — replace with full profile when BRouter is configured -->
+<profile xmlns="http://www.brouter.de" version="1">
+  <segment name="gravel" priority="1.0" />
+</profile>

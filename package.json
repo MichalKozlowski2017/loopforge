@@ -1,0 +1,16 @@
+{
+  "name": "loopforge",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Generator tras rowerowych dla Polski — Loopforge",
+  "scripts": {
+    "dev": "pnpm --filter @loopforge/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

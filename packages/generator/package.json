@@ -1,0 +1,21 @@
+{
+  "name": "@loopforge/generator",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'no lint configured'"
+  },
+  "dependencies": {
+    "@loopforge/gpx": "workspace:*",
+    "@loopforge/osm-types": "workspace:*",
+    "@loopforge/scoring": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}
