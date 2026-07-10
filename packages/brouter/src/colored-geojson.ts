@@ -1,8 +1,24 @@
 import type { OsmTags, RouteMapGeoJson, RouteSegmentFeature } from "@loopforge/osm-types";
 import { getSurfaceStyle, parseOsmTagString } from "@loopforge/osm-types";
 
+function isMicroDegree(value: string | undefined): value is string {
+  if (!value || !/^\d+$/.test(value)) return false;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0;
+}
+
 function microToCoord(lon: string, lat: string): [number, number] {
   return [Number(lon) / 1_000_000, Number(lat) / 1_000_000];
+}
+
+function isValidCoord([lng, lat]: [number, number]): boolean {
+  return (
+    Number.isFinite(lng) &&
+    Number.isFinite(lat) &&
+    Math.abs(lat) <= 90 &&
+    Math.abs(lng) <= 180 &&
+    !(lng === 0 && lat === 0)
+  );
 }
 
 function styleKey(feature: RouteSegmentFeature): string {
@@ -51,25 +67,33 @@ function mergeAdjacentFeatures(
 }
 
 /**
- * Builds colored segments edge-by-edge from BRouter message rows so geometry
- * matches the routed line exactly (no chord shortcuts on tag changes).
+ * Builds colored segments edge-by-edge from BRouter message rows.
+ * Row 0 is a header — skipped. Only numeric micro-degree coordinates are used.
  */
 export function buildColoredGeoJson(
   messages: string[][] | undefined,
 ): RouteMapGeoJson | null {
-  if (!messages || messages.length < 2) return null;
+  if (!messages || messages.length < 3) return null;
 
   const edges: RouteSegmentFeature[] = [];
   let lastTags: Record<string, string> = {};
 
-  for (let i = 1; i < messages.length; i++) {
+  for (let i = 2; i < messages.length; i++) {
     const previous = messages[i - 1];
     const row = messages[i];
     const lon1 = previous[0];
     const lat1 = previous[1];
     const lon2 = row[0];
     const lat2 = row[1];
-    if (!lon1 || !lat1 || !lon2 || !lat2) continue;
+
+    if (
+      !isMicroDegree(lon1) ||
+      !isMicroDegree(lat1) ||
+      !isMicroDegree(lon2) ||
+      !isMicroDegree(lat2)
+    ) {
+      continue;
+    }
 
     const wayTags = row[9] || previous[9] || "";
     const tags = wayTags ? parseOsmTagString(wayTags) : lastTags;
@@ -79,6 +103,7 @@ export function buildColoredGeoJson(
 
     const start = microToCoord(lon1, lat1);
     const end = microToCoord(lon2, lat2);
+    if (!isValidCoord(start) || !isValidCoord(end)) continue;
     if (start[0] === end[0] && start[1] === end[1]) continue;
 
     const style = getSurfaceStyle(lastTags as OsmTags);

@@ -168,7 +168,16 @@ async function fetchRoundTripAttempt(
     throw new Error("BRouter returned an empty route");
   }
 
-  const coordinates = feature.geometry.coordinates;
+  const coordinates = feature.geometry.coordinates.filter(
+    ([lng, lat]) =>
+      Number.isFinite(lng) &&
+      Number.isFinite(lat) &&
+      Math.abs(lat) <= 90 &&
+      !(lng === 0 && lat === 0),
+  );
+  if (coordinates.length < 2) {
+    throw new Error("BRouter returned invalid route coordinates");
+  }
   const messages = feature.properties.messages as string[][] | undefined;
   const segments = parseSegmentsFromMessages(messages);
   const mapGeojson = buildColoredGeoJson(messages);

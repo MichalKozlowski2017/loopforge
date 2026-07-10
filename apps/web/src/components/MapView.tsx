@@ -22,10 +22,17 @@ function fitToCoordinates(
   map: maplibregl.Map,
   coords: [number, number][],
 ): void {
-  if (coords.length === 0) return;
-  const bounds = coords.reduce(
+  const valid = coords.filter(
+    ([lng, lat]) =>
+      Number.isFinite(lng) &&
+      Number.isFinite(lat) &&
+      Math.abs(lat) <= 90 &&
+      !(lng === 0 && lat === 0),
+  );
+  if (valid.length === 0) return;
+  const bounds = valid.reduce(
     (b, coord) => b.extend(coord),
-    new maplibregl.LngLatBounds(coords[0], coords[0]),
+    new maplibregl.LngLatBounds(valid[0], valid[0]),
   );
   map.fitBounds(bounds, { padding: 48, maxZoom: 13 });
 }
