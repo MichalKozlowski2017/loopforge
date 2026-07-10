@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import type { RouteFeature, RouteMapGeoJson } from "@loopforge/osm-types";
 
@@ -50,7 +50,125 @@ export function MapView({
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const onStartChangeRef = useRef(onStartChange);
+  const routeHandlersRef = useRef<{
+    enter?: () => void;
+    leave?: () => void;
+    move?: (event: maplibregl.MapLayerMouseEvent) => void;
+  }>({});
+
+  const [mapReady, setMapReady] = useState(false);
+
   onStartChangeRef.current = onStartChange;
+
+  const syncRoute = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+
+    const sourceId = "route";
+    const layerId = "route-line";
+    const segmentsSourceId = "route-segments";
+    const segmentsLayerId = "route-segments-line";
+
+    const prev = routeHandlersRef.current;
+    if (prev.enter && map.getLayer(segmentsLayerId)) {
+      map.off("mouseenter", segmentsLayerId, prev.enter);
+      map.off("mouseleave", segmentsLayerId, prev.leave!);
+      map.off("mousemove", segmentsLayerId, prev.move!);
+    }
+    routeHandlersRef.current = {};
+
+    if (map.getLayer(segmentsLayerId)) map.removeLayer(segmentsLayerId);
+    if (map.getSource(segmentsSourceId)) map.removeSource(segmentsSourceId);
+    if (map.getLayer(layerId)) map.removeLayer(layerId);
+    if (map.getSource(sourceId)) map.removeSource(sourceId);
+
+    if (mapGeojson?.features.length) {
+      map.addSource(segmentsSourceId, {
+        type: "geojson",
+        data: mapGeojson,
+      });
+
+      map.addLayer({
+        id: segmentsLayerId,
+        type: "line",
+        source: segmentsSourceId,
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": 5,
+          "line-opacity": 0.92,
+          "line-dasharray": [
+            "match",
+            ["get", "category"],
+            "gravel",
+            ["literal", [2.5, 1.5]],
+            "compacted",
+            ["literal", [4, 2]],
+            "dirt",
+            ["literal", [1, 2]],
+            "path",
+            ["literal", [1.5, 2]],
+            "forest",
+            ["literal", [3, 2, 1, 2]],
+            "unknown",
+            ["literal", [2, 2]],
+            ["literal", [1, 0]],
+          ],
+        },
+      });
+
+      const onMouseEnter = () => {
+        map.getCanvas().style.cursor = "pointer";
+      };
+      const onMouseLeave = () => {
+        map.getCanvas().style.cursor = pickStart ? "crosshair" : "";
+        popupRef.current?.remove();
+      };
+      const onMouseMove = (event: maplibregl.MapLayerMouseEvent) => {
+        const feature = event.features?.[0];
+        if (!feature?.properties) return;
+        const label = String(feature.properties.label ?? "Nawierzchnia");
+        popupRef.current
+          ?.setLngLat(event.lngLat)
+          .setHTML(`<span style="font:12px system-ui">${label}</span>`)
+          .addTo(map);
+      };
+
+      map.on("mouseenter", segmentsLayerId, onMouseEnter);
+      map.on("mouseleave", segmentsLayerId, onMouseLeave);
+      map.on("mousemove", segmentsLayerId, onMouseMove);
+      routeHandlersRef.current = {
+        enter: onMouseEnter,
+        leave: onMouseLeave,
+        move: onMouseMove,
+      };
+
+      const allCoords = mapGeojson.features.flatMap(
+        (feature) => feature.geometry.coordinates,
+      );
+      fitToCoordinates(map, allCoords);
+      return;
+    }
+
+    if (!route) return;
+
+    map.addSource(sourceId, {
+      type: "geojson",
+      data: route,
+    });
+
+    map.addLayer({
+      id: layerId,
+      type: "line",
+      source: sourceId,
+      paint: {
+        "line-color": "#22c55e",
+        "line-width": 4,
+        "line-opacity": 0.9,
+      },
+    });
+
+    fitToCoordinates(map, route.geometry.coordinates);
+  }, [route, mapGeojson, pickStart]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -70,20 +188,36 @@ export function MapView({
       className: "loopforge-popup",
     });
 
+    const onLoad = () => {
+      setMapReady(true);
+    };
+
+    map.on("load", onLoad);
+    if (map.isStyleLoaded()) {
+      onLoad();
+    }
+
     return () => {
+      map.off("load", onLoad);
       markerRef.current?.remove();
       markerRef.current = null;
       popupRef.current?.remove();
       popupRef.current = null;
       map.remove();
       mapRef.current = null;
+      setMapReady(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- init once
   }, []);
 
   useEffect(() => {
+    if (!mapReady) return;
+    syncRoute();
+  }, [mapReady, syncRoute]);
+
+  useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !mapReady) return;
 
     if (!markerRef.current) {
       const marker = new maplibregl.Marker({
@@ -102,11 +236,11 @@ export function MapView({
     } else {
       markerRef.current.setLngLat([start.lng, start.lat]);
     }
-  }, [start.lat, start.lng]);
+  }, [start.lat, start.lng, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !mapReady) return;
 
     const canvas = map.getCanvas();
     canvas.style.cursor = pickStart ? "crosshair" : "";
@@ -122,119 +256,17 @@ export function MapView({
       map.off("click", handleClick);
       canvas.style.cursor = "";
     };
-  }, [pickStart]);
+  }, [pickStart, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || route || mapGeojson?.features.length) return;
+    if (!map || !mapReady || route || mapGeojson?.features.length) return;
 
-    map.flyTo({ center: [start.lng, start.lat], zoom: Math.max(map.getZoom(), 12) });
-  }, [start.lng, start.lat, route, mapGeojson]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    const sourceId = "route";
-    const layerId = "route-line";
-    const segmentsSourceId = "route-segments";
-    const segmentsLayerId = "route-segments-line";
-
-    const syncRoute = () => {
-      if (map.getLayer(segmentsLayerId)) map.removeLayer(segmentsLayerId);
-      if (map.getSource(segmentsSourceId)) map.removeSource(segmentsSourceId);
-      if (map.getLayer(layerId)) map.removeLayer(layerId);
-      if (map.getSource(sourceId)) map.removeSource(sourceId);
-
-      if (mapGeojson?.features.length) {
-        map.addSource(segmentsSourceId, {
-          type: "geojson",
-          data: mapGeojson,
-        });
-
-        map.addLayer({
-          id: segmentsLayerId,
-          type: "line",
-          source: segmentsSourceId,
-          paint: {
-            "line-color": ["get", "color"],
-            "line-width": 5,
-            "line-opacity": 0.92,
-            "line-dasharray": [
-              "match",
-              ["get", "category"],
-              "gravel",
-              ["literal", [2.5, 1.5]],
-              "compacted",
-              ["literal", [4, 2]],
-              "dirt",
-              ["literal", [1, 2]],
-              "path",
-              ["literal", [1.5, 2]],
-              "forest",
-              ["literal", [3, 2, 1, 2]],
-              "unknown",
-              ["literal", [2, 2]],
-              ["literal", [1, 0]],
-            ],
-          },
-        });
-
-        const onMouseEnter = () => {
-          map.getCanvas().style.cursor = "pointer";
-        };
-        const onMouseLeave = () => {
-          map.getCanvas().style.cursor = pickStart ? "crosshair" : "";
-          popupRef.current?.remove();
-        };
-        const onMouseMove = (event: maplibregl.MapLayerMouseEvent) => {
-          const feature = event.features?.[0];
-          if (!feature?.properties) return;
-          const label = String(feature.properties.label ?? "Nawierzchnia");
-          popupRef.current
-            ?.setLngLat(event.lngLat)
-            .setHTML(`<span style="font:12px system-ui">${label}</span>`)
-            .addTo(map);
-        };
-
-        map.on("mouseenter", segmentsLayerId, onMouseEnter);
-        map.on("mouseleave", segmentsLayerId, onMouseLeave);
-        map.on("mousemove", segmentsLayerId, onMouseMove);
-
-        const allCoords = mapGeojson.features.flatMap(
-          (feature) => feature.geometry.coordinates,
-        );
-        fitToCoordinates(map, allCoords);
-        return;
-      }
-
-      if (!route) return;
-
-      map.addSource(sourceId, {
-        type: "geojson",
-        data: route,
-      });
-
-      map.addLayer({
-        id: layerId,
-        type: "line",
-        source: sourceId,
-        paint: {
-          "line-color": "#22c55e",
-          "line-width": 4,
-          "line-opacity": 0.9,
-        },
-      });
-
-      fitToCoordinates(map, route.geometry.coordinates);
-    };
-
-    if (map.isStyleLoaded()) {
-      syncRoute();
-    } else {
-      map.once("load", syncRoute);
-    }
-  }, [route, mapGeojson, pickStart]);
+    map.flyTo({
+      center: [start.lng, start.lat],
+      zoom: Math.max(map.getZoom(), 12),
+    });
+  }, [start.lng, start.lat, route, mapGeojson, mapReady]);
 
   return (
     <div className="relative h-full w-full">
