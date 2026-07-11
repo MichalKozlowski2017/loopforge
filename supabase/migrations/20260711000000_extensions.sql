@@ -1,6 +1,6 @@
--- PostGIS + pgRouting for Loopforge routing
+-- PostGIS + pgRouting for Loopforge routing (Supabase: extensions schema)
 create extension if not exists postgis with schema extensions;
-create extension if not exists pgrouting with schema extensions;
+create extension if not exists pgrouting with schema extensions cascade;
 create extension if not exists hstore with schema extensions;
 
 create schema if not exists loopforge;

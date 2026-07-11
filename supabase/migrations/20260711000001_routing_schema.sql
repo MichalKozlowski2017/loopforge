@@ -11,7 +11,7 @@ create table loopforge.ways (
   cost_general double precision not null,
   source integer,
   target integer,
-  constraint ways_geom_srid check (st_srid(geom) = 4326)
+  constraint ways_geom_srid check (extensions.st_srid(geom) = 4326)
 );
 
 create index ways_geom_gix on loopforge.ways using gist (geom);
@@ -130,18 +130,6 @@ language sql
 immutable
 as $$
   select length_m / loopforge.bike_weight(tags, bike_type);
-$$;
-
--- Snap lat/lng to nearest routing vertex
-create or replace function loopforge.nearest_vertex(lng double precision, lat double precision)
-returns bigint
-language sql
-stable
-as $$
-  select id
-  from loopforge.ways_vertices_pgr
-  order by the_geom operator(extensions.<->) extensions.st_setsrid(extensions.st_makepoint(lng, lat), 4326)
-  limit 1;
 $$;
 
 grant select on loopforge.ways to postgres, service_role;

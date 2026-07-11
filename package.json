@@ -11,8 +11,13 @@
     "supabase:stop": "supabase stop",
     "db:push": "supabase db push",
     "db:push:local": "supabase db push --local",
+    "setup:supabase": "bash infra/scripts/setup-supabase-env.sh",
     "import:osm": "bash infra/scripts/import-osm.sh",
     "import:osm:mazowsze": "bash infra/scripts/import-osm.sh mazowsze",
+    "import:osm:warszawa": "bash infra/scripts/import-osm.sh warszawa",
+    "apply:osm-rls": "node infra/scripts/apply-osm-rls.mjs",
+    "build:ways": "node infra/scripts/run-sql.mjs infra/sql/build-ways.sql",
+    "drop:osm": "node infra/scripts/run-sql.mjs infra/sql/drop-osm-tables.sql",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck"

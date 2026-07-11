@@ -1,4 +1,7 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "cd ../.. && pnpm install",
+  "buildCommand": "cd ../.. && pnpm --filter @loopforge/web build",
   "functions": {
     "app/api/routes/generate/route.ts": {
       "maxDuration": 300,

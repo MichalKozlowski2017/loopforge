@@ -45,6 +45,19 @@ select pgr_createTopology(
 
 analyze loopforge.ways;
 
+create or replace function loopforge.nearest_vertex(lng double precision, lat double precision)
+returns bigint
+language sql
+stable
+as $$
+  select id
+  from loopforge.ways_vertices_pgr
+  order by the_geom operator(extensions.<->) extensions.st_setsrid(extensions.st_makepoint(lng, lat), 4326)
+  limit 1;
+$$;
+
+grant execute on function loopforge.nearest_vertex(double precision, double precision) to postgres, service_role;
+
 insert into loopforge.import_status (id, region, osm_file, ways_count, imported_at)
 values (1, 'poland', 'poland-latest.osm.pbf', (select count(*) from loopforge.ways), now())
 on conflict (id) do update set
