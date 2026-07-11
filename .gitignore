@@ -23,6 +23,7 @@ infra/brouter/brouter-*/profiles2/loopforge-*.brf
 
 # Supabase local
 .supabase/
+supabase/.temp/
 
 # Vercel
 .vercel
