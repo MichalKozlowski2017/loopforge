@@ -40,6 +40,7 @@ export default function HomePage() {
   const [form, setForm] = useState<RouteFormValues>(DEFAULT_FORM);
   const [route, setRoute] = useState<StoredRoute | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingSeconds, setLoadingSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [pickOnMap, setPickOnMap] = useState(false);
@@ -108,8 +109,13 @@ export default function HomePage() {
 
   async function handleGenerate() {
     setLoading(true);
+    setLoadingSeconds(0);
     setError(null);
     setPickOnMap(false);
+
+    const tick = window.setInterval(() => {
+      setLoadingSeconds((seconds) => seconds + 1);
+    }, 1000);
 
     try {
       const response = await fetch("/api/routes/generate", {
@@ -122,6 +128,7 @@ export default function HomePage() {
           direction: form.direction,
           profile: form.profile,
         }),
+        signal: AbortSignal.timeout(90_000),
       });
 
       if (!response.ok) {
@@ -133,8 +140,15 @@ export default function HomePage() {
       setRoute(generated);
       setNotes("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Nieznany błąd");
+      if (err instanceof DOMException && err.name === "TimeoutError") {
+        setError(
+          "Generowanie trwa zbyt długo (>90 s). Sprawdź, czy BRouter działa (pnpm brouter).",
+        );
+      } else {
+        setError(err instanceof Error ? err.message : "Nieznany błąd");
+      }
     } finally {
+      window.clearInterval(tick);
       setLoading(false);
     }
   }
@@ -174,6 +188,15 @@ export default function HomePage() {
           onUseMyLocation={handleUseMyLocation}
           onTogglePickOnMap={() => setPickOnMap((active) => !active)}
         />
+
+        {loading ? (
+          <p className="mt-3 text-xs text-zinc-400">
+            BRouter liczy trasę… {loadingSeconds > 0 ? `${loadingSeconds} s` : ""}
+            {loadingSeconds >= 10
+              ? " — pierwsze uruchomienie może potrwać do minuty."
+              : ""}
+          </p>
+        ) : null}
 
         {error ? (
           <p className="mt-4 rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-sm text-red-300">

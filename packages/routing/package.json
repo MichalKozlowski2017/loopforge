@@ -1,5 +1,5 @@
 {
-  "name": "@loopforge/generator",
+  "name": "@loopforge/routing",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,14 +11,14 @@
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
-    "@loopforge/brouter": "workspace:*",
     "@loopforge/gpx": "workspace:*",
     "@loopforge/osm-types": "workspace:*",
-    "@loopforge/routing": "workspace:*",
-    "@loopforge/scoring": "workspace:*"
+    "@loopforge/scoring": "workspace:*",
+    "pg": "^8.16.3"
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/pg": "^8.15.4",
     "typescript": "^5"
   }
 }

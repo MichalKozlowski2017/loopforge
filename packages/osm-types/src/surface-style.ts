@@ -67,6 +67,15 @@ export function getSurfaceStyle(
   const tags = rawTags as Record<string, string>;
   const forest = isForestContext(tags);
 
+  if (tags.route === "ferry") {
+    return {
+      category: "unknown",
+      label: "Prom (ferry)",
+      color: "#ef4444",
+      dash: [4, 3],
+    };
+  }
+
   if (tags.surface && SURFACE_TAG_COLORS[tags.surface]) {
     const entry = SURFACE_TAG_COLORS[tags.surface];
     if (forest && (tags.highway === "path" || tags.highway === "track")) {

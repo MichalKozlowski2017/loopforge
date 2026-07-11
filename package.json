@@ -7,6 +7,12 @@
     "dev": "pnpm --filter @loopforge/web dev",
     "brouter": "bash infra/scripts/start-brouter.sh",
     "setup:brouter": "bash infra/scripts/setup-brouter.sh",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "db:push": "supabase db push",
+    "db:push:local": "supabase db push --local",
+    "import:osm": "bash infra/scripts/import-osm.sh",
+    "import:osm:mazowsze": "bash infra/scripts/import-osm.sh mazowsze",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck"

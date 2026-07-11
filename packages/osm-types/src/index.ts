@@ -30,6 +30,7 @@ export interface OsmTags {
   [key: string]: string | undefined;
   highway?: string;
   surface?: string;
+  route?: string;
   tracktype?: string;
   "mtb:scale"?: string;
 }

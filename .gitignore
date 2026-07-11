@@ -16,6 +16,10 @@ build/
 infra/brouter/segments4/*.rd5
 infra/brouter/brouter-*.zip
 infra/brouter/**/*.apk
+infra/osm-data/*.osm.pbf
+data/routes.json
+infra/brouter/brouter-*/profiles2/customprofiles/
+infra/brouter/brouter-*/profiles2/loopforge-*.brf
 
 # Supabase local
 .supabase/

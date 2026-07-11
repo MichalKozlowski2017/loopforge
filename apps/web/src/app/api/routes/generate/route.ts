@@ -37,7 +37,12 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error(error);
     return NextResponse.json(
-      { error: "Błąd generowania trasy" },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Błąd generowania trasy",
+      },
       { status: 500 },
     );
   }

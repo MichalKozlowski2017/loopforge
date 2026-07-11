@@ -1,24 +1,31 @@
 import type {
-  Direction,
   GenerateRouteRequest,
   GeneratedRoute,
   LatLng,
 } from "@loopforge/osm-types";
 import {
-  fetchRouteThroughWaypoints,
+  fetchRouteThroughWaypoints as fetchBrouterRoute,
   getBrouterConfig,
-  surfaceBreakdownFromSegments,
 } from "@loopforge/brouter";
+import {
+  fetchRouteThroughWaypoints as fetchPgRoute,
+  isRoutingReady,
+  surfaceBreakdownFromSegments,
+} from "@loopforge/routing";
 import { buildGpx } from "@loopforge/gpx";
 import { scoreRoute } from "@loopforge/scoring";
 import {
-  backtrackRatio,
   buildLoopWaypoints,
-  overlapRatio,
+  isGoodLoopQuality,
+  loopQualityMetrics,
   scoreLoopQuality,
 } from "./loop-waypoints";
+import { pruneDeadEndSpurs } from "./prune-spurs";
 
-const DIRECTION_BEARING: Record<Direction, number> = {
+const DIRECTION_BEARING: Record<
+  import("@loopforge/osm-types").Direction,
+  number
+> = {
   N: 0,
   NE: 45,
   E: 90,
@@ -30,6 +37,15 @@ const DIRECTION_BEARING: Record<Direction, number> = {
 };
 
 const EARTH_RADIUS_M = 6_371_000;
+
+interface RoutedLoopResult {
+  coordinates: [number, number][];
+  distanceKm: number;
+  elevationGainM: number;
+  segments: { tags: import("@loopforge/osm-types").OsmTags; distanceM: number }[];
+  mapGeojson?: import("@loopforge/osm-types").RouteMapGeoJson;
+  gpx?: string;
+}
 
 function toRadians(deg: number): number {
   return (deg * Math.PI) / 180;
@@ -92,7 +108,7 @@ function lineCoordinates(
 
 function buildPlaceholderLoop(
   start: LatLng,
-  direction: Direction,
+  direction: import("@loopforge/osm-types").Direction,
   distanceKm: number,
 ): [number, number][] {
   const bearing = DIRECTION_BEARING[direction];
@@ -173,19 +189,47 @@ function buildGeneratedRoute(
   };
 }
 
-async function generateRouteWithBrouter(
+async function generateRouteWithEngine(
   request: GenerateRouteRequest,
+  fetchRoute: (params: {
+    start: LatLng;
+    bikeType: GenerateRouteRequest["bikeType"];
+    waypoints: LatLng[];
+    rideProfile?: GenerateRouteRequest["profile"];
+    skipGpx: boolean;
+  }) => Promise<RoutedLoopResult>,
 ): Promise<GeneratedRoute> {
-  const config = getBrouterConfig();
-  if (!config) {
-    throw new Error("BRouter is not configured");
-  }
-
   const variants = 8;
-  let best: Awaited<ReturnType<typeof fetchRouteThroughWaypoints>> | null = null;
+  const deadlineMs = Date.now() + 50_000;
+  let best: RoutedLoopResult | null = null;
   let bestScore = Infinity;
+  let bestRejected: RoutedLoopResult | null = null;
+  let bestRejectedScore = Infinity;
+
+  const refineRouted = (routed: RoutedLoopResult) => {
+    const pruned = pruneDeadEndSpurs(routed.coordinates);
+    const scoreCoords =
+      pruned.removedM >= 25 ? pruned.coordinates : routed.coordinates;
+
+    return {
+      routed,
+      quality: scoreLoopQuality(
+        scoreCoords,
+        request.distanceKm,
+        routed.distanceKm,
+      ),
+      metrics: loopQualityMetrics(
+        scoreCoords,
+        request.distanceKm,
+        routed.distanceKm,
+      ),
+      hasFerry: routed.segments.some((segment) => segment.tags.route === "ferry"),
+    };
+  };
 
   for (let variant = 0; variant < variants; variant++) {
+    if (Date.now() > deadlineMs && best) break;
+
     try {
       const waypoints = buildLoopWaypoints(
         request.start,
@@ -193,35 +237,50 @@ async function generateRouteWithBrouter(
         request.direction,
         variant,
       );
-      const routed = await fetchRouteThroughWaypoints(config, {
-        start: request.start,
-        bikeType: request.bikeType,
-        waypoints,
-      });
-
-      const quality = scoreLoopQuality(
-        routed.coordinates,
-        request.distanceKm,
-        routed.distanceKm,
+      const { routed, quality, metrics, hasFerry } = refineRouted(
+        await fetchRoute({
+          start: request.start,
+          bikeType: request.bikeType,
+          waypoints,
+          rideProfile: request.profile,
+          skipGpx: true,
+        }),
       );
+
+      if (hasFerry) continue;
+
+      const tooSpurHeavy =
+        metrics.spurShare > 0.08 || metrics.backtrack > 0.08;
+
+      if (tooSpurHeavy) {
+        if (quality < bestRejectedScore) {
+          bestRejectedScore = quality;
+          bestRejected = routed;
+        }
+        continue;
+      }
 
       if (quality < bestScore) {
         bestScore = quality;
         best = routed;
       }
 
-      // Good enough: low overlap and minimal backtracking
       if (
-        overlapRatio(routed.coordinates) < 0.08 &&
-        backtrackRatio(routed.coordinates) < 0.05 &&
-        Math.abs(routed.distanceKm - request.distanceKm) / request.distanceKm <
-          0.2
+        isGoodLoopQuality(
+          routed.coordinates,
+          request.distanceKm,
+          routed.distanceKm,
+        )
       ) {
         break;
       }
     } catch {
       // try next variant
     }
+  }
+
+  if (!best && bestRejected) {
+    best = bestRejected;
   }
 
   if (!best) {
@@ -233,7 +292,6 @@ async function generateRouteWithBrouter(
     elevationGainM: best.elevationGainM,
     segments: best.segments,
     mapGeojson: best.mapGeojson ?? undefined,
-    gpx: best.gpx || undefined,
   });
 }
 
@@ -261,16 +319,54 @@ function generatePlaceholderRoute(request: GenerateRouteRequest): GeneratedRoute
   });
 }
 
+function routingEnginePreference(): "auto" | "pgrouting" | "brouter" {
+  const value = process.env.ROUTING_ENGINE?.trim().toLowerCase();
+  if (value === "pgrouting" || value === "brouter") return value;
+  return "auto";
+}
+
 export async function generateRoute(
   request: GenerateRouteRequest,
 ): Promise<GeneratedRoute> {
-  if (getBrouterConfig()) {
-    try {
-      return await generateRouteWithBrouter(request);
-    } catch (error) {
-      console.error("[loopforge] BRouter failed, using placeholder:", error);
+  const preference = routingEnginePreference();
+
+  if (preference !== "brouter") {
+    const pgReady = await isRoutingReady();
+    if (pgReady) {
+      return generateRouteWithEngine(request, async (params) => {
+        const routed = await fetchPgRoute(params);
+        return {
+          coordinates: routed.coordinates,
+          distanceKm: routed.distanceKm,
+          elevationGainM: routed.elevationGainM,
+          segments: routed.segments,
+          mapGeojson: routed.mapGeojson,
+          gpx: routed.gpx,
+        };
+      });
+    }
+    if (preference === "pgrouting") {
+      throw new Error(
+        "pgRouting is not ready — run supabase db push and pnpm import:osm",
+      );
     }
   }
 
+  const brouterConfig = getBrouterConfig();
+  if (brouterConfig) {
+    return generateRouteWithEngine(request, async (params) => {
+      const routed = await fetchBrouterRoute(brouterConfig, params);
+      return {
+        coordinates: routed.coordinates,
+        distanceKm: routed.distanceKm,
+        elevationGainM: routed.elevationGainM,
+        segments: routed.segments,
+        mapGeojson: routed.mapGeojson ?? undefined,
+        gpx: routed.gpx,
+      };
+    });
+  }
+
+  console.warn("[loopforge] No routing backend — using geometric placeholder");
   return generatePlaceholderRoute(request);
 }

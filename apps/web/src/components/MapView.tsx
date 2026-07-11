@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
+import type { StyleSpecification } from "maplibre-gl";
 import type { RouteFeature, RouteMapGeoJson } from "@loopforge/osm-types";
+import { loadMapStyle } from "@/lib/map-style";
 
 export interface StartPoint {
   lat: number;
@@ -18,17 +20,53 @@ interface MapViewProps {
   onStartChange?: (start: StartPoint) => void;
 }
 
+const ROUTE_SOURCE = "route";
+const ROUTE_LAYER = "route-line";
+const SEGMENTS_SOURCE = "route-segments";
+const SEGMENTS_LAYER = "route-segments-line";
+
+function normalizeCoords(coords: number[][]): [number, number][] {
+  return coords
+    .map((coord) => [coord[0], coord[1]] as [number, number])
+    .filter(
+      ([lng, lat]) =>
+        Number.isFinite(lng) &&
+        Number.isFinite(lat) &&
+        Math.abs(lat) <= 90 &&
+        !(lng === 0 && lat === 0),
+    );
+}
+
+function normalizeRoute(route: RouteFeature): RouteFeature {
+  return {
+    ...route,
+    geometry: {
+      ...route.geometry,
+      coordinates: normalizeCoords(route.geometry.coordinates),
+    },
+  };
+}
+
+function normalizeMapGeojson(mapGeojson: RouteMapGeoJson): RouteMapGeoJson {
+  return {
+    type: "FeatureCollection",
+    features: mapGeojson.features
+      .map((feature) => ({
+        ...feature,
+        geometry: {
+          ...feature.geometry,
+          coordinates: normalizeCoords(feature.geometry.coordinates),
+        },
+      }))
+      .filter((feature) => feature.geometry.coordinates.length >= 2),
+  };
+}
+
 function fitToCoordinates(
   map: maplibregl.Map,
   coords: [number, number][],
 ): void {
-  const valid = coords.filter(
-    ([lng, lat]) =>
-      Number.isFinite(lng) &&
-      Number.isFinite(lat) &&
-      Math.abs(lat) <= 90 &&
-      !(lng === 0 && lat === 0),
-  );
+  const valid = normalizeCoords(coords);
   if (valid.length === 0) return;
   const bounds = valid.reduce(
     (b, coord) => b.extend(coord),
@@ -55,64 +93,94 @@ export function MapView({
     leave?: () => void;
     move?: (event: maplibregl.MapLayerMouseEvent) => void;
   }>({});
+  const routeDataRef = useRef({ route, mapGeojson, pickStart });
 
   const [mapReady, setMapReady] = useState(false);
+  const [mapStyle, setMapStyle] = useState<StyleSpecification | null>(null);
 
   onStartChangeRef.current = onStartChange;
+  routeDataRef.current = { route, mapGeojson, pickStart };
 
-  const syncRoute = useCallback(() => {
-    const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+  useEffect(() => {
+    let cancelled = false;
+    loadMapStyle().then((style) => {
+      if (!cancelled) setMapStyle(style);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-    const sourceId = "route";
-    const layerId = "route-line";
-    const segmentsSourceId = "route-segments";
-    const segmentsLayerId = "route-segments-line";
-
+  const clearRouteLayers = useCallback((map: maplibregl.Map) => {
     const prev = routeHandlersRef.current;
-    if (prev.enter && map.getLayer(segmentsLayerId)) {
-      map.off("mouseenter", segmentsLayerId, prev.enter);
-      map.off("mouseleave", segmentsLayerId, prev.leave!);
-      map.off("mousemove", segmentsLayerId, prev.move!);
+    if (prev.enter && map.getLayer(SEGMENTS_LAYER)) {
+      map.off("mouseenter", SEGMENTS_LAYER, prev.enter);
+      map.off("mouseleave", SEGMENTS_LAYER, prev.leave!);
+      map.off("mousemove", SEGMENTS_LAYER, prev.move!);
     }
     routeHandlersRef.current = {};
 
-    if (map.getLayer(segmentsLayerId)) map.removeLayer(segmentsLayerId);
-    if (map.getSource(segmentsSourceId)) map.removeSource(segmentsSourceId);
-    if (map.getLayer(layerId)) map.removeLayer(layerId);
-    if (map.getSource(sourceId)) map.removeSource(sourceId);
+    if (map.getLayer(SEGMENTS_LAYER)) map.removeLayer(SEGMENTS_LAYER);
+    if (map.getSource(SEGMENTS_SOURCE)) map.removeSource(SEGMENTS_SOURCE);
+    if (map.getLayer(ROUTE_LAYER)) map.removeLayer(ROUTE_LAYER);
+    if (map.getSource(ROUTE_SOURCE)) map.removeSource(ROUTE_SOURCE);
+  }, []);
 
-    if (mapGeojson?.features.length) {
-      map.addSource(segmentsSourceId, {
+  const syncRouteLayers = useCallback((): boolean => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return false;
+
+    const {
+      route: routeData,
+      mapGeojson: segmentData,
+      pickStart: picking,
+    } = routeDataRef.current;
+
+    clearRouteLayers(map);
+
+    const normalizedRoute = routeData ? normalizeRoute(routeData) : null;
+    const normalizedSegments =
+      segmentData?.features.length ? normalizeMapGeojson(segmentData) : null;
+
+    if (
+      !normalizedRoute?.geometry.coordinates.length &&
+      !normalizedSegments?.features.length
+    ) {
+      return true;
+    }
+
+    if (normalizedRoute?.geometry.coordinates.length) {
+      map.addSource(ROUTE_SOURCE, {
         type: "geojson",
-        data: mapGeojson,
+        data: normalizedRoute,
       });
 
       map.addLayer({
-        id: segmentsLayerId,
+        id: ROUTE_LAYER,
         type: "line",
-        source: segmentsSourceId,
+        source: ROUTE_SOURCE,
+        paint: {
+          "line-color": "#0f766e",
+          "line-width": 6,
+          "line-opacity": 0.35,
+        },
+      });
+    }
+
+    if (normalizedSegments?.features.length) {
+      map.addSource(SEGMENTS_SOURCE, {
+        type: "geojson",
+        data: normalizedSegments,
+      });
+
+      map.addLayer({
+        id: SEGMENTS_LAYER,
+        type: "line",
+        source: SEGMENTS_SOURCE,
         paint: {
           "line-color": ["get", "color"],
           "line-width": 5,
-          "line-opacity": 0.92,
-          "line-dasharray": [
-            "match",
-            ["get", "category"],
-            "gravel",
-            ["literal", [2.5, 1.5]],
-            "compacted",
-            ["literal", [4, 2]],
-            "dirt",
-            ["literal", [1, 2]],
-            "path",
-            ["literal", [1.5, 2]],
-            "forest",
-            ["literal", [3, 2, 1, 2]],
-            "unknown",
-            ["literal", [2, 2]],
-            ["literal", [1, 0]],
-          ],
+          "line-opacity": 0.95,
         },
       });
 
@@ -120,62 +188,67 @@ export function MapView({
         map.getCanvas().style.cursor = "pointer";
       };
       const onMouseLeave = () => {
-        map.getCanvas().style.cursor = pickStart ? "crosshair" : "";
+        map.getCanvas().style.cursor = picking ? "crosshair" : "";
         popupRef.current?.remove();
       };
       const onMouseMove = (event: maplibregl.MapLayerMouseEvent) => {
         const feature = event.features?.[0];
         if (!feature?.properties) return;
-        const label = String(feature.properties.label ?? "Nawierzchnia");
+        const props = feature.properties as Record<string, unknown>;
+        const label = String(
+          props.label ?? props.surface ?? props.highway ?? "Nawierzchnia",
+        );
         popupRef.current
           ?.setLngLat(event.lngLat)
-          .setHTML(`<span style="font:12px system-ui">${label}</span>`)
+          .setHTML(
+            `<div style="color:#fafafa;font:12px/1.4 system-ui,sans-serif">${label}</div>`,
+          )
           .addTo(map);
       };
 
-      map.on("mouseenter", segmentsLayerId, onMouseEnter);
-      map.on("mouseleave", segmentsLayerId, onMouseLeave);
-      map.on("mousemove", segmentsLayerId, onMouseMove);
+      map.on("mouseenter", SEGMENTS_LAYER, onMouseEnter);
+      map.on("mouseleave", SEGMENTS_LAYER, onMouseLeave);
+      map.on("mousemove", SEGMENTS_LAYER, onMouseMove);
       routeHandlersRef.current = {
         enter: onMouseEnter,
         leave: onMouseLeave,
         move: onMouseMove,
       };
-
-      const allCoords = mapGeojson.features.flatMap(
-        (feature) => feature.geometry.coordinates,
-      );
-      fitToCoordinates(map, allCoords);
-      return;
     }
 
-    if (!route) return;
+    const allCoords =
+      normalizedRoute?.geometry.coordinates ??
+      normalizedSegments?.features.flatMap(
+        (feature) => feature.geometry.coordinates,
+      ) ??
+      [];
 
-    map.addSource(sourceId, {
-      type: "geojson",
-      data: route,
-    });
+    fitToCoordinates(map, allCoords);
+    map.resize();
+    map.triggerRepaint();
+    return true;
+  }, [clearRouteLayers]);
 
-    map.addLayer({
-      id: layerId,
-      type: "line",
-      source: sourceId,
-      paint: {
-        "line-color": "#22c55e",
-        "line-width": 4,
-        "line-opacity": 0.9,
-      },
-    });
+  const scheduleRouteSync = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
 
-    fitToCoordinates(map, route.geometry.coordinates);
-  }, [route, mapGeojson, pickStart]);
+    if (syncRouteLayers()) return;
+
+    const retry = () => {
+      syncRouteLayers();
+    };
+
+    map.once("load", retry);
+    map.once("idle", retry);
+  }, [syncRouteLayers]);
 
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    if (!containerRef.current || mapRef.current || !mapStyle) return;
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: "https://tiles.openfreemap.org/styles/liberty",
+      style: mapStyle,
       center,
       zoom: 13,
     });
@@ -190,6 +263,7 @@ export function MapView({
 
     const onLoad = () => {
       setMapReady(true);
+      scheduleRouteSync();
     };
 
     map.on("load", onLoad);
@@ -207,13 +281,13 @@ export function MapView({
       mapRef.current = null;
       setMapReady(false);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- init once
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- init once per style
+  }, [mapStyle]);
 
   useEffect(() => {
     if (!mapReady) return;
-    syncRoute();
-  }, [mapReady, syncRoute]);
+    scheduleRouteSync();
+  }, [mapReady, route, mapGeojson, scheduleRouteSync]);
 
   useEffect(() => {
     const map = mapRef.current;

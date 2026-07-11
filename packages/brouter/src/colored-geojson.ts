@@ -66,6 +66,99 @@ function mergeAdjacentFeatures(
   return merged;
 }
 
+function tagsForCoordinate(
+  coord: [number, number],
+  taggedVertices: { coord: [number, number]; tags: OsmTags }[],
+): OsmTags {
+  let bestTags = taggedVertices[0]?.tags ?? {};
+  let bestDist = Infinity;
+
+  for (const vertex of taggedVertices) {
+    const dLng = coord[0] - vertex.coord[0];
+    const dLat = coord[1] - vertex.coord[1];
+    const dist = dLng * dLng + dLat * dLat;
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestTags = vertex.tags;
+    }
+  }
+
+  return bestTags;
+}
+
+function parseTaggedVertices(
+  messages: string[][],
+): { coord: [number, number]; tags: OsmTags }[] {
+  const vertices: { coord: [number, number]; tags: OsmTags }[] = [];
+  let lastTags: OsmTags = {};
+
+  for (let i = 1; i < messages.length; i++) {
+    const row = messages[i];
+    const lon1 = row[0];
+    const lat1 = row[1];
+    if (!isMicroDegree(lon1) || !isMicroDegree(lat1)) continue;
+
+    const coord = microToCoord(lon1, lat1);
+    if (!isValidCoord(coord)) continue;
+
+    const wayTags = row[9] || messages[i - 1]?.[9] || "";
+    if (wayTags) {
+      lastTags = parseOsmTagString(wayTags);
+    }
+
+    vertices.push({ coord, tags: { ...lastTags } });
+  }
+
+  return vertices;
+}
+
+/**
+ * Color the exact BRouter route geometry — every consecutive coordinate pair
+ * becomes a segment, so the line always follows paths (no chord shortcuts).
+ */
+export function buildColoredGeoJsonFromRoute(
+  coordinates: [number, number][],
+  messages: string[][] | undefined,
+): RouteMapGeoJson | null {
+  if (coordinates.length < 2) return null;
+
+  const taggedVertices = messages ? parseTaggedVertices(messages) : [];
+  if (taggedVertices.length === 0) {
+    return buildColoredGeoJson(messages);
+  }
+
+  const edges: RouteSegmentFeature[] = [];
+
+  for (let i = 0; i < coordinates.length - 1; i++) {
+    const start = coordinates[i];
+    const end = coordinates[i + 1];
+    if (start[0] === end[0] && start[1] === end[1]) continue;
+
+    const tags = tagsForCoordinate(start, taggedVertices);
+    const style = getSurfaceStyle(tags);
+    edges.push({
+      type: "Feature",
+      properties: {
+        surface: tags.surface ?? tags.highway ?? "nieznane",
+        label: style.label,
+        category: style.category,
+        color: style.color,
+        dash: style.dash,
+        highway: tags.highway,
+      },
+      geometry: {
+        type: "LineString",
+        coordinates: [start, end],
+      },
+    });
+  }
+
+  const features = mergeAdjacentFeatures(edges);
+  if (features.length === 0) return null;
+
+  return { type: "FeatureCollection", features };
+}
+
 /**
  * Builds colored segments edge-by-edge from BRouter message rows.
  * Row 0 is a header — skipped. Only numeric micro-degree coordinates are used.

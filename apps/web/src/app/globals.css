@@ -22,3 +22,20 @@ body {
 .maplibregl-ctrl-attrib {
   font-size: 10px;
 }
+
+.maplibregl-popup.loopforge-popup .maplibregl-popup-content {
+  background: #18181b;
+  color: #fafafa;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font: 12px/1.4 system-ui, sans-serif;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 35%);
+}
+
+.maplibregl-popup.loopforge-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-top-color: #18181b;
+}
+
+.maplibregl-popup.loopforge-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip {
+  border-bottom-color: #18181b;
+}

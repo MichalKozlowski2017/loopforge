@@ -8,12 +8,24 @@ VERSION="1.7.9"
 
 mkdir -p "$SEG_DIR" "$BR_DIR/customprofiles"
 
+sync_custom_profiles() {
+  local src="$BR_DIR/customprofiles"
+  local dest="$BR_DIR/brouter-$VERSION/profiles2/customprofiles"
+  if [[ ! -d "$src" ]]; then
+    return
+  fi
+  mkdir -p "$dest"
+  cp -f "$src"/*.brf "$dest/" 2>/dev/null || true
+}
+
 if [[ ! -f "$BR_DIR/brouter-$VERSION/brouter-$VERSION-all.jar" ]]; then
   echo "→ Pobieram BRouter $VERSION..."
   curl -fsSL -o "$BR_DIR/brouter-$VERSION.zip" \
     "https://github.com/abrensch/brouter/releases/download/v$VERSION/brouter-$VERSION.zip"
   unzip -qo "$BR_DIR/brouter-$VERSION.zip" -d "$BR_DIR"
 fi
+
+sync_custom_profiles
 
 download_segment() {
   local file="$1"
