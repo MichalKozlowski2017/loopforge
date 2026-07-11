@@ -67,8 +67,15 @@ function startServerProcess(config: BrouterConfig): Promise<void> {
   return starting;
 }
 
+function isLocalBaseUrl(baseUrl: string): boolean {
+  return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/i.test(baseUrl);
+}
+
 export async function ensureBrouterServer(config: BrouterConfig): Promise<void> {
   if (await isServerHealthy(config.baseUrl)) return;
+  if (!isLocalBaseUrl(config.baseUrl)) {
+    throw new Error(`BRouter unreachable at ${config.baseUrl}`);
+  }
   await startServerProcess(config);
 }
 

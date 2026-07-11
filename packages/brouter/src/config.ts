@@ -33,6 +33,23 @@ function resolvePath(value: string | undefined, fallback: string): string {
 }
 
 export function getBrouterConfig(): BrouterConfig | null {
+  const port = Number(process.env.BROUTER_PORT ?? "17777");
+  const baseUrl = process.env.BROUTER_URL?.trim() || `http://127.0.0.1:${port}`;
+  const isRemote =
+    !!process.env.BROUTER_URL?.trim() &&
+    !/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/i.test(baseUrl);
+
+  if (isRemote) {
+    return {
+      jarPath: "",
+      segmentsDir: "",
+      profilesDir: "",
+      customProfilesDir: "",
+      port,
+      baseUrl: baseUrl.replace(/\/$/, ""),
+    };
+  }
+
   const jarPath = resolvePath(
     process.env.BROUTER_JAR,
     "infra/brouter/brouter-1.7.9/brouter-1.7.9-all.jar",
@@ -54,14 +71,13 @@ export function getBrouterConfig(): BrouterConfig | null {
     return null;
   }
 
-  const port = Number(process.env.BROUTER_PORT ?? "17777");
   return {
     jarPath,
     segmentsDir,
     profilesDir,
     customProfilesDir,
     port,
-    baseUrl: process.env.BROUTER_URL ?? `http://127.0.0.1:${port}`,
+    baseUrl,
   };
 }
 
