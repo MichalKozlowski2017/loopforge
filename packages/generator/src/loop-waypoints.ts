@@ -84,29 +84,60 @@ function pathLengthM(
   return meters;
 }
 
-const VARIANT_POINT_COUNTS = [5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4];
 const VARIANT_SCALES = [
   1.0, 0.9, 1.1, 0.85, 1.15, 0.92, 1.08, 0.88, 1.12, 0.95, 1.05, 0.87, 1.13,
   0.93, 1.07, 1.0,
 ];
 const VARIANT_ROTATIONS = [
-  0, 18, -18, 36, -36, 12, -12, 24, -24, 30, -30, 6, -6, 42, -42, 0,
+  0, 6, -6, 10, -10, 4, -4, 8, -8, 12, -12, 3, -3, 14, -14, 0,
 ];
 
-/** Bias arc west/east so NW loops don't drift over the river into eastern Warsaw. */
-function arcSideBias(direction: Direction): { west: number; east: number } {
+/** Perpendicular bearing for a parallel return corridor (offset from the outbound line). */
+function returnCorridorBearing(
+  direction: Direction,
+  variant: number,
+): number {
+  const base = DIRECTION_BEARING[direction];
+  const side = variant % 2 === 0 ? -1 : 1;
   switch (direction) {
     case "NW":
     case "W":
     case "SW":
-      return { west: 1.35, east: 0.55 };
+      return (base - 90 * side + 360) % 360;
     case "NE":
     case "E":
     case "SE":
-      return { west: 0.55, east: 1.35 };
+      return (base + 90 * side + 360) % 360;
     default:
-      return { west: 1, east: 1 };
+      return (base + 90 * side + 360) % 360;
   }
+}
+
+function pointOnAxisOffset(
+  start: LatLng,
+  bearing: number,
+  axisDistM: number,
+  perpBearing: number,
+  lateralM: number,
+): LatLng {
+  const onAxis = destinationPoint(start, bearing, axisDistM);
+  return destinationPoint(onAxis, perpBearing, lateralM);
+}
+
+/** Estimate routed length for the longitudinal out + parallel return pattern. */
+function longitudinalPathFactor(
+  outCount: number,
+  returnCount: number,
+  outShare: number,
+  lateralShare: number,
+): number {
+  const outLeg = outShare;
+  const lateral = lateralShare;
+  const returnLeg = Math.max(0.12, 1 - outShare - lateral * returnCount * 0.35);
+  const connectors =
+    Math.hypot(lateral, outLeg * 0.25) +
+    (returnCount > 1 ? Math.hypot(lateral * 0.35, outLeg * 0.18) : 0);
+  return outLeg + returnLeg + connectors;
 }
 
 /** Fraction of route mileage inside a cone around `direction`. */
@@ -139,8 +170,8 @@ export function directionCoverageRatio(
 }
 
 /**
- * Place waypoints on a forward-facing arc so the loop bulk lies in `direction`.
- * Full ellipses with center opposite to direction put most mileage behind the start.
+ * Longitudinal loop: ride out in `direction`, return via a parallel corridor
+ * so BRouter picks different roads (overlap/backtrack metrics guard same-road returns).
  */
 export function buildLoopWaypoints(
   start: LatLng,
@@ -149,34 +180,47 @@ export function buildLoopWaypoints(
   variant: number,
   scaleMultiplier = 1,
 ): LatLng[] {
-  const baseBearing = DIRECTION_BEARING[direction];
-  const idx = variant % VARIANT_POINT_COUNTS.length;
-  const pointCount = VARIANT_POINT_COUNTS[idx];
+  const idx = variant % VARIANT_SCALES.length;
   const scale = VARIANT_SCALES[idx] * scaleMultiplier;
-  const rotation = VARIANT_ROTATIONS[idx];
+  const bearing =
+    (DIRECTION_BEARING[direction] + VARIANT_ROTATIONS[idx] * 0.35 + 360) % 360;
 
-  // Narrow arc (~110–130°) centered on direction — wide arcs pull the loop sideways (e.g. into E when NW chosen).
-  const arcHalfWidth = 54 + (idx % 3) * 8;
-  const { west, east } = arcSideBias(direction);
-  const arcSpanDeg = arcHalfWidth * (west + east);
-  const arcStart =
-    baseBearing - arcHalfWidth * west + rotation * 0.12;
+  const outCount = 2 + (idx % 2);
+  const returnCount = 1 + (idx % 2);
+  const outShare = 0.42 + (idx % 3) * 0.04;
+  const lateralShare = 0.07 + (idx % 4) * 0.015;
 
-  // Sequential via-routing length ≈ 2R (out+back to start) + (n-1) chords along the arc.
-  const halfStepRad = toRadians(arcSpanDeg / (2 * (pointCount - 1 || 1)));
-  const pathFactor =
-    pointCount <= 1
-      ? 2
-      : 2 + (pointCount - 1) * 2 * Math.sin(halfStepRad);
-  const roadDetourFactor = 1.42;
-  const radiusM =
-    ((distanceKm * 1000) / (pathFactor * roadDetourFactor)) * scale;
+  const roadDetourFactor = 1.38;
+  const pathFactor = longitudinalPathFactor(
+    outCount,
+    returnCount,
+    outShare,
+    lateralShare,
+  );
+  const totalM = ((distanceKm * 1000) / (pathFactor * roadDetourFactor)) * scale;
+  const outDistM = totalM * outShare;
+  const lateralM = totalM * lateralShare;
+  const perpBearing = returnCorridorBearing(direction, idx);
 
   const waypoints: LatLng[] = [];
-  for (let i = 0; i < pointCount; i++) {
-    const t = pointCount === 1 ? 0.5 : i / (pointCount - 1);
-    const bearing = arcStart + t * arcSpanDeg;
-    waypoints.push(destinationPoint(start, bearing, radiusM));
+
+  for (let i = 0; i < outCount; i++) {
+    const t = (i + 1) / outCount;
+    waypoints.push(destinationPoint(start, bearing, outDistM * t));
+  }
+
+  for (let i = 0; i < returnCount; i++) {
+    const backT = 1 - (i + 1) / (returnCount + 1.2);
+    const lateralT = 1 - i * 0.22;
+    waypoints.push(
+      pointOnAxisOffset(
+        start,
+        bearing,
+        outDistM * backT,
+        perpBearing,
+        lateralM * lateralT,
+      ),
+    );
   }
 
   return waypoints;
@@ -369,6 +413,6 @@ export function isGoodLoopQuality(
     backtrack < 0.05 &&
     spurShare < 0.06 &&
     distanceError < 0.18 &&
-    directionCoverage >= 0.55
+    directionCoverage >= 0.48
   );
 }

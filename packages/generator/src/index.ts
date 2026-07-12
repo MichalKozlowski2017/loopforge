@@ -306,7 +306,7 @@ async function generateRouteWithEngine(
 
         const tooSpurHeavy =
           metrics.spurShare > MAX_SPUR_SHARE || metrics.backtrack > MAX_BACKTRACK;
-        const wrongDirection = metrics.directionCoverage < 0.52;
+        const wrongDirection = metrics.directionCoverage < 0.45;
 
         if (tooSpurHeavy || wrongDirection) {
           if (quality < bestRejectedScore) {

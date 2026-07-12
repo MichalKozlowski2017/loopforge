@@ -83,6 +83,8 @@ function findDeadEndSpurRangesWithConfig(
 
   const ranges: SpurRange[] = [];
   const maxSpan = Math.floor(coordinates.length * config.maxSpanRatio);
+  const totalM = totalPathLengthM(coordinates);
+  const maxSpurM = Math.max(2500, totalM * 0.28);
 
   for (let i = 0; i < coordinates.length - config.minGap; i++) {
     const origin = toLatLng(coordinates[i]);
@@ -95,6 +97,13 @@ function findDeadEndSpurRangesWithConfig(
 
       const spurPathM = pathLengthM(coordinates, i, j);
       if (spurPathM < config.minSpurM) continue;
+      if (spurPathM > maxSpurM) continue;
+
+      // Loop closure near start/end is the main route, not a dead-end spur.
+      if (i < 3 && j > coordinates.length * 0.45) continue;
+      if (j >= coordinates.length - 4 && i < coordinates.length * 0.12) {
+        continue;
+      }
 
       const straightM = Math.max(haversineM(origin, returnPt), 1);
       if (spurPathM / straightM < config.minDetourRatio) continue;
@@ -228,6 +237,7 @@ export function findReverseSegmentSpurRanges(coordinates: Coord[]): SpurRange[] 
 
       const spurPathM = pathLengthM(coordinates, i, j + 1);
       if (spurPathM < minSpurM) continue;
+      if (spurPathM > totalPathLengthM(coordinates) * 0.28) continue;
 
       ranges.push({ start: i + 1, end: j });
       break;
@@ -321,6 +331,14 @@ export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
   }
 
   const afterM = totalPathLengthM(current);
+  if (afterM < beforeM * 0.65) {
+    return {
+      coordinates,
+      removedRanges: [],
+      removedM: 0,
+    };
+  }
+
   return {
     coordinates: current,
     removedRanges: mergeSpurRanges(allRanges),
