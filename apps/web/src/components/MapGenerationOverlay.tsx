@@ -43,13 +43,13 @@ export function MapGenerationOverlay({
 
   return (
     <div
-      className="absolute inset-0 z-30 flex items-center justify-center rounded-xl bg-zinc-950/75 p-6 backdrop-blur-md"
+      className="fixed inset-0 z-60 flex items-center justify-center overflow-y-auto bg-zinc-950/85 p-4 backdrop-blur-md sm:p-6"
       role="status"
       aria-live="polite"
       aria-busy="true"
     >
-      <div className="flex w-full max-w-md flex-col items-center gap-8">
-        <div className="relative h-44 w-44">
+      <div className="flex w-full max-w-md flex-col items-center gap-6 py-4 sm:gap-8 sm:py-0">
+        <div className="relative h-36 w-36 sm:h-44 sm:w-44">
           <div className="absolute inset-0 rounded-full bg-emerald-500/10 blur-2xl loopforge-glow" />
           <svg
             viewBox="0 0 200 200"
@@ -121,7 +121,7 @@ export function MapGenerationOverlay({
             />
           </div>
 
-          <ol className="space-y-2">
+          <ol className="max-h-[38vh] space-y-2 overflow-y-auto pr-1 sm:max-h-none sm:overflow-visible">
             {phaseSteps.map((step, index) => {
               const done = index < safeActiveIndex;
               const active = index === safeActiveIndex;

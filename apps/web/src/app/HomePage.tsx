@@ -139,6 +139,15 @@ export default function HomePage() {
     refreshGeolocation();
   }
 
+  useEffect(() => {
+    if (!loading) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [loading]);
+
   async function handleGenerate() {
     setLoading(true);
     setLoadingSeconds(0);
@@ -211,7 +220,27 @@ export default function HomePage() {
 
   return (
     <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
-      <aside className="w-full border-b border-zinc-800 p-6 lg:w-96 lg:border-b-0 lg:border-r">
+      <section className="relative order-1 h-[min(46vh,26rem)] min-h-[240px] shrink-0 p-3 lg:order-2 lg:min-h-0 lg:h-auto lg:flex-1 lg:p-4">
+        <MapView
+          center={[form.lng, form.lat]}
+          start={{ lat: form.lat, lng: form.lng }}
+          route={route?.geojson ?? null}
+          mapGeojson={route?.mapGeojson ?? null}
+          pickStart={pickOnMap && !loading}
+          onStartChange={handleStartChange}
+          loopEntry={route?.loopEntry ?? extractLoopEntry(route) ?? null}
+        />
+        {loading ? (
+          <MapGenerationOverlay
+            seconds={loadingSeconds}
+            progress={generationProgress}
+            showApproach={form.approachEnabled}
+          />
+        ) : null}
+        {route?.mapGeojson ? <SurfaceLegend /> : null}
+      </section>
+
+      <aside className="order-2 w-full border-b border-zinc-800 p-4 lg:order-1 lg:w-96 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-6">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold">Kuźnia pętli</h1>
           <p className="mt-2 text-sm text-zinc-400">
@@ -230,12 +259,6 @@ export default function HomePage() {
           onUseMyLocation={handleUseMyLocation}
           onTogglePickOnMap={() => setPickOnMap((active) => !active)}
         />
-
-        {loading ? (
-          <p className="mt-3 text-xs text-zinc-500">
-            Trwa generowanie — szczegóły na mapie →
-          </p>
-        ) : null}
 
         {error ? (
           <p className="mt-4 rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-sm text-red-300">
@@ -345,26 +368,6 @@ export default function HomePage() {
           </section>
         ) : null}
       </aside>
-
-      <section className="relative min-h-[50vh] flex-1 p-4 lg:min-h-0">
-        <MapView
-          center={[form.lng, form.lat]}
-          start={{ lat: form.lat, lng: form.lng }}
-          route={route?.geojson ?? null}
-          mapGeojson={route?.mapGeojson ?? null}
-          pickStart={pickOnMap && !loading}
-          onStartChange={handleStartChange}
-          loopEntry={route?.loopEntry ?? extractLoopEntry(route) ?? null}
-        />
-        {loading ? (
-          <MapGenerationOverlay
-            seconds={loadingSeconds}
-            progress={generationProgress}
-            showApproach={form.approachEnabled}
-          />
-        ) : null}
-        {route?.mapGeojson ? <SurfaceLegend /> : null}
-      </section>
     </main>
   );
 }
