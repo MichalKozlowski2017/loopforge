@@ -107,11 +107,13 @@ export function MapGenerationOverlay({
         </div>
 
         <div className="w-full space-y-4">
-          <div className="space-y-1 text-center">
-            <p className="text-lg font-medium text-zinc-100">
+          <div className="min-h-[4.75rem] space-y-1 text-center">
+            <p className="line-clamp-2 text-lg font-medium leading-snug text-zinc-100">
               {progress?.message ?? "Kuźnia pracuje…"}
             </p>
-            <p className="text-sm text-zinc-400">{subtitle}</p>
+            <p className="line-clamp-2 min-h-[2.5rem] text-sm leading-snug text-zinc-400">
+              {subtitle}
+            </p>
           </div>
 
           <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
@@ -128,7 +130,7 @@ export function MapGenerationOverlay({
               return (
                 <li
                   key={step.phase}
-                  className={`flex items-start gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
+                  className={`flex min-h-[2.5rem] items-start gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
                     active
                       ? "bg-emerald-950/50 text-emerald-100"
                       : done
@@ -148,27 +150,24 @@ export function MapGenerationOverlay({
                   >
                     {done ? "✓" : active ? "●" : "○"}
                   </span>
-                  <span>
+                  <span className="min-w-0 flex-1">
                     <span className={active ? "font-medium" : undefined}>
                       {step.title}
                     </span>
-                    {active && progress?.detail ? (
-                      <span className="mt-0.5 block text-xs text-zinc-400">
-                        {progress.detail}
-                      </span>
-                    ) : null}
                   </span>
                 </li>
               );
             })}
           </ol>
 
-          {showSlowHint ? (
-            <p className="text-center text-xs text-zinc-500">
-              Pierwsze uruchomienie po przerwie może potrwać do minuty — BRouter
-              buduje trasę od zera.
-            </p>
-          ) : null}
+          <p
+            className={`min-h-[2.5rem] text-center text-xs leading-snug text-zinc-500 ${
+              showSlowHint ? "" : "invisible"
+            }`}
+          >
+            Pierwsze uruchomienie po przerwie może potrwać do minuty — BRouter
+            buduje trasę od zera.
+          </p>
         </div>
       </div>
     </div>
