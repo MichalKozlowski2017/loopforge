@@ -128,7 +128,7 @@ export default function HomePage() {
           direction: form.direction,
           profile: form.profile,
         }),
-        signal: AbortSignal.timeout(90_000),
+        signal: AbortSignal.timeout(120_000),
       });
 
       if (!response.ok) {
@@ -142,7 +142,7 @@ export default function HomePage() {
     } catch (err) {
       if (err instanceof DOMException && err.name === "TimeoutError") {
         setError(
-          "Generowanie trwa zbyt długo (>90 s). Sprawdź, czy BRouter działa (pnpm brouter).",
+          "Generowanie trwa zbyt długo (>2 min). Spróbuj krótszego dystansu lub odczekaj chwilę.",
         );
       } else {
         setError(err instanceof Error ? err.message : "Nieznany błąd");

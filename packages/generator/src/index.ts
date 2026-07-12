@@ -248,9 +248,8 @@ async function generateRouteWithEngine(
     skipGpx: boolean;
   }) => Promise<RoutedLoopResult>,
 ): Promise<GeneratedRoute> {
-  const variants = 8;
-  const scaleAttempts = [1.0, 0.86, 0.74, 1.08];
-  const deadlineMs = Date.now() + 50_000;
+  const variants = 5;
+  const deadlineMs = Date.now() + 75_000;
   let best: RoutedLoopResult | null = null;
   let bestScore = Infinity;
   let bestRejected: RoutedLoopResult | null = null;
@@ -260,9 +259,13 @@ async function generateRouteWithEngine(
     if (Date.now() > deadlineMs && best) break;
 
     try {
-      for (const scale of scaleAttempts) {
+      const scales: number[] = [1.0];
+      let variantDone = false;
+
+      for (let si = 0; si < scales.length; si++) {
         if (Date.now() > deadlineMs && best) break;
 
+        const scale = scales[si];
         const waypoints = buildLoopWaypoints(
           request.start,
           request.distanceKm,
@@ -290,6 +293,18 @@ async function generateRouteWithEngine(
           request.direction,
         );
 
+        // One follow-up scale if distance is off (not four scales every time).
+        if (
+          si === 0 &&
+          scales.length === 1 &&
+          metrics.distanceError > 0.12 &&
+          Date.now() < deadlineMs - 8_000
+        ) {
+          scales.push(
+            refined.distanceKm > request.distanceKm ? 0.84 : 1.06,
+          );
+        }
+
         const tooSpurHeavy =
           metrics.spurShare > MAX_SPUR_SHARE || metrics.backtrack > MAX_BACKTRACK;
         const wrongDirection = metrics.directionCoverage < 0.45;
@@ -316,9 +331,22 @@ async function generateRouteWithEngine(
             request.direction,
           )
         ) {
+          variantDone = true;
+          break;
+        }
+
+        // Accept "good enough" early to avoid timeout on production.
+        if (
+          metrics.directionCoverage >= 0.5 &&
+          metrics.distanceError < 0.22 &&
+          metrics.spurShare < 0.06
+        ) {
+          variantDone = true;
           break;
         }
       }
+
+      if (variantDone) break;
 
       if (
         best &&
