@@ -324,11 +324,14 @@ async function generateRouteWithEngine(
 }> {
   const variants = 5;
   const jitter = createGenerationJitter(variants);
-  const deadlineMs = Date.now() + 75_000;
+  const deadlineMs = Date.now() + 95_000;
   let best: RoutedLoopResult | null = null;
   let bestScore = Infinity;
   let bestRejected: RoutedLoopResult | null = null;
   let bestRejectedScore = Infinity;
+  let bestFallback: RoutedLoopResult | null = null;
+  let bestFallbackScore = Infinity;
+  let usedRelaxedFallback = false;
   let attempt = 0;
   const maxAttemptsEstimate = variants * 2;
   const { onProgress } = options ?? {};
@@ -419,11 +422,16 @@ async function generateRouteWithEngine(
           variantTotal: variants,
         });
 
+        if (quality < bestFallbackScore) {
+          bestFallbackScore = quality;
+          bestFallback = refined;
+        }
+
         // One follow-up scale if distance is off (not four scales every time).
         if (
           si === 0 &&
           scales.length === 1 &&
-          metrics.distanceError > 0.1 &&
+          metrics.distanceError > 0.05 &&
           Date.now() < deadlineMs - 8_000
         ) {
           reportProgress(onProgress, {
@@ -446,7 +454,7 @@ async function generateRouteWithEngine(
 
         const tooSpurHeavy =
           metrics.spurShare > MAX_SPUR_SHARE || metrics.backtrack > MAX_BACKTRACK;
-        const wrongDirection = metrics.directionCoverage < 0.48;
+        const wrongDirection = metrics.directionCoverage < 0.38;
 
         if (tooSpurHeavy || wrongDirection) {
           if (quality < bestRejectedScore) {
@@ -528,15 +536,81 @@ async function generateRouteWithEngine(
       request.direction,
     );
     if (
-      rejectedMetrics.directionCoverage >= 0.48 &&
-      rejectedMetrics.distanceError < 0.35
+      rejectedMetrics.directionCoverage >= 0.38 &&
+      rejectedMetrics.distanceError < 0.45
     ) {
       best = bestRejected;
+      usedRelaxedFallback = true;
+    }
+  }
+
+  if (!best && bestFallback) {
+    const fallbackMetrics = loopQualityMetrics(
+      bestFallback.coordinates,
+      request.distanceKm,
+      bestFallback.distanceKm,
+      request.start,
+      request.direction,
+    );
+    if (
+      fallbackMetrics.directionCoverage >= 0.32 &&
+      fallbackMetrics.distanceError < 0.52
+    ) {
+      best = bestFallback;
+      usedRelaxedFallback = true;
     }
   }
 
   if (!best) {
-    throw new Error("Could not generate loop through waypoints");
+    for (const variant of [0, 1, 2, 3]) {
+      if (Date.now() > deadlineMs) break;
+      try {
+        const shape = loopShapeForVariant(request.distanceKm, variant);
+        const waypoints = buildLoopWaypoints(
+          request.start,
+          request.distanceKm,
+          request.direction,
+          variant,
+          1.0,
+          shape,
+          request.avoidAsphalt,
+          jitter,
+        );
+        const routed = await fetchRoute({
+          start: request.start,
+          bikeType: request.bikeType,
+          waypoints,
+          rideProfile: request.profile,
+          avoidAsphalt: request.avoidAsphalt,
+          skipGpx: true,
+        });
+        const { refined, metrics } = applySpurRefinement(
+          routed,
+          request.distanceKm,
+          request.start,
+          request.direction,
+          shape,
+          request.avoidAsphalt,
+        );
+        if (
+          metrics.directionCoverage >= 0.3 &&
+          metrics.distanceError < 0.55 &&
+          refined.coordinates.length >= 4
+        ) {
+          best = refined;
+          usedRelaxedFallback = true;
+          break;
+        }
+      } catch {
+        // try next recovery variant
+      }
+    }
+  }
+
+  if (!best) {
+    throw new Error(
+      "Nie udało się wygenerować trasy — spróbuj innego kierunku, krótszego dystansu lub wyłącz „unikaj asfaltu”.",
+    );
   }
 
   reportProgress(onProgress, {
@@ -556,10 +630,14 @@ async function generateRouteWithEngine(
   const maxDistanceError = request.avoidAsphalt
     ? Math.min(0.48, 0.3 + request.distanceKm / 500)
     : 0.38;
+  const minDirectionCoverage = usedRelaxedFallback ? 0.3 : 0.42;
+  const distanceErrorLimit = usedRelaxedFallback
+    ? Math.min(0.58, maxDistanceError + 0.14)
+    : maxDistanceError;
 
   if (
-    finalMetrics.directionCoverage < 0.42 ||
-    finalMetrics.distanceError > maxDistanceError
+    finalMetrics.directionCoverage < minDirectionCoverage ||
+    finalMetrics.distanceError > distanceErrorLimit
   ) {
     throw new Error(
       "Nie udało się dopasować trasy do dystansu i kierunku — spróbuj innego kierunku lub dystansu",
