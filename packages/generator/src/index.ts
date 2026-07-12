@@ -3,6 +3,7 @@ import type {
   GeneratedRoute,
   LatLng,
   OsmTags,
+  RouteGenerationProgress,
 } from "@loopforge/osm-types";
 import { getSurfaceStyle } from "@loopforge/osm-types";
 import {
@@ -45,6 +46,31 @@ const DIRECTION_BEARING: Record<
   W: 270,
   NW: 315,
 };
+
+const DIRECTION_LABEL_PL: Record<
+  import("@loopforge/osm-types").Direction,
+  string
+> = {
+  N: "północ",
+  NE: "północny wschód",
+  E: "wschód",
+  SE: "południowy wschód",
+  S: "południe",
+  SW: "południowy zachód",
+  W: "zachód",
+  NW: "północny zachód",
+};
+
+export interface GenerateRouteOptions {
+  onProgress?: (progress: RouteGenerationProgress) => void;
+}
+
+function reportProgress(
+  onProgress: GenerateRouteOptions["onProgress"],
+  progress: RouteGenerationProgress,
+): void {
+  onProgress?.(progress);
+}
 
 const EARTH_RADIUS_M = 6_371_000;
 
@@ -281,6 +307,7 @@ async function generateRouteWithEngine(
     avoidAsphalt?: boolean;
     skipGpx: boolean;
   }) => Promise<RoutedLoopResult>,
+  options?: GenerateRouteOptions,
 ): Promise<GeneratedRoute> {
   const variants = 5;
   const jitter = createGenerationJitter(variants);
@@ -289,6 +316,23 @@ async function generateRouteWithEngine(
   let bestScore = Infinity;
   let bestRejected: RoutedLoopResult | null = null;
   let bestRejectedScore = Infinity;
+  let attempt = 0;
+  const maxAttemptsEstimate = variants * 2;
+  const { onProgress } = options ?? {};
+
+  reportProgress(onProgress, {
+    phase: "planning",
+    message: "Planuję kształt pętli",
+    detail: `${request.distanceKm} km w kierunku ${DIRECTION_LABEL_PL[request.direction]}`,
+    progress: 6,
+  });
+
+  reportProgress(onProgress, {
+    phase: "variants",
+    message: "Losuję warianty",
+    detail: "Każde generowanie daje inną trasę",
+    progress: 12,
+  });
 
   for (const variant of jitter.variantOrder) {
     if (Date.now() > deadlineMs && best) break;
@@ -302,6 +346,24 @@ async function generateRouteWithEngine(
 
         const scale = scales[si];
         const shape = loopShapeForVariant(request.distanceKm, variant);
+        const shapeLabel = shape === "arc" ? "łuk" : "podłużna";
+        attempt += 1;
+        const routingProgress = Math.min(
+          85,
+          14 + (attempt / maxAttemptsEstimate) * 68,
+        );
+
+        reportProgress(onProgress, {
+          phase: "routing",
+          message: "BRouter liczy trasę",
+          detail: `Wariant ${variant + 1}/${variants}, kształt ${shapeLabel}${
+            si > 0 ? ", ponowna skala" : ""
+          }`,
+          progress: routingProgress,
+          variantIndex: variant + 1,
+          variantTotal: variants,
+        });
+
         const waypoints = buildLoopWaypoints(
           request.start,
           request.distanceKm,
@@ -335,6 +397,15 @@ async function generateRouteWithEngine(
           request.avoidAsphalt,
         );
 
+        reportProgress(onProgress, {
+          phase: "scoring",
+          message: "Porównuję warianty",
+          detail: `${refined.distanceKm.toFixed(1)} km — nawierzchnia, kierunek, jakość pętli`,
+          progress: Math.min(88, routingProgress + 3),
+          variantIndex: variant + 1,
+          variantTotal: variants,
+        });
+
         // One follow-up scale if distance is off (not four scales every time).
         if (
           si === 0 &&
@@ -342,6 +413,13 @@ async function generateRouteWithEngine(
           metrics.distanceError > 0.1 &&
           Date.now() < deadlineMs - 8_000
         ) {
+          reportProgress(onProgress, {
+            phase: "refining",
+            message: "Dopasowuję dystans",
+            detail: `Cel ~${request.distanceKm} km, teraz ${refined.distanceKm.toFixed(1)} km`,
+            progress: Math.min(90, routingProgress + 5),
+          });
+
           const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
           const adjusted =
             ratio > 1
@@ -448,6 +526,13 @@ async function generateRouteWithEngine(
     throw new Error("Could not generate loop through waypoints");
   }
 
+  reportProgress(onProgress, {
+    phase: "finalizing",
+    message: "Spinam GPX",
+    detail: "Przycinanie dead-endów i eksport",
+    progress: 94,
+  });
+
   const finalMetrics = loopQualityMetrics(
     best.coordinates,
     request.distanceKm,
@@ -476,13 +561,30 @@ async function generateRouteWithEngine(
   });
 }
 
-function generatePlaceholderRoute(request: GenerateRouteRequest): GeneratedRoute {
+function generatePlaceholderRoute(
+  request: GenerateRouteRequest,
+  options?: GenerateRouteOptions,
+): GeneratedRoute {
+  reportProgress(options?.onProgress, {
+    phase: "routing",
+    message: "Brak backendu routingu",
+    detail: "Buduję geometryczną trasę zastępczą",
+    progress: 40,
+  });
+
   const coordinates = buildPlaceholderLoop(
     request.start,
     request.direction,
     request.distanceKm,
   );
   const actualKm = totalDistanceKm(coordinates);
+
+  reportProgress(options?.onProgress, {
+    phase: "finalizing",
+    message: "Spinam GPX",
+    detail: "Ostatnie szlify przed mapą",
+    progress: 94,
+  });
 
   return buildGeneratedRoute(request, coordinates, {
     placeholder: true,
@@ -509,23 +611,28 @@ function routingEnginePreference(): "auto" | "pgrouting" | "brouter" {
 export { prepareCoordinatesForNavigation } from "./prune-spurs";
 export async function generateRoute(
   request: GenerateRouteRequest,
+  options?: GenerateRouteOptions,
 ): Promise<GeneratedRoute> {
   const preference = routingEnginePreference();
 
   if (preference !== "brouter") {
     const pgReady = await isRoutingReady();
     if (pgReady) {
-      return generateRouteWithEngine(request, async (params) => {
-        const routed = await fetchPgRoute(params);
-        return {
-          coordinates: routed.coordinates,
-          distanceKm: routed.distanceKm,
-          elevationGainM: routed.elevationGainM,
-          segments: routed.segments,
-          mapGeojson: routed.mapGeojson,
-          gpx: routed.gpx,
-        };
-      });
+      return generateRouteWithEngine(
+        request,
+        async (params) => {
+          const routed = await fetchPgRoute(params);
+          return {
+            coordinates: routed.coordinates,
+            distanceKm: routed.distanceKm,
+            elevationGainM: routed.elevationGainM,
+            segments: routed.segments,
+            mapGeojson: routed.mapGeojson,
+            gpx: routed.gpx,
+          };
+        },
+        options,
+      );
     }
     if (preference === "pgrouting") {
       throw new Error(
@@ -536,19 +643,23 @@ export async function generateRoute(
 
   const brouterConfig = getBrouterConfig();
   if (brouterConfig) {
-    return generateRouteWithEngine(request, async (params) => {
-      const routed = await fetchBrouterRoute(brouterConfig, params);
-      return {
-        coordinates: routed.coordinates,
-        distanceKm: routed.distanceKm,
-        elevationGainM: routed.elevationGainM,
-        segments: routed.segments,
-        mapGeojson: routed.mapGeojson ?? undefined,
-        gpx: routed.gpx,
-      };
-    });
+    return generateRouteWithEngine(
+      request,
+      async (params) => {
+        const routed = await fetchBrouterRoute(brouterConfig, params);
+        return {
+          coordinates: routed.coordinates,
+          distanceKm: routed.distanceKm,
+          elevationGainM: routed.elevationGainM,
+          segments: routed.segments,
+          mapGeojson: routed.mapGeojson ?? undefined,
+          gpx: routed.gpx,
+        };
+      },
+      options,
+    );
   }
 
   console.warn("[loopforge] No routing backend — using geometric placeholder");
-  return generatePlaceholderRoute(request);
+  return generatePlaceholderRoute(request, options);
 }

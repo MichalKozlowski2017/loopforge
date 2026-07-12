@@ -111,3 +111,26 @@ export interface StoredRoute extends GeneratedRoute {
   rating?: "up" | "down";
   notes?: string;
 }
+
+export type RouteGenerationPhase =
+  | "planning"
+  | "variants"
+  | "routing"
+  | "scoring"
+  | "refining"
+  | "finalizing";
+
+export interface RouteGenerationProgress {
+  phase: RouteGenerationPhase;
+  message: string;
+  detail?: string;
+  /** 0–100 */
+  progress: number;
+  variantIndex?: number;
+  variantTotal?: number;
+}
+
+export type RouteGenerationStreamEvent =
+  | { type: "progress"; progress: RouteGenerationProgress }
+  | { type: "complete"; route: StoredRoute }
+  | { type: "error"; error: string };

@@ -4,14 +4,19 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import type { StoredRoute } from "@loopforge/osm-types";
+import type {
+  RouteGenerationProgress,
+  StoredRoute,
+} from "@loopforge/osm-types";
 import {
   RouteForm,
   type RouteFormValues,
 } from "@/components/RouteForm";
 import { SurfaceBreakdown } from "@/components/SurfaceBreakdown";
+import { MapGenerationOverlay } from "@/components/MapGenerationOverlay";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
 import { useGeolocation } from "@/lib/use-geolocation";
+import { consumeGenerationStream } from "@/lib/parse-generation-stream";
 
 const MapView = dynamic(
   () => import("@/components/MapView").then((mod) => mod.MapView),
@@ -42,6 +47,8 @@ export default function HomePage() {
   const [route, setRoute] = useState<StoredRoute | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingSeconds, setLoadingSeconds] = useState(0);
+  const [generationProgress, setGenerationProgress] =
+    useState<RouteGenerationProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [pickOnMap, setPickOnMap] = useState(false);
@@ -112,6 +119,7 @@ export default function HomePage() {
   async function handleGenerate() {
     setLoading(true);
     setLoadingSeconds(0);
+    setGenerationProgress(null);
     setError(null);
     setPickOnMap(false);
 
@@ -122,7 +130,10 @@ export default function HomePage() {
     try {
       const response = await fetch("/api/routes/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
         body: JSON.stringify({
           start: { lat: form.lat, lng: form.lng },
           bikeType: form.bikeType,
@@ -137,12 +148,9 @@ export default function HomePage() {
         signal: AbortSignal.timeout(120_000),
       });
 
-      if (!response.ok) {
-        const payload = (await response.json()) as { error?: string };
-        throw new Error(payload.error ?? "Nie udało się wygenerować trasy");
-      }
-
-      const generated = (await response.json()) as StoredRoute;
+      const generated = await consumeGenerationStream(response, (progress) => {
+        setGenerationProgress(progress);
+      });
       setRoute(generated);
       setNotes("");
     } catch (err) {
@@ -197,11 +205,8 @@ export default function HomePage() {
         />
 
         {loading ? (
-          <p className="mt-3 text-xs text-zinc-400">
-            BRouter liczy trasę… {loadingSeconds > 0 ? `${loadingSeconds} s` : ""}
-            {loadingSeconds >= 10
-              ? " — pierwsze uruchomienie może potrwać do minuty."
-              : ""}
+          <p className="mt-3 text-xs text-zinc-500">
+            Trwa generowanie — szczegóły na mapie →
           </p>
         ) : null}
 
@@ -300,9 +305,15 @@ export default function HomePage() {
           start={{ lat: form.lat, lng: form.lng }}
           route={route?.geojson ?? null}
           mapGeojson={route?.mapGeojson ?? null}
-          pickStart={pickOnMap}
+          pickStart={pickOnMap && !loading}
           onStartChange={handleStartChange}
         />
+        {loading ? (
+          <MapGenerationOverlay
+            seconds={loadingSeconds}
+            progress={generationProgress}
+          />
+        ) : null}
         {route?.mapGeojson ? <SurfaceLegend /> : null}
       </section>
     </main>
