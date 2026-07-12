@@ -98,6 +98,57 @@ export const MIN_KM_FOR_ARC_LOOP = 18;
 
 export type LoopShape = "arc" | "longitudinal";
 
+/** Per-request randomness so repeated params produce different loops. */
+export interface GenerationJitter {
+  bearingDeg: number;
+  scaleBias: number;
+  variantOrder: number[];
+  corridorOffsetDeg: number;
+}
+
+export function createGenerationJitter(variantCount = 5): GenerationJitter {
+  const variantOrder = Array.from({ length: variantCount }, (_, i) => i);
+  for (let i = variantCount - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [variantOrder[i], variantOrder[j]] = [variantOrder[j], variantOrder[i]];
+  }
+  return {
+    bearingDeg: (Math.random() - 0.5) * 18,
+    scaleBias: 0.92 + Math.random() * 0.16,
+    variantOrder,
+    corridorOffsetDeg: (Math.random() - 0.5) * 24,
+  };
+}
+
+/** Share of route mileage on the "wrong" side of start (e.g. east when heading NW). */
+export function hemisphereViolationShare(
+  coordinates: [number, number][],
+  start: LatLng,
+  direction: Direction,
+  lngBuffer = 0.006,
+): number {
+  const avoidEast = direction === "NW" || direction === "W" || direction === "SW";
+  const avoidWest = direction === "NE" || direction === "E" || direction === "SE";
+  if (!avoidEast && !avoidWest) return 0;
+
+  let badM = 0;
+  let totalM = 0;
+
+  for (let i = 1; i < coordinates.length; i++) {
+    const a = { lng: coordinates[i - 1][0], lat: coordinates[i - 1][1] };
+    const b = { lng: coordinates[i][0], lat: coordinates[i][1] };
+    const segM = haversineM(a, b);
+    if (segM < 5) continue;
+
+    totalM += segM;
+    const midLng = (a.lng + b.lng) / 2;
+    if (avoidEast && midLng > start.lng + lngBuffer) badM += segM;
+    if (avoidWest && midLng < start.lng - lngBuffer) badM += segM;
+  }
+
+  return totalM > 0 ? badM / totalM : 0;
+}
+
 /** Shape order per variant — always try both; scoring picks the best routed result. */
 export function loopShapeForVariant(
   distanceKm: number,
@@ -146,21 +197,25 @@ export function buildArcLoopWaypoints(
   variant: number,
   scaleMultiplier = 1,
   avoidAsphalt = false,
+  jitter?: GenerationJitter,
 ): LatLng[] {
   const baseBearing = DIRECTION_BEARING[direction];
   const idx = variant % VARIANT_POINT_COUNTS.length;
   const pointCount = avoidAsphalt
     ? 3 + (idx % 2)
     : VARIANT_POINT_COUNTS[idx];
-  const scale = VARIANT_SCALES[idx] * scaleMultiplier;
-  const rotation = VARIANT_ROTATIONS[idx];
+  const scale =
+    VARIANT_SCALES[idx] * scaleMultiplier * (jitter?.scaleBias ?? 1);
+  const rotation = VARIANT_ROTATIONS[idx] + (jitter?.bearingDeg ?? 0) * 0.35;
 
   const arcHalfWidth = avoidAsphalt
     ? 36 + (idx % 3) * 6
     : 54 + (idx % 3) * 8;
   const { west, east } = avoidAsphalt
-    ? { west: 1.22, east: 0.42 }
-    : arcSideBias(direction);
+    ? { west: 1.42, east: 0.28 }
+    : direction === "NW" || direction === "W" || direction === "SW"
+      ? { west: 1.48, east: 0.38 }
+      : arcSideBias(direction);
   const arcSpanDeg = arcHalfWidth * (west + east);
   const arcStart = baseBearing - arcHalfWidth * west + rotation * 0.12;
 
@@ -186,20 +241,23 @@ export function buildArcLoopWaypoints(
 function returnCorridorBearing(
   direction: Direction,
   variant: number,
+  jitter?: GenerationJitter,
 ): number {
   const base = DIRECTION_BEARING[direction];
-  const side = variant % 2 === 0 ? -1 : 1;
+  const offset = jitter?.corridorOffsetDeg ?? 0;
   switch (direction) {
     case "NW":
     case "W":
     case "SW":
-      return (base - 90 * side + 360) % 360;
+      return (base - 90 + offset + 360) % 360;
     case "NE":
     case "E":
     case "SE":
-      return (base + 90 * side + 360) % 360;
-    default:
-      return (base + 90 * side + 360) % 360;
+      return (base + 90 + offset + 360) % 360;
+    default: {
+      const side = variant % 2 === 0 ? -1 : 1;
+      return (base + 90 * side + offset + 360) % 360;
+    }
   }
 }
 
@@ -270,11 +328,17 @@ export function buildLongitudinalLoopWaypoints(
   variant: number,
   scaleMultiplier = 1,
   avoidAsphalt = false,
+  jitter?: GenerationJitter,
 ): LatLng[] {
   const idx = variant % VARIANT_SCALES.length;
-  const scale = VARIANT_SCALES[idx] * scaleMultiplier;
+  const scale =
+    VARIANT_SCALES[idx] * scaleMultiplier * (jitter?.scaleBias ?? 1);
   const bearing =
-    (DIRECTION_BEARING[direction] + VARIANT_ROTATIONS[idx] * 0.35 + 360) % 360;
+    (DIRECTION_BEARING[direction] +
+      VARIANT_ROTATIONS[idx] * 0.35 +
+      (jitter?.bearingDeg ?? 0) +
+      360) %
+    360;
 
   const outCount = avoidAsphalt
     ? distanceKm >= 35
@@ -301,7 +365,7 @@ export function buildLongitudinalLoopWaypoints(
   const totalM = ((distanceKm * 1000) / (pathFactor * roadDetourFactor)) * scale;
   const outDistM = totalM * outShare;
   const lateralM = totalM * lateralShare;
-  const perpBearing = returnCorridorBearing(direction, idx);
+  const perpBearing = returnCorridorBearing(direction, idx, jitter);
 
   const waypoints: LatLng[] = [];
 
@@ -336,6 +400,7 @@ export function buildLoopWaypoints(
   scaleMultiplier = 1,
   shape?: LoopShape,
   avoidAsphalt = false,
+  jitter?: GenerationJitter,
 ): LatLng[] {
   const resolved = shape ?? loopShapeForVariant(distanceKm, variant);
   return resolved === "arc"
@@ -346,6 +411,7 @@ export function buildLoopWaypoints(
         variant,
         scaleMultiplier,
         avoidAsphalt,
+        jitter,
       )
     : buildLongitudinalLoopWaypoints(
         start,
@@ -354,6 +420,7 @@ export function buildLoopWaypoints(
         variant,
         scaleMultiplier,
         avoidAsphalt,
+        jitter,
       );
 }
 
@@ -365,7 +432,11 @@ export function scoreLoopQualityWithShape(
   shape: LoopShape,
   start?: LatLng,
   direction?: Direction,
-  options?: { avoidAsphalt?: boolean; pavedShare?: number },
+  options?: {
+    avoidAsphalt?: boolean;
+    pavedShare?: number;
+    hemisphereViolation?: number;
+  },
 ): number {
   const base = scoreLoopQuality(
     coordinates,
@@ -392,6 +463,12 @@ export function scoreLoopQualityWithShape(
     metrics.directionCoverage >= 0.45;
 
   let score = base;
+
+  const hemisphereViolation = options?.hemisphereViolation ?? 0;
+  if (hemisphereViolation > 0) {
+    score += hemisphereViolation * 22;
+    score += Math.max(0, hemisphereViolation - 0.15) ** 2 * 55;
+  }
 
   if (options?.avoidAsphalt) {
     score += pavedShare * 16;

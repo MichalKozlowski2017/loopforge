@@ -18,6 +18,8 @@ import { buildGpx } from "@loopforge/gpx";
 import { scoreRoute } from "@loopforge/scoring";
 import {
   buildLoopWaypoints,
+  createGenerationJitter,
+  hemisphereViolationShare,
   isGoodLoopQuality,
   loopQualityMetrics,
   loopShapeForVariant,
@@ -248,6 +250,11 @@ function applySpurRefinement(
     start,
     direction,
   );
+  const hemisphereViolation = hemisphereViolationShare(
+    coordinates,
+    start,
+    direction,
+  );
   const quality = scoreLoopQualityWithShape(
     coordinates,
     targetDistanceKm,
@@ -258,6 +265,7 @@ function applySpurRefinement(
     {
       avoidAsphalt,
       pavedShare: pavedShareFromSegments(routed.segments),
+      hemisphereViolation,
     },
   );
 
@@ -276,13 +284,14 @@ async function generateRouteWithEngine(
   }) => Promise<RoutedLoopResult>,
 ): Promise<GeneratedRoute> {
   const variants = 5;
+  const jitter = createGenerationJitter(variants);
   const deadlineMs = Date.now() + 75_000;
   let best: RoutedLoopResult | null = null;
   let bestScore = Infinity;
   let bestRejected: RoutedLoopResult | null = null;
   let bestRejectedScore = Infinity;
 
-  for (let variant = 0; variant < variants; variant++) {
+  for (const variant of jitter.variantOrder) {
     if (Date.now() > deadlineMs && best) break;
 
     try {
@@ -302,6 +311,7 @@ async function generateRouteWithEngine(
           scale,
           shape,
           request.avoidAsphalt,
+          jitter,
         );
         const routed = await fetchRoute({
           start: request.start,
@@ -347,8 +357,18 @@ async function generateRouteWithEngine(
         const tooSpurHeavy =
           metrics.spurShare > MAX_SPUR_SHARE || metrics.backtrack > MAX_BACKTRACK;
         const wrongDirection = metrics.directionCoverage < 0.45;
+        const eastShare = hemisphereViolationShare(
+          refined.coordinates,
+          request.start,
+          request.direction,
+        );
+        const wrongHemisphere =
+          (request.direction === "NW" ||
+            request.direction === "W" ||
+            request.direction === "SW") &&
+          eastShare > 0.28;
 
-        if (tooSpurHeavy || wrongDirection) {
+        if (tooSpurHeavy || wrongDirection || wrongHemisphere) {
           if (quality < bestRejectedScore) {
             bestRejectedScore = quality;
             bestRejected = refined;
@@ -450,9 +470,21 @@ async function generateRouteWithEngine(
     ? Math.min(0.48, 0.3 + request.distanceKm / 500)
     : 0.38;
 
+  const finalEastShare = hemisphereViolationShare(
+    best.coordinates,
+    request.start,
+    request.direction,
+  );
+  const finalWrongHemisphere =
+    (request.direction === "NW" ||
+      request.direction === "W" ||
+      request.direction === "SW") &&
+    finalEastShare > 0.32;
+
   if (
     finalMetrics.directionCoverage < 0.4 ||
-    finalMetrics.distanceError > maxDistanceError
+    finalMetrics.distanceError > maxDistanceError ||
+    finalWrongHemisphere
   ) {
     throw new Error(
       "Nie udało się dopasować trasy do dystansu i kierunku — spróbuj innego kierunku lub dystansu",
