@@ -342,6 +342,32 @@ export function buildLongitudinalLoopWaypoints(
   return waypoints;
 }
 
+/** Shift planned loop away from the home→entry corridor (approach leg). */
+export function shiftWaypointsAwayFromHome(
+  waypoints: LatLng[],
+  loopStart: LatLng,
+  home: LatLng,
+  variant: number,
+): LatLng[] {
+  if (waypoints.length === 0) return waypoints;
+
+  const towardHome = bearingDeg(loopStart, home);
+  const awayBearing = (towardHome + 90 + (variant % 2 === 0 ? 0 : 180)) % 360;
+  const shiftM = 900 + (variant % 4) * 350;
+  const shiftedOrigin = destinationPoint(loopStart, awayBearing, shiftM);
+
+  return waypoints.map((wp) => {
+    const distM = haversineM(loopStart, wp);
+    const bearing = bearingDeg(loopStart, wp);
+    return destinationPoint(shiftedOrigin, bearing, distM);
+  });
+}
+
+export interface LoopWaypointExtras {
+  /** Real start (home) — shifts loop plan away from the approach corridor. */
+  homeStart?: LatLng;
+}
+
 /** Build waypoints for the requested loop shape. */
 export function buildLoopWaypoints(
   start: LatLng,
@@ -352,27 +378,40 @@ export function buildLoopWaypoints(
   shape?: LoopShape,
   avoidAsphalt = false,
   jitter?: GenerationJitter,
+  extras?: LoopWaypointExtras,
 ): LatLng[] {
   const resolved = shape ?? loopShapeForVariant(distanceKm, variant);
-  return resolved === "arc"
-    ? buildArcLoopWaypoints(
-        start,
-        distanceKm,
-        direction,
-        variant,
-        scaleMultiplier,
-        avoidAsphalt,
-        jitter,
-      )
-    : buildLongitudinalLoopWaypoints(
-        start,
-        distanceKm,
-        direction,
-        variant,
-        scaleMultiplier,
-        avoidAsphalt,
-        jitter,
-      );
+  const waypoints =
+    resolved === "arc"
+      ? buildArcLoopWaypoints(
+          start,
+          distanceKm,
+          direction,
+          variant,
+          scaleMultiplier,
+          avoidAsphalt,
+          jitter,
+        )
+      : buildLongitudinalLoopWaypoints(
+          start,
+          distanceKm,
+          direction,
+          variant,
+          scaleMultiplier,
+          avoidAsphalt,
+          jitter,
+        );
+
+  if (extras?.homeStart) {
+    return shiftWaypointsAwayFromHome(
+      waypoints,
+      start,
+      extras.homeStart,
+      variant,
+    );
+  }
+
+  return waypoints;
 }
 
 /** Score route quality; when avoiding asphalt, paved share drives shape choice. */
@@ -383,7 +422,11 @@ export function scoreLoopQualityWithShape(
   shape: LoopShape,
   start?: LatLng,
   direction?: Direction,
-  options?: { avoidAsphalt?: boolean; pavedShare?: number },
+  options?: {
+    avoidAsphalt?: boolean;
+    pavedShare?: number;
+    approachOverlap?: number;
+  },
 ): number {
   const base = scoreLoopQuality(
     coordinates,
@@ -394,6 +437,7 @@ export function scoreLoopQualityWithShape(
   );
 
   const pavedShare = options?.pavedShare ?? 0;
+  const approachOverlap = options?.approachOverlap ?? 0;
   const metrics = loopQualityMetrics(
     coordinates,
     targetDistanceKm,
@@ -415,6 +459,13 @@ export function scoreLoopQualityWithShape(
     score += pavedShare * 16;
     score += Math.max(0, pavedShare - 0.28) ** 2 * 40;
     score += metrics.distanceError * 28;
+  }
+
+  if (approachOverlap > 0) {
+    score += approachOverlap * 28;
+    if (approachOverlap > 0.06) {
+      score += (approachOverlap - 0.06) ** 2 * 120;
+    }
   }
 
   if (shape === "arc" && arcViable) {

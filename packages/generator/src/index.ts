@@ -35,10 +35,13 @@ import {
   routeLengthM,
 } from "./prune-spurs";
 import {
+  approachOverlapShare,
   computeLoopEntryTarget,
   loopEntryOffsetM,
   loopEntryFromApproach,
   mergeApproachAndLoop,
+  MAX_APPROACH_OVERLAP,
+  MAX_APPROACH_OVERLAP_RELAXED,
   type RoutedLeg,
 } from "./approach";
 
@@ -72,6 +75,10 @@ const DIRECTION_LABEL_PL: Record<
 
 export interface GenerateRouteOptions {
   onProgress?: (progress: RouteGenerationProgress) => void;
+  /** When set, penalize loop legs that reuse the approach corridor. */
+  approachCoordinates?: [number, number][];
+  /** User's home start — biases loop waypoints away from the approach leg. */
+  homeStart?: LatLng;
 }
 
 function reportProgress(
@@ -262,9 +269,10 @@ function applySpurRefinement(
   direction: GenerateRouteRequest["direction"],
   shape: LoopShape,
   avoidAsphalt = false,
+  approachCoordinates?: [number, number][],
 ): {
   refined: RoutedLoopResult;
-  metrics: ReturnType<typeof loopQualityMetrics>;
+  metrics: ReturnType<typeof loopQualityMetrics> & { approachOverlap: number };
   quality: number;
   pruned: boolean;
 } {
@@ -284,13 +292,20 @@ function applySpurRefinement(
     distanceKm: routeLengthM(coordinates) / 1000,
   };
 
-  const metrics = loopQualityMetrics(
-    coordinates,
-    targetDistanceKm,
-    refined.distanceKm,
-    start,
-    direction,
-  );
+  const approachOverlap = approachCoordinates
+    ? approachOverlapShare(coordinates, approachCoordinates)
+    : 0;
+
+  const metrics = {
+    ...loopQualityMetrics(
+      coordinates,
+      targetDistanceKm,
+      refined.distanceKm,
+      start,
+      direction,
+    ),
+    approachOverlap,
+  };
   const quality = scoreLoopQualityWithShape(
     coordinates,
     targetDistanceKm,
@@ -301,6 +316,7 @@ function applySpurRefinement(
     {
       avoidAsphalt,
       pavedShare: pavedShareFromSegments(routed.segments),
+      approachOverlap,
     },
   );
 
@@ -389,6 +405,7 @@ async function generateRouteWithEngine(
           shape,
           request.avoidAsphalt,
           jitter,
+          options?.homeStart ? { homeStart: options.homeStart } : undefined,
         );
         const routed = await fetchRoute({
           start: request.start,
@@ -411,6 +428,7 @@ async function generateRouteWithEngine(
           request.direction,
           shape,
           request.avoidAsphalt,
+          options?.approachCoordinates,
         );
 
         reportProgress(onProgress, {
@@ -455,8 +473,11 @@ async function generateRouteWithEngine(
         const tooSpurHeavy =
           metrics.spurShare > MAX_SPUR_SHARE || metrics.backtrack > MAX_BACKTRACK;
         const wrongDirection = metrics.directionCoverage < 0.38;
+        const overlapsApproach =
+          options?.approachCoordinates != null &&
+          metrics.approachOverlap > MAX_APPROACH_OVERLAP;
 
-        if (tooSpurHeavy || wrongDirection) {
+        if (tooSpurHeavy || wrongDirection || overlapsApproach) {
           if (quality < bestRejectedScore) {
             bestRejectedScore = quality;
             bestRejected = refined;
@@ -535,9 +556,16 @@ async function generateRouteWithEngine(
       request.start,
       request.direction,
     );
+    const rejectedApproachOverlap = options?.approachCoordinates
+      ? approachOverlapShare(
+          bestRejected.coordinates,
+          options.approachCoordinates,
+        )
+      : 0;
     if (
       rejectedMetrics.directionCoverage >= 0.38 &&
-      rejectedMetrics.distanceError < 0.45
+      rejectedMetrics.distanceError < 0.45 &&
+      rejectedApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED
     ) {
       best = bestRejected;
       usedRelaxedFallback = true;
@@ -552,9 +580,16 @@ async function generateRouteWithEngine(
       request.start,
       request.direction,
     );
+    const fallbackApproachOverlap = options?.approachCoordinates
+      ? approachOverlapShare(
+          bestFallback.coordinates,
+          options.approachCoordinates,
+        )
+      : 0;
     if (
       fallbackMetrics.directionCoverage >= 0.32 &&
-      fallbackMetrics.distanceError < 0.52
+      fallbackMetrics.distanceError < 0.52 &&
+      fallbackApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED
     ) {
       best = bestFallback;
       usedRelaxedFallback = true;
@@ -575,6 +610,7 @@ async function generateRouteWithEngine(
           shape,
           request.avoidAsphalt,
           jitter,
+          options?.homeStart ? { homeStart: options.homeStart } : undefined,
         );
         const routed = await fetchRoute({
           start: request.start,
@@ -591,11 +627,19 @@ async function generateRouteWithEngine(
           request.direction,
           shape,
           request.avoidAsphalt,
+          options?.approachCoordinates,
         );
+        const recoveryApproachOverlap = options?.approachCoordinates
+          ? approachOverlapShare(
+              refined.coordinates,
+              options.approachCoordinates,
+            )
+          : 0;
         if (
           metrics.directionCoverage >= 0.3 &&
           metrics.distanceError < 0.55 &&
-          refined.coordinates.length >= 4
+          refined.coordinates.length >= 4 &&
+          recoveryApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED
         ) {
           best = refined;
           usedRelaxedFallback = true;
@@ -819,9 +863,15 @@ async function generateRouteWithApproach(
     approachEnabled: false,
   };
 
+  const loopOptions: GenerateRouteOptions = {
+    ...options,
+    approachCoordinates: approach.coordinates,
+    homeStart: userStart,
+  };
+
   const { route: loop, loopSegments } = await generateLoopRoute(
     loopRequest,
-    options,
+    loopOptions,
   );
 
   return mergeApproachAndLoop(

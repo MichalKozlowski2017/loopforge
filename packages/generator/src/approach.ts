@@ -324,3 +324,106 @@ export function loopEntryFromApproach(approach: RoutedLeg): LatLng {
   const last = approach.coordinates.at(-1);
   return last ? coordToLatLng(last) : { lat: 0, lng: 0 };
 }
+
+/** Reject loops that reuse more than this share of the approach corridor. */
+export const MAX_APPROACH_OVERLAP = 0.14;
+
+/** Relaxed cap when no variant clears the strict threshold. */
+export const MAX_APPROACH_OVERLAP_RELAXED = 0.32;
+
+function pointToSegmentDistanceM(
+  p: [number, number],
+  a: [number, number],
+  b: [number, number],
+): number {
+  const latRad = toRadians(p[1]);
+  const scaleX = EARTH_RADIUS_M * Math.cos(latRad) * (Math.PI / 180);
+  const scaleY = EARTH_RADIUS_M * (Math.PI / 180);
+
+  const ax = (a[0] - p[0]) * scaleX;
+  const ay = (a[1] - p[1]) * scaleY;
+  const bx = (b[0] - p[0]) * scaleX;
+  const by = (b[1] - p[1]) * scaleY;
+
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-6) return Math.hypot(ax, ay);
+
+  let t = -(ax * dx + ay * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(ax + t * dx, ay + t * dy);
+}
+
+function buildApproachSegmentsForOverlap(
+  approach: [number, number][],
+  skipEndM: number,
+): Array<{ a: [number, number]; b: [number, number] }> {
+  if (approach.length < 2) return [];
+
+  let totalM = 0;
+  const cumEnd: number[] = [];
+  for (let i = 1; i < approach.length; i++) {
+    totalM += haversineCoordsM(approach[i - 1], approach[i]);
+    cumEnd.push(totalM);
+  }
+
+  const cutoff = Math.max(0, totalM - skipEndM);
+  const segments: Array<{ a: [number, number]; b: [number, number] }> = [];
+  for (let i = 1; i < approach.length; i++) {
+    if (cumEnd[i - 1]! >= cutoff) continue;
+    segments.push({ a: approach[i - 1]!, b: approach[i]! });
+  }
+  return segments;
+}
+
+function nearApproachCorridor(
+  point: [number, number],
+  segments: Array<{ a: [number, number]; b: [number, number] }>,
+  matchM: number,
+): boolean {
+  for (const { a, b } of segments) {
+    if (pointToSegmentDistanceM(point, a, b) <= matchM) return true;
+  }
+  return false;
+}
+
+/**
+ * Share of loop length (after leaving the entry junction) that runs within
+ * ~45 m of the approach leg — detects "ride out, loop back on the same stick".
+ */
+export function approachOverlapShare(
+  loopCoordinates: [number, number][],
+  approachCoordinates: [number, number][],
+): number {
+  if (loopCoordinates.length < 2 || approachCoordinates.length < 2) return 0;
+
+  const matchM = 45;
+  const skipLoopStartM = 350;
+  const skipApproachEndM = 250;
+  const approachSegments = buildApproachSegmentsForOverlap(
+    approachCoordinates,
+    skipApproachEndM,
+  );
+  if (approachSegments.length === 0) return 0;
+
+  let overlapM = 0;
+  let countedM = 0;
+  let cumFromLoopStartM = 0;
+
+  for (let i = 1; i < loopCoordinates.length; i++) {
+    const a = loopCoordinates[i - 1]!;
+    const b = loopCoordinates[i]!;
+    const segM = haversineCoordsM(a, b);
+    cumFromLoopStartM += segM;
+    if (cumFromLoopStartM < skipLoopStartM) continue;
+
+    countedM += segM;
+    const mid: [number, number] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    if (nearApproachCorridor(mid, approachSegments, matchM)) {
+      overlapM += segM;
+    }
+  }
+
+  return countedM > 0 ? overlapM / countedM : 0;
+}
