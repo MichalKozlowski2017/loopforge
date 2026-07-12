@@ -120,35 +120,6 @@ export function createGenerationJitter(variantCount = 5): GenerationJitter {
   };
 }
 
-/** Share of route mileage on the "wrong" side of start (e.g. east when heading NW). */
-export function hemisphereViolationShare(
-  coordinates: [number, number][],
-  start: LatLng,
-  direction: Direction,
-  lngBuffer = 0.006,
-): number {
-  const avoidEast = direction === "NW" || direction === "W" || direction === "SW";
-  const avoidWest = direction === "NE" || direction === "E" || direction === "SE";
-  if (!avoidEast && !avoidWest) return 0;
-
-  let badM = 0;
-  let totalM = 0;
-
-  for (let i = 1; i < coordinates.length; i++) {
-    const a = { lng: coordinates[i - 1][0], lat: coordinates[i - 1][1] };
-    const b = { lng: coordinates[i][0], lat: coordinates[i][1] };
-    const segM = haversineM(a, b);
-    if (segM < 5) continue;
-
-    totalM += segM;
-    const midLng = (a.lng + b.lng) / 2;
-    if (avoidEast && midLng > start.lng + lngBuffer) badM += segM;
-    if (avoidWest && midLng < start.lng - lngBuffer) badM += segM;
-  }
-
-  return totalM > 0 ? badM / totalM : 0;
-}
-
 /** Shape order per variant — always try both; scoring picks the best routed result. */
 export function loopShapeForVariant(
   distanceKm: number,
@@ -163,22 +134,6 @@ export function loopShapeForVariant(
     : even
       ? "longitudinal"
       : "arc";
-}
-
-/** Bias arc west/east so NW loops don't drift over the river into eastern Warsaw. */
-function arcSideBias(direction: Direction): { west: number; east: number } {
-  switch (direction) {
-    case "NW":
-    case "W":
-    case "SW":
-      return { west: 1.35, east: 0.55 };
-    case "NE":
-    case "E":
-    case "SE":
-      return { west: 0.55, east: 1.35 };
-    default:
-      return { west: 1, east: 1 };
-  }
 }
 
 /** Estimate routed length for waypoints placed on a forward-facing arc. */
@@ -209,15 +164,10 @@ export function buildArcLoopWaypoints(
   const rotation = VARIANT_ROTATIONS[idx] + (jitter?.bearingDeg ?? 0) * 0.35;
 
   const arcHalfWidth = avoidAsphalt
-    ? 36 + (idx % 3) * 6
-    : 54 + (idx % 3) * 8;
-  const { west, east } = avoidAsphalt
-    ? { west: 1.42, east: 0.28 }
-    : direction === "NW" || direction === "W" || direction === "SW"
-      ? { west: 1.48, east: 0.38 }
-      : arcSideBias(direction);
-  const arcSpanDeg = arcHalfWidth * (west + east);
-  const arcStart = baseBearing - arcHalfWidth * west + rotation * 0.12;
+    ? 32 + (idx % 3) * 5
+    : 48 + (idx % 3) * 7;
+  const arcSpanDeg = arcHalfWidth * 2;
+  const arcStart = baseBearing - arcHalfWidth + rotation * 0.12;
 
   const roadDetourFactor = avoidAsphalt
     ? 1.72 + Math.min(0.65, distanceKm / 75)
@@ -245,20 +195,8 @@ function returnCorridorBearing(
 ): number {
   const base = DIRECTION_BEARING[direction];
   const offset = jitter?.corridorOffsetDeg ?? 0;
-  switch (direction) {
-    case "NW":
-    case "W":
-    case "SW":
-      return (base - 90 + offset + 360) % 360;
-    case "NE":
-    case "E":
-    case "SE":
-      return (base + 90 + offset + 360) % 360;
-    default: {
-      const side = variant % 2 === 0 ? -1 : 1;
-      return (base + 90 * side + offset + 360) % 360;
-    }
-  }
+  const side = variant % 2 === 0 ? -1 : 1;
+  return (base + 90 * side + offset + 360) % 360;
 }
 
 function pointOnAxisOffset(
@@ -286,6 +224,19 @@ function longitudinalPathFactor(
     Math.hypot(lateral, outLeg * 0.25) +
     (returnCount > 1 ? Math.hypot(lateral * 0.35, outLeg * 0.18) : 0);
   return outLeg + returnLeg + connectors;
+}
+
+/** Cone half-width (°) for direction coverage — tighter for diagonals. */
+function directionConeHalfWidth(direction: Direction): number {
+  switch (direction) {
+    case "NW":
+    case "NE":
+    case "SW":
+    case "SE":
+      return 38;
+    default:
+      return 52;
+  }
 }
 
 /** Fraction of route mileage inside a cone around `direction`. */
@@ -432,11 +383,7 @@ export function scoreLoopQualityWithShape(
   shape: LoopShape,
   start?: LatLng,
   direction?: Direction,
-  options?: {
-    avoidAsphalt?: boolean;
-    pavedShare?: number;
-    hemisphereViolation?: number;
-  },
+  options?: { avoidAsphalt?: boolean; pavedShare?: number },
 ): number {
   const base = scoreLoopQuality(
     coordinates,
@@ -463,12 +410,6 @@ export function scoreLoopQualityWithShape(
     metrics.directionCoverage >= 0.45;
 
   let score = base;
-
-  const hemisphereViolation = options?.hemisphereViolation ?? 0;
-  if (hemisphereViolation > 0) {
-    score += hemisphereViolation * 22;
-    score += Math.max(0, hemisphereViolation - 0.15) ** 2 * 55;
-  }
 
   if (options?.avoidAsphalt) {
     score += pavedShare * 16;
@@ -615,7 +556,12 @@ export function loopQualityMetrics(
     Math.abs(actualDistanceKm - targetDistanceKm) / targetDistanceKm;
   const directionCoverage =
     start && direction
-      ? directionCoverageRatio(coordinates, start, direction, 55)
+      ? directionCoverageRatio(
+          coordinates,
+          start,
+          direction,
+          directionConeHalfWidth(direction),
+        )
       : 1;
 
   return {
@@ -644,7 +590,7 @@ export function scoreLoopQuality(
       direction,
     );
 
-  const directionPenalty = Math.max(0, 0.58 - directionCoverage) * 18;
+  const directionPenalty = Math.max(0, 0.55 - directionCoverage) * 24;
 
   return (
     overlap * 2 +

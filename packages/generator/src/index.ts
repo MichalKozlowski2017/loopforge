@@ -19,7 +19,6 @@ import { scoreRoute } from "@loopforge/scoring";
 import {
   buildLoopWaypoints,
   createGenerationJitter,
-  hemisphereViolationShare,
   isGoodLoopQuality,
   loopQualityMetrics,
   loopShapeForVariant,
@@ -250,11 +249,6 @@ function applySpurRefinement(
     start,
     direction,
   );
-  const hemisphereViolation = hemisphereViolationShare(
-    coordinates,
-    start,
-    direction,
-  );
   const quality = scoreLoopQualityWithShape(
     coordinates,
     targetDistanceKm,
@@ -265,7 +259,6 @@ function applySpurRefinement(
     {
       avoidAsphalt,
       pavedShare: pavedShareFromSegments(routed.segments),
-      hemisphereViolation,
     },
   );
 
@@ -356,19 +349,9 @@ async function generateRouteWithEngine(
 
         const tooSpurHeavy =
           metrics.spurShare > MAX_SPUR_SHARE || metrics.backtrack > MAX_BACKTRACK;
-        const wrongDirection = metrics.directionCoverage < 0.45;
-        const eastShare = hemisphereViolationShare(
-          refined.coordinates,
-          request.start,
-          request.direction,
-        );
-        const wrongHemisphere =
-          (request.direction === "NW" ||
-            request.direction === "W" ||
-            request.direction === "SW") &&
-          eastShare > 0.28;
+        const wrongDirection = metrics.directionCoverage < 0.48;
 
-        if (tooSpurHeavy || wrongDirection || wrongHemisphere) {
+        if (tooSpurHeavy || wrongDirection) {
           if (quality < bestRejectedScore) {
             bestRejectedScore = quality;
             bestRejected = refined;
@@ -470,21 +453,9 @@ async function generateRouteWithEngine(
     ? Math.min(0.48, 0.3 + request.distanceKm / 500)
     : 0.38;
 
-  const finalEastShare = hemisphereViolationShare(
-    best.coordinates,
-    request.start,
-    request.direction,
-  );
-  const finalWrongHemisphere =
-    (request.direction === "NW" ||
-      request.direction === "W" ||
-      request.direction === "SW") &&
-    finalEastShare > 0.32;
-
   if (
-    finalMetrics.directionCoverage < 0.4 ||
-    finalMetrics.distanceError > maxDistanceError ||
-    finalWrongHemisphere
+    finalMetrics.directionCoverage < 0.42 ||
+    finalMetrics.distanceError > maxDistanceError
   ) {
     throw new Error(
       "Nie udało się dopasować trasy do dystansu i kierunku — spróbuj innego kierunku lub dystansu",
