@@ -25,7 +25,12 @@ import {
   scoreLoopQualityWithShape,
   type LoopShape,
 } from "./loop-waypoints";
-import { pruneDeadEndSpurs, pruneMapGeoJson, routeLengthM } from "./prune-spurs";
+import {
+  prepareCoordinatesForNavigation,
+  pruneDeadEndSpurs,
+  pruneMapGeoJson,
+  routeLengthM,
+} from "./prune-spurs";
 
 const DIRECTION_BEARING: Record<
   import("@loopforge/osm-types").Direction,
@@ -153,8 +158,9 @@ function buildGeneratedRoute(
   },
 ): GeneratedRoute {
   const { start, bikeType, direction, distanceKm } = request;
+  const navCoordinates = prepareCoordinatesForNavigation(coordinates);
   const actualKm =
-    coordinates.length > 1 ? totalDistanceKm(coordinates) : distanceKm;
+    navCoordinates.length > 1 ? totalDistanceKm(navCoordinates) : distanceKm;
   const score = scoreRoute(options.segments, bikeType);
   const id = crypto.randomUUID();
   const name = `Loopforge ${bikeType} ${Math.round(actualKm)}km`;
@@ -179,7 +185,7 @@ function buildGeneratedRoute(
       },
       geometry: {
         type: "LineString",
-        coordinates,
+        coordinates: navCoordinates,
       },
     },
     mapGeojson: options.mapGeojson,
@@ -189,7 +195,7 @@ function buildGeneratedRoute(
       surfaceBreakdown,
       score,
     },
-    gpx: options.gpx ?? buildGpx(name, coordinates, start),
+    gpx: options.gpx ?? buildGpx(name, navCoordinates, start),
     createdAt: new Date().toISOString(),
   };
 }
@@ -500,6 +506,7 @@ function routingEnginePreference(): "auto" | "pgrouting" | "brouter" {
   return "auto";
 }
 
+export { prepareCoordinatesForNavigation } from "./prune-spurs";
 export async function generateRoute(
   request: GenerateRouteRequest,
 ): Promise<GeneratedRoute> {

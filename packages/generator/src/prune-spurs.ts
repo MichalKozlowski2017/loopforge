@@ -462,4 +462,10 @@ export function pruneMapGeoJson(
   return { type: "FeatureCollection", features };
 }
 
+/** Strip dead-end spurs before GPX export (map keeps full geometry). */
+export function prepareCoordinatesForNavigation(coordinates: Coord[]): Coord[] {
+  const pruned = pruneDeadEndSpurs(coordinates);
+  return pruned.coordinates.length >= 4 ? pruned.coordinates : coordinates;
+}
+
 export { totalPathLengthM as routeLengthM };
