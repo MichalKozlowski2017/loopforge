@@ -394,8 +394,9 @@ export function scoreLoopQualityWithShape(
   let score = base;
 
   if (options?.avoidAsphalt) {
-    score += pavedShare * 18;
-    score += Math.max(0, pavedShare - 0.28) ** 2 * 45;
+    score += pavedShare * 16;
+    score += Math.max(0, pavedShare - 0.28) ** 2 * 40;
+    score += metrics.distanceError * 28;
   }
 
   if (shape === "arc" && arcViable) {

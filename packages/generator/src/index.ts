@@ -338,7 +338,9 @@ async function generateRouteWithEngine(
             ratio > 1
               ? 1 + (ratio - 1) * (request.avoidAsphalt ? 0.38 : 0.98)
               : ratio * 0.98;
-          const maxScale = request.avoidAsphalt ? 1.14 : 1.35;
+          const maxScale = request.avoidAsphalt
+            ? Math.min(1.28, 1.08 + request.distanceKm / 400)
+            : 1.35;
           scales.push(Math.min(maxScale, Math.max(0.72, adjusted)));
         }
 
@@ -355,8 +357,24 @@ async function generateRouteWithEngine(
         }
 
         if (quality < bestScore) {
-          bestScore = quality;
-          best = refined;
+          let skipShortDetour = false;
+          if (request.avoidAsphalt && best !== null) {
+            const bestDistErr = loopQualityMetrics(
+              best.coordinates,
+              request.distanceKm,
+              best.distanceKm,
+              request.start,
+              request.direction,
+            ).distanceError;
+            skipShortDetour =
+              refined.distanceKm < best.distanceKm * 0.88 &&
+              metrics.distanceError > bestDistErr + 0.06;
+          }
+
+          if (!skipShortDetour) {
+            bestScore = quality;
+            best = refined;
+          }
         }
 
         if (
@@ -428,10 +446,13 @@ async function generateRouteWithEngine(
     request.start,
     request.direction,
   );
+  const maxDistanceError = request.avoidAsphalt
+    ? Math.min(0.48, 0.3 + request.distanceKm / 500)
+    : 0.38;
+
   if (
     finalMetrics.directionCoverage < 0.4 ||
-    finalMetrics.distanceError >
-      (request.avoidAsphalt ? 0.42 : 0.38)
+    finalMetrics.distanceError > maxDistanceError
   ) {
     throw new Error(
       "Nie udało się dopasować trasy do dystansu i kierunku — spróbuj innego kierunku lub dystansu",
