@@ -33,6 +33,7 @@ assign prefer_forests false # %prefer_forests% | Enable to prefer forest areas |
 assign prefer_rivers false # %prefer_rivers% | Enable to prefer river valleys | boolean
 assign avoid_towns false # %avoid_towns% | Enable to avoid urban areas | boolean
 assign avoid_noise false # %avoid_noise% | Enable to avoid noisy areas | boolean
+assign avoid_footways false # %avoid_footways% | Enable to avoid sidewalks and footways | boolean
 
 # with engine defaults, long parts of routing to via points may be removed
 assign correctMisplacedViaPoints = false # %correctMisplacedViaPoints% | Set to true to remove detours due to via points (going back and forth on the same route) | boolean
@@ -129,6 +130,12 @@ assign smoothnesspenalty
                                         switch not assume_wet_conditions 1.6 3.2
 
 assign footwaypenalty
+    switch avoid_footways
+        switch footway=sidewalk    120
+        switch bicycle=yes|designated
+            switch segregated=yes  25
+                                   40
+                                   80
     switch bicycle=yes|designated
         switch segregated=yes      1.8
                                    2.6
@@ -266,7 +273,7 @@ assign costfactor
     switch    highway= switch not route=ferry                   10000 100000
     switch    highway=trunk|trunk_link switch any_cycleroute    20 80
     switch    highway=bridleway|raceway switch not bicycle=yes  20 5
-    switch    highway=pedestrian switch not bicycle=yes         8 3
+    switch    highway=pedestrian switch avoid_footways 80 switch not bicycle=yes 8 3
     switch    highway=primary|primary_link                      4.8
     switch    highway=secondary|secondary_link                  4.2
     switch    highway=tertiary|tertiary_link                    3.6

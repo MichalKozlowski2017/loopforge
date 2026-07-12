@@ -25,7 +25,7 @@ const DIRECTION_BEARING: Record<Direction, number> = {
 const BIKE_PROFILE: Record<BikeType, string> = {
   gravel: "customprofiles/loopforge-gravel",
   road: "fastbike",
-  mtb: "mtb",
+  mtb: "customprofiles/loopforge-mtb",
   general: "customprofiles/loopforge-trekking",
 };
 
@@ -63,6 +63,7 @@ function brouterProfileOverrides(
     avoidAsphalt &&
     (bikeType === "gravel" || bikeType === "mtb" || bikeType === "general")
   ) {
+    overrides.avoid_footways = "1";
     if (bikeType === "mtb") {
       overrides.smallpaved_factor = "-2";
       overrides.path_preference = "32";

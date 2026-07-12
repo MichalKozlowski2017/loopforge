@@ -118,11 +118,11 @@ export function RouteForm({
           />
           <span>
             <span className="block text-sm font-medium text-zinc-200">
-              Unikaj asfaltu
+              Unikaj asfaltu i chodników
             </span>
             <span className="mt-0.5 block text-xs text-zinc-500">
-              Priorytet szuteru, leśnych dróg i ścieżek. Asfalt tylko gdy nie ma
-              sensownej alternatywy.
+              Priorytet szuteru, leśnych dróg i ścieżek. Omijamy asfalt i
+              chodniki, gdy jest sensowna alternatywa.
             </span>
           </span>
         </label>
