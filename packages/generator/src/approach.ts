@@ -325,11 +325,11 @@ export function loopEntryFromApproach(approach: RoutedLeg): LatLng {
   return last ? coordToLatLng(last) : { lat: 0, lng: 0 };
 }
 
-/** Reject loops that reuse more than this share of the approach corridor. */
-export const MAX_APPROACH_OVERLAP = 0.14;
+/** Prefer loops below this overlap share; above it we penalize heavily in scoring. */
+export const PREFER_APPROACH_OVERLAP_BELOW = 0.2;
 
-/** Relaxed cap when no variant clears the strict threshold. */
-export const MAX_APPROACH_OVERLAP_RELAXED = 0.32;
+/** Hard cap for relaxed fallbacks when no low-overlap variant exists. */
+export const MAX_APPROACH_OVERLAP_RELAXED = 0.38;
 
 function pointToSegmentDistanceM(
   p: [number, number],

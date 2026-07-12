@@ -1,4 +1,5 @@
 import type { Direction, LatLng } from "@loopforge/osm-types";
+import { PREFER_APPROACH_OVERLAP_BELOW } from "./approach";
 
 const DIRECTION_BEARING: Record<Direction, number> = {
   N: 0,
@@ -353,7 +354,7 @@ export function shiftWaypointsAwayFromHome(
 
   const towardHome = bearingDeg(loopStart, home);
   const awayBearing = (towardHome + 90 + (variant % 2 === 0 ? 0 : 180)) % 360;
-  const shiftM = 900 + (variant % 4) * 350;
+  const shiftM = 650 + (variant % 4) * 300;
   const shiftedOrigin = destinationPoint(loopStart, awayBearing, shiftM);
 
   return waypoints.map((wp) => {
@@ -463,8 +464,8 @@ export function scoreLoopQualityWithShape(
 
   if (approachOverlap > 0) {
     score += approachOverlap * 28;
-    if (approachOverlap > 0.06) {
-      score += (approachOverlap - 0.06) ** 2 * 120;
+    if (approachOverlap > PREFER_APPROACH_OVERLAP_BELOW) {
+      score += (approachOverlap - PREFER_APPROACH_OVERLAP_BELOW) ** 2 * 80;
     }
   }
 

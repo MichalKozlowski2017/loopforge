@@ -40,8 +40,8 @@ import {
   loopEntryOffsetM,
   loopEntryFromApproach,
   mergeApproachAndLoop,
-  MAX_APPROACH_OVERLAP,
   MAX_APPROACH_OVERLAP_RELAXED,
+  PREFER_APPROACH_OVERLAP_BELOW,
   type RoutedLeg,
 } from "./approach";
 
@@ -347,6 +347,9 @@ async function generateRouteWithEngine(
   let bestRejectedScore = Infinity;
   let bestFallback: RoutedLoopResult | null = null;
   let bestFallbackScore = Infinity;
+  let bestLowOverlap: RoutedLoopResult | null = null;
+  let bestLowOverlapShare = Infinity;
+  let bestApproachOverlap = Infinity;
   let usedRelaxedFallback = false;
   let attempt = 0;
   const maxAttemptsEstimate = variants * 2;
@@ -473,11 +476,18 @@ async function generateRouteWithEngine(
         const tooSpurHeavy =
           metrics.spurShare > MAX_SPUR_SHARE || metrics.backtrack > MAX_BACKTRACK;
         const wrongDirection = metrics.directionCoverage < 0.38;
-        const overlapsApproach =
-          options?.approachCoordinates != null &&
-          metrics.approachOverlap > MAX_APPROACH_OVERLAP;
 
-        if (tooSpurHeavy || wrongDirection || overlapsApproach) {
+        if (
+          options?.approachCoordinates &&
+          !tooSpurHeavy &&
+          !wrongDirection &&
+          metrics.approachOverlap < bestLowOverlapShare
+        ) {
+          bestLowOverlapShare = metrics.approachOverlap;
+          bestLowOverlap = refined;
+        }
+
+        if (tooSpurHeavy || wrongDirection) {
           if (quality < bestRejectedScore) {
             bestRejectedScore = quality;
             bestRejected = refined;
@@ -503,6 +513,15 @@ async function generateRouteWithEngine(
           if (!skipShortDetour) {
             bestScore = quality;
             best = refined;
+            bestApproachOverlap = metrics.approachOverlap;
+          } else if (
+            options?.approachCoordinates != null &&
+            quality <= bestScore + 1.2 &&
+            metrics.approachOverlap + 0.05 < bestApproachOverlap
+          ) {
+            bestScore = quality;
+            best = refined;
+            bestApproachOverlap = metrics.approachOverlap;
           }
         }
 
@@ -651,6 +670,11 @@ async function generateRouteWithEngine(
     }
   }
 
+  if (!best && bestLowOverlap) {
+    best = bestLowOverlap;
+    usedRelaxedFallback = true;
+  }
+
   if (!best) {
     throw new Error(
       "Nie udało się wygenerować trasy — spróbuj innego kierunku, krótszego dystansu lub wyłącz „unikaj asfaltu”.",
@@ -664,20 +688,51 @@ async function generateRouteWithEngine(
     progress: 94,
   });
 
-  const finalMetrics = loopQualityMetrics(
+  const maxDistanceError = request.avoidAsphalt
+    ? Math.min(0.48, 0.3 + request.distanceKm / 500)
+    : 0.38;
+  const approachMode = options?.approachCoordinates != null;
+  const minDirectionCoverage = usedRelaxedFallback
+    ? 0.3
+    : approachMode
+      ? 0.36
+      : 0.42;
+  const distanceErrorLimit = usedRelaxedFallback
+    ? Math.min(0.58, maxDistanceError + 0.14)
+    : approachMode
+      ? Math.min(0.52, maxDistanceError + 0.1)
+      : maxDistanceError;
+
+  let finalMetrics = loopQualityMetrics(
     best.coordinates,
     request.distanceKm,
     best.distanceKm,
     request.start,
     request.direction,
   );
-  const maxDistanceError = request.avoidAsphalt
-    ? Math.min(0.48, 0.3 + request.distanceKm / 500)
-    : 0.38;
-  const minDirectionCoverage = usedRelaxedFallback ? 0.3 : 0.42;
-  const distanceErrorLimit = usedRelaxedFallback
-    ? Math.min(0.58, maxDistanceError + 0.14)
-    : maxDistanceError;
+
+  if (
+    (finalMetrics.directionCoverage < minDirectionCoverage ||
+      finalMetrics.distanceError > distanceErrorLimit) &&
+    bestLowOverlap &&
+    bestLowOverlap !== best
+  ) {
+    const lowOverlapMetrics = loopQualityMetrics(
+      bestLowOverlap.coordinates,
+      request.distanceKm,
+      bestLowOverlap.distanceKm,
+      request.start,
+      request.direction,
+    );
+    if (
+      lowOverlapMetrics.directionCoverage >= minDirectionCoverage &&
+      lowOverlapMetrics.distanceError <= distanceErrorLimit
+    ) {
+      best = bestLowOverlap;
+      finalMetrics = lowOverlapMetrics;
+      usedRelaxedFallback = true;
+    }
+  }
 
   if (
     finalMetrics.directionCoverage < minDirectionCoverage ||
