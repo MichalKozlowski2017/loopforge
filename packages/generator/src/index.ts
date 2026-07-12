@@ -20,7 +20,7 @@ import {
   loopQualityMetrics,
   scoreLoopQuality,
 } from "./loop-waypoints";
-import { pruneDeadEndSpurs } from "./prune-spurs";
+import { pruneDeadEndSpurs, pruneMapGeoJson, routeLengthM } from "./prune-spurs";
 
 const DIRECTION_BEARING: Record<
   import("@loopforge/osm-types").Direction,
@@ -189,6 +189,55 @@ function buildGeneratedRoute(
   };
 }
 
+const MIN_PRUNE_REMOVED_M = 8;
+const MAX_SPUR_SHARE = 0.05;
+const MAX_BACKTRACK = 0.06;
+
+function applySpurRefinement(
+  routed: RoutedLoopResult,
+  targetDistanceKm: number,
+  start: LatLng,
+  direction: GenerateRouteRequest["direction"],
+): {
+  refined: RoutedLoopResult;
+  metrics: ReturnType<typeof loopQualityMetrics>;
+  quality: number;
+  pruned: boolean;
+} {
+  const pruned = pruneDeadEndSpurs(routed.coordinates);
+  const usePruned =
+    pruned.removedM >= MIN_PRUNE_REMOVED_M && pruned.coordinates.length >= 4;
+  const coordinates = usePruned ? pruned.coordinates : routed.coordinates;
+  const mapGeojson = pruneMapGeoJson(
+    routed.mapGeojson ?? null,
+    coordinates,
+  );
+
+  const refined: RoutedLoopResult = {
+    ...routed,
+    coordinates,
+    mapGeojson: mapGeojson ?? undefined,
+    distanceKm: routeLengthM(coordinates) / 1000,
+  };
+
+  const metrics = loopQualityMetrics(
+    coordinates,
+    targetDistanceKm,
+    refined.distanceKm,
+    start,
+    direction,
+  );
+  const quality = scoreLoopQuality(
+    coordinates,
+    targetDistanceKm,
+    refined.distanceKm,
+    start,
+    direction,
+  );
+
+  return { refined, metrics, quality, pruned: usePruned };
+}
+
 async function generateRouteWithEngine(
   request: GenerateRouteRequest,
   fetchRoute: (params: {
@@ -200,76 +249,85 @@ async function generateRouteWithEngine(
   }) => Promise<RoutedLoopResult>,
 ): Promise<GeneratedRoute> {
   const variants = 8;
+  const scaleAttempts = [1.0, 0.86, 0.74, 1.08];
   const deadlineMs = Date.now() + 50_000;
   let best: RoutedLoopResult | null = null;
   let bestScore = Infinity;
   let bestRejected: RoutedLoopResult | null = null;
   let bestRejectedScore = Infinity;
 
-  const refineRouted = (routed: RoutedLoopResult) => {
-    const pruned = pruneDeadEndSpurs(routed.coordinates);
-    const scoreCoords =
-      pruned.removedM >= 25 ? pruned.coordinates : routed.coordinates;
-
-    return {
-      routed,
-      quality: scoreLoopQuality(
-        scoreCoords,
-        request.distanceKm,
-        routed.distanceKm,
-      ),
-      metrics: loopQualityMetrics(
-        scoreCoords,
-        request.distanceKm,
-        routed.distanceKm,
-      ),
-      hasFerry: routed.segments.some((segment) => segment.tags.route === "ferry"),
-    };
-  };
-
   for (let variant = 0; variant < variants; variant++) {
     if (Date.now() > deadlineMs && best) break;
 
     try {
-      const waypoints = buildLoopWaypoints(
-        request.start,
-        request.distanceKm,
-        request.direction,
-        variant,
-      );
-      const { routed, quality, metrics, hasFerry } = refineRouted(
-        await fetchRoute({
+      for (const scale of scaleAttempts) {
+        if (Date.now() > deadlineMs && best) break;
+
+        const waypoints = buildLoopWaypoints(
+          request.start,
+          request.distanceKm,
+          request.direction,
+          variant,
+          scale,
+        );
+        const routed = await fetchRoute({
           start: request.start,
           bikeType: request.bikeType,
           waypoints,
           rideProfile: request.profile,
           skipGpx: true,
-        }),
-      );
+        });
 
-      if (hasFerry) continue;
+        const hasFerry = routed.segments.some(
+          (segment) => segment.tags.route === "ferry",
+        );
+        if (hasFerry) continue;
 
-      const tooSpurHeavy =
-        metrics.spurShare > 0.08 || metrics.backtrack > 0.08;
+        const { refined, metrics, quality } = applySpurRefinement(
+          routed,
+          request.distanceKm,
+          request.start,
+          request.direction,
+        );
 
-      if (tooSpurHeavy) {
-        if (quality < bestRejectedScore) {
-          bestRejectedScore = quality;
-          bestRejected = routed;
+        const tooSpurHeavy =
+          metrics.spurShare > MAX_SPUR_SHARE || metrics.backtrack > MAX_BACKTRACK;
+        const wrongDirection = metrics.directionCoverage < 0.45;
+
+        if (tooSpurHeavy || wrongDirection) {
+          if (quality < bestRejectedScore) {
+            bestRejectedScore = quality;
+            bestRejected = refined;
+          }
+          continue;
         }
-        continue;
-      }
 
-      if (quality < bestScore) {
-        bestScore = quality;
-        best = routed;
+        if (quality < bestScore) {
+          bestScore = quality;
+          best = refined;
+        }
+
+        if (
+          isGoodLoopQuality(
+            refined.coordinates,
+            request.distanceKm,
+            refined.distanceKm,
+            request.start,
+            request.direction,
+          )
+        ) {
+          break;
+        }
       }
 
       if (
+        best &&
         isGoodLoopQuality(
-          routed.coordinates,
+          best.coordinates,
           request.distanceKm,
-          routed.distanceKm,
+          best.distanceKm,
+          request.start,
+          request.direction,
         )
       ) {
         break;

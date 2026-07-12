@@ -174,7 +174,8 @@ export default function HomePage() {
         <div className="mb-6">
           <h1 className="text-2xl font-semibold">Kuźnia pętli</h1>
           <p className="mt-2 text-sm text-zinc-400">
-            Start domyślnie z GPS. Ustaw marker na mapie lub przeciągnij go.
+            Ustaw punkt startu (GPS, wyszukiwarka lub mapa), wybierz dystans i
+            kierunek — reszta dzieje się automatycznie.
           </p>
         </div>
 

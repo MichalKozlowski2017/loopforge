@@ -84,21 +84,6 @@ function pathLengthM(
   return meters;
 }
 
-function pointOnEllipse(
-  center: LatLng,
-  semiMajorM: number,
-  semiMinorM: number,
-  majorBearingDeg: number,
-  angleDeg: number,
-): LatLng {
-  const t = toRadians(angleDeg);
-  const eastM = semiMajorM * Math.sin(t);
-  const northM = semiMinorM * Math.cos(t);
-  const dist = Math.hypot(eastM, northM);
-  const localBearing = toDegrees(Math.atan2(eastM, northM));
-  return destinationPoint(center, majorBearingDeg + localBearing, dist);
-}
-
 const VARIANT_POINT_COUNTS = [5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4];
 const VARIANT_SCALES = [
   1.0, 0.9, 1.1, 0.85, 1.15, 0.92, 1.08, 0.88, 1.12, 0.95, 1.05, 0.87, 1.13,
@@ -107,50 +92,65 @@ const VARIANT_SCALES = [
 const VARIANT_ROTATIONS = [
   0, 18, -18, 36, -36, 12, -12, 24, -24, 30, -30, 6, -6, 42, -42, 0,
 ];
-const VARIANT_ASPECTS = [
-  0.72, 0.68, 0.76, 0.7, 0.74, 0.66, 0.78, 0.72, 0.7, 0.75, 0.69, 0.73, 0.71,
-  0.77, 0.67, 0.74,
-];
+
+/** Fraction of route mileage that should lie in the half-plane of `direction`. */
+export function directionCoverageRatio(
+  coordinates: [number, number][],
+  start: LatLng,
+  direction: Direction,
+): number {
+  if (coordinates.length < 2) return 0;
+
+  const target = DIRECTION_BEARING[direction];
+  let inSectorM = 0;
+  let totalM = 0;
+
+  for (let i = 1; i < coordinates.length; i++) {
+    const a = { lng: coordinates[i - 1][0], lat: coordinates[i - 1][1] };
+    const b = { lng: coordinates[i][0], lat: coordinates[i][1] };
+    const segM = haversineM(a, b);
+    if (segM < 5) continue;
+
+    totalM += segM;
+    const mid = { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 };
+    const bearing = bearingDeg(start, mid);
+    const diff = Math.abs(((bearing - target + 540) % 360) - 180);
+    if (diff <= 90) inSectorM += segM;
+  }
+
+  return totalM > 0 ? inSectorM / totalM : 0;
+}
 
 /**
- * Place waypoints on an ellipse biased toward `direction`.
- * Smoother than a 3-point triangle — fewer dead-end spurs when routed on OSM.
+ * Place waypoints on a forward-facing arc so the loop bulk lies in `direction`.
+ * Full ellipses with center opposite to direction put most mileage behind the start.
  */
 export function buildLoopWaypoints(
   start: LatLng,
   distanceKm: number,
   direction: Direction,
   variant: number,
+  scaleMultiplier = 1,
 ): LatLng[] {
   const baseBearing = DIRECTION_BEARING[direction];
   const idx = variant % VARIANT_POINT_COUNTS.length;
   const pointCount = VARIANT_POINT_COUNTS[idx];
-  const scale = VARIANT_SCALES[idx];
+  const scale = VARIANT_SCALES[idx] * scaleMultiplier;
   const rotation = VARIANT_ROTATIONS[idx];
-  const aspect = VARIANT_ASPECTS[idx];
 
-  // Routed roads are longer than straight chords — scale up vs. ideal circle.
-  const radiusM =
-    ((distanceKm * 1000) / (2 * Math.PI)) * 1.38 * scale;
-  const semiMajorM = radiusM;
-  const semiMinorM = radiusM * aspect;
+  // Perimeter ≈ 2πR; roads add ~5–15% vs chords — not 38%.
+  const radiusM = ((distanceKm * 1000) / (2 * Math.PI)) * 1.02 * scale;
 
-  // Offset center slightly opposite to direction so the loop bulges that way.
-  const center = destinationPoint(start, baseBearing + 180, radiusM * 0.32);
-  const stepDeg = 360 / pointCount;
-  const firstAngle = rotation;
+  // Arc centered on chosen bearing (~220–250°), shifted by variant rotation.
+  const arcHalfWidth = 108 + (idx % 3) * 12;
+  const arcStart = baseBearing - arcHalfWidth + rotation * 0.35;
+  const arcSpan = arcHalfWidth * 2;
 
   const waypoints: LatLng[] = [];
   for (let i = 0; i < pointCount; i++) {
-    waypoints.push(
-      pointOnEllipse(
-        center,
-        semiMajorM,
-        semiMinorM,
-        baseBearing,
-        firstAngle + i * stepDeg,
-      ),
-    );
+    const t = pointCount === 1 ? 0.5 : i / (pointCount - 1);
+    const bearing = arcStart + t * arcSpan;
+    waypoints.push(destinationPoint(start, bearing, radiusM));
   }
 
   return waypoints;
@@ -270,6 +270,8 @@ export function loopQualityMetrics(
   coordinates: [number, number][],
   targetDistanceKm: number,
   actualDistanceKm: number,
+  start?: LatLng,
+  direction?: Direction,
 ) {
   const overlap = overlapRatio(coordinates);
   const backtrack = backtrackRatio(coordinates);
@@ -278,39 +280,69 @@ export function loopQualityMetrics(
     actualDistanceKm > 0 ? spurM / (actualDistanceKm * 1000) : 0;
   const distanceError =
     Math.abs(actualDistanceKm - targetDistanceKm) / targetDistanceKm;
+  const directionCoverage =
+    start && direction
+      ? directionCoverageRatio(coordinates, start, direction)
+      : 1;
 
-  return { overlap, backtrack, spurM, spurShare, distanceError };
+  return {
+    overlap,
+    backtrack,
+    spurM,
+    spurShare,
+    distanceError,
+    directionCoverage,
+  };
 }
 
 export function scoreLoopQuality(
   coordinates: [number, number][],
   targetDistanceKm: number,
   actualDistanceKm: number,
+  start?: LatLng,
+  direction?: Direction,
 ): number {
-  const { overlap, backtrack, spurShare, distanceError } = loopQualityMetrics(
-    coordinates,
-    targetDistanceKm,
-    actualDistanceKm,
-  );
+  const { overlap, backtrack, spurShare, distanceError, directionCoverage } =
+    loopQualityMetrics(
+      coordinates,
+      targetDistanceKm,
+      actualDistanceKm,
+      start,
+      direction,
+    );
 
-  return overlap * 2 + backtrack * 5 + spurShare * 6 + distanceError * 1.5;
+  const directionPenalty = Math.max(0, 0.52 - directionCoverage) * 14;
+
+  return (
+    overlap * 2 +
+    backtrack * 8 +
+    spurShare * 12 +
+    distanceError * 10 +
+    directionPenalty
+  );
 }
 
 export function isGoodLoopQuality(
   coordinates: [number, number][],
   targetDistanceKm: number,
   actualDistanceKm: number,
+  start?: LatLng,
+  direction?: Direction,
 ): boolean {
-  const { overlap, backtrack, spurShare, distanceError } = loopQualityMetrics(
-    coordinates,
-    targetDistanceKm,
-    actualDistanceKm,
-  );
+  const { overlap, backtrack, spurShare, distanceError, directionCoverage } =
+    loopQualityMetrics(
+      coordinates,
+      targetDistanceKm,
+      actualDistanceKm,
+      start,
+      direction,
+    );
 
   return (
     overlap < 0.1 &&
     backtrack < 0.05 &&
     spurShare < 0.06 &&
-    distanceError < 0.2
+    distanceError < 0.18 &&
+    directionCoverage >= 0.5
   );
 }

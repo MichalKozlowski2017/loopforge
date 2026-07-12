@@ -1,6 +1,8 @@
 "use client";
 
 import type { BikeType, Direction, RideProfile } from "@loopforge/osm-types";
+import { DirectionCompass } from "@/components/DirectionCompass";
+import { LocationSearch } from "@/components/LocationSearch";
 
 export interface RouteFormValues {
   bikeType: BikeType;
@@ -29,16 +31,7 @@ const BIKE_TYPES: { value: BikeType; label: string }[] = [
   { value: "general", label: "Ogólny" },
 ];
 
-const DIRECTIONS: Direction[] = [
-  "N",
-  "NE",
-  "E",
-  "SE",
-  "S",
-  "SW",
-  "W",
-  "NW",
-];
+const DISTANCE_PRESETS = [20, 35, 50, 80, 120];
 
 const PROFILES: { value: RideProfile; label: string; hint: string }[] = [
   { value: "flow", label: "Flow", hint: "Płynna jazda" },
@@ -110,53 +103,19 @@ export function RouteForm({
       </div>
 
       <div>
-        <label
-          htmlFor="distance"
-          className="mb-2 block text-sm font-medium text-zinc-300"
-        >
-          Dystans (km)
-        </label>
-        <input
-          id="distance"
-          type="number"
-          min={10}
-          max={200}
-          step={1}
-          value={values.distanceKm}
-          onChange={(event) =>
-            onChange({ ...values, distanceKm: Number(event.target.value) })
-          }
-          className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
-        />
-      </div>
-
-      <div>
-        <label className="mb-2 block text-sm font-medium text-zinc-300">
-          Kierunek
-        </label>
-        <div className="grid grid-cols-4 gap-2">
-          {DIRECTIONS.map((direction) => (
-            <button
-              key={direction}
-              type="button"
-              onClick={() => onChange({ ...values, direction })}
-              className={`rounded-lg border px-2 py-2 text-sm transition ${
-                values.direction === direction
-                  ? "border-emerald-500 bg-emerald-500/10 text-emerald-300"
-                  : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-500"
-              }`}
-            >
-              {direction}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div>
         <label className="mb-2 block text-sm font-medium text-zinc-300">
           Punkt startu
         </label>
-        <div className="mb-2 flex gap-2">
+
+        <LocationSearch
+          lat={values.lat}
+          lng={values.lng}
+          onSelect={(location) =>
+            onChange({ ...values, lat: location.lat, lng: location.lng })
+          }
+        />
+
+        <div className="mt-3 flex gap-2">
           <button
             type="button"
             onClick={onUseMyLocation}
@@ -181,53 +140,103 @@ export function RouteForm({
             {pickOnMap ? "Kliknij mapę…" : "Ustaw na mapie"}
           </button>
         </div>
+
         {locationStatus === "denied" ? (
-          <p className="mb-2 text-xs text-amber-400/90">
-            Brak dostępu do lokalizacji — ustaw punkt na mapie lub wpisz współrzędne.
+          <p className="mt-2 text-xs text-amber-400/90">
+            Brak dostępu do GPS — wyszukaj miejscowość albo ustaw punkt na mapie.
           </p>
         ) : null}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label
-              htmlFor="lat"
-              className="mb-2 block text-xs font-medium text-zinc-400"
-            >
-              Szer. geogr.
-            </label>
-            <input
-              id="lat"
-              type="number"
-              step="0.0001"
-              value={values.lat}
-              onChange={(event) =>
-                onChange({ ...values, lat: Number(event.target.value) })
-              }
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
-            />
+
+        <details className="mt-3 group">
+          <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-400">
+            Współrzędne (zaawansowane)
+          </summary>
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            <div>
+              <label
+                htmlFor="lat"
+                className="mb-1 block text-xs font-medium text-zinc-400"
+              >
+                Szer. geogr.
+              </label>
+              <input
+                id="lat"
+                type="number"
+                step="0.0001"
+                value={values.lat}
+                onChange={(event) =>
+                  onChange({ ...values, lat: Number(event.target.value) })
+                }
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="lng"
+                className="mb-1 block text-xs font-medium text-zinc-400"
+              >
+                Dł. geogr.
+              </label>
+              <input
+                id="lng"
+                type="number"
+                step="0.0001"
+                value={values.lng}
+                onChange={(event) =>
+                  onChange({ ...values, lng: Number(event.target.value) })
+                }
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+              />
+            </div>
           </div>
-          <div>
-            <label
-              htmlFor="lng"
-              className="mb-2 block text-xs font-medium text-zinc-400"
-            >
-              Dł. geogr.
-            </label>
-            <input
-              id="lng"
-              type="number"
-              step="0.0001"
-              value={values.lng}
-              onChange={(event) =>
-                onChange({ ...values, lng: Number(event.target.value) })
-              }
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
-            />
-          </div>
-        </div>
-        <p className="mt-1.5 text-[11px] text-zinc-500">
-          Zielony marker na mapie — przeciągnij lub kliknij „Ustaw na mapie”.
+        </details>
+
+        <p className="mt-2 text-[11px] text-zinc-500">
+          Zielony marker — przeciągnij na mapie lub użyj wyszukiwarki.
         </p>
       </div>
+
+      <div>
+        <label
+          htmlFor="distance"
+          className="mb-2 block text-sm font-medium text-zinc-300"
+        >
+          Dystans (km)
+        </label>
+        <input
+          id="distance"
+          type="number"
+          min={10}
+          max={200}
+          step={1}
+          value={values.distanceKm}
+          onChange={(event) =>
+            onChange({ ...values, distanceKm: Number(event.target.value) })
+          }
+          className="mb-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+        />
+        <div className="flex flex-wrap gap-1.5">
+          {DISTANCE_PRESETS.map((km) => (
+            <button
+              key={km}
+              type="button"
+              onClick={() => onChange({ ...values, distanceKm: km })}
+              className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
+                values.distanceKm === km
+                  ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-300"
+                  : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
+              }`}
+            >
+              {km} km
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <DirectionCompass
+        value={values.direction}
+        onChange={(direction) => onChange({ ...values, direction })}
+      />
 
       <button
         type="submit"

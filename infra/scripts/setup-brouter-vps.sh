@@ -89,6 +89,6 @@ Następne kroki:
 1. Caddy/nginx: HTTPS proxy router.twojadomena.pl → 127.0.0.1:$PORT
 2. NIE wystawiaj portu $PORT publicznie — tylko 443 przez reverse proxy
 3. Vercel env: BROUTER_URL=https://router.twojadomena.pl
-4. Segmenty PL: pobierz więcej .rd5 do $SEG (pnpm setup:brouter lokalnie + rsync)
+4. Cała PL: pnpm setup:brouter:poland lokalnie, potem rsync segments4/ na VPS
 
 EOF

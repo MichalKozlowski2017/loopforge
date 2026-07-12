@@ -45,39 +45,156 @@ export interface SpurRange {
   end: number;
 }
 
+interface SpurDetectConfig {
+  matchM: number;
+  minSpurM: number;
+  minGap: number;
+  maxSpanRatio: number;
+  minDetourRatio: number;
+  midBulgeRatio: number;
+  maxMidBulgeM: number;
+}
+
+const DEFAULT_SPUR_CONFIG: SpurDetectConfig = {
+  matchM: 50,
+  minSpurM: 30,
+  minGap: 8,
+  maxSpanRatio: 0.55,
+  minDetourRatio: 1.35,
+  midBulgeRatio: 0.3,
+  maxMidBulgeM: 70,
+};
+
+const MICRO_SPUR_CONFIG: SpurDetectConfig = {
+  matchM: 26,
+  minSpurM: 12,
+  minGap: 4,
+  maxSpanRatio: 0.4,
+  minDetourRatio: 1.18,
+  midBulgeRatio: 0.22,
+  maxMidBulgeM: 45,
+};
+
+function findDeadEndSpurRangesWithConfig(
+  coordinates: Coord[],
+  config: SpurDetectConfig,
+): SpurRange[] {
+  if (coordinates.length < 12) return [];
+
+  const ranges: SpurRange[] = [];
+  const maxSpan = Math.floor(coordinates.length * config.maxSpanRatio);
+
+  for (let i = 0; i < coordinates.length - config.minGap; i++) {
+    const origin = toLatLng(coordinates[i]);
+
+    for (let j = i + config.minGap; j < coordinates.length; j++) {
+      if (j - i > maxSpan) break;
+
+      const returnPt = toLatLng(coordinates[j]);
+      if (haversineM(origin, returnPt) > config.matchM) continue;
+
+      const spurPathM = pathLengthM(coordinates, i, j);
+      if (spurPathM < config.minSpurM) continue;
+
+      const straightM = Math.max(haversineM(origin, returnPt), 1);
+      if (spurPathM / straightM < config.minDetourRatio) continue;
+
+      const mid = Math.floor((i + j) / 2);
+      const midPt = toLatLng(coordinates[mid]);
+      if (
+        haversineM(origin, midPt) <
+        Math.min(spurPathM * config.midBulgeRatio, config.maxMidBulgeM)
+      ) {
+        continue;
+      }
+
+      ranges.push({ start: i + 1, end: j - 1 });
+      break;
+    }
+  }
+
+  return mergeSpurRanges(ranges);
+}
+
 /**
  * Find out-and-back dead-end spurs: path leaves a point and returns to ~same spot
  * after a detour (cul-de-sac, service road, path stub).
  */
 export function findDeadEndSpurRanges(coordinates: Coord[]): SpurRange[] {
-  if (coordinates.length < 20) return [];
+  return findDeadEndSpurRangesWithConfig(coordinates, DEFAULT_SPUR_CONFIG);
+}
+
+/** Small jogs into side streets / field tracks (10–80 m). */
+export function findMicroSpurRanges(coordinates: Coord[]): SpurRange[] {
+  return findDeadEndSpurRangesWithConfig(coordinates, MICRO_SPUR_CONFIG);
+}
+
+function bearingDeg(a: LatLng, b: LatLng): number {
+  const lat1 = toRadians(a.lat);
+  const lat2 = toRadians(b.lat);
+  const dLng = toRadians(b.lng - a.lng);
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x =
+    Math.cos(lat1) * Math.sin(lat2) -
+    Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return (Math.atan2(y, x) * 180) / Math.PI;
+}
+
+function bearingDelta(a: number, b: number): number {
+  return Math.abs(((a - b + 540) % 360) - 180);
+}
+
+/** Sharp hairpin at a dead-end tip (route turns ~180° within a short stub). */
+export function findHairpinSpurRanges(coordinates: Coord[]): SpurRange[] {
+  if (coordinates.length < 10) return [];
 
   const ranges: SpurRange[] = [];
-  const matchM = 32;
-  const minSpurM = 45;
-  const minGap = 12;
-  const maxSpan = Math.floor(coordinates.length * 0.45);
+  const maxStubM = 130;
+  const minStubM = 14;
+  const tipWindow = 6;
 
-  for (let i = 0; i < coordinates.length - minGap; i++) {
-    const origin = toLatLng(coordinates[i]);
+  for (let i = 0; i < coordinates.length - 8; i++) {
+    let distM = 0;
+    let tipIndex = i + 1;
+    let maxDistFromStart = 0;
 
-    for (let j = i + minGap; j < coordinates.length; j++) {
-      if (j - i > maxSpan) break;
+    for (let k = i + 1; k < coordinates.length && distM < maxStubM; k++) {
+      distM += haversineM(
+        toLatLng(coordinates[k - 1]),
+        toLatLng(coordinates[k]),
+      );
+      const fromStart = haversineM(
+        toLatLng(coordinates[i]),
+        toLatLng(coordinates[k]),
+      );
+      if (fromStart > maxDistFromStart) {
+        maxDistFromStart = fromStart;
+        tipIndex = k;
+      }
+    }
 
-      const returnPt = toLatLng(coordinates[j]);
-      if (haversineM(origin, returnPt) > matchM) continue;
+    if (maxDistFromStart < minStubM) continue;
 
-      const spurPathM = pathLengthM(coordinates, i, j);
-      if (spurPathM < minSpurM) continue;
+    const tipStart = Math.max(i + 1, tipIndex - tipWindow);
+    const tipEnd = Math.min(coordinates.length - 2, tipIndex + tipWindow);
+    if (tipEnd <= tipStart + 1) continue;
 
-      const straightM = Math.max(haversineM(origin, returnPt), 1);
-      const detourRatio = spurPathM / straightM;
-      if (detourRatio < 1.6) continue;
+    const inBearing = bearingDeg(
+      toLatLng(coordinates[i]),
+      toLatLng(coordinates[tipStart]),
+    );
+    const outBearing = bearingDeg(
+      toLatLng(coordinates[tipEnd]),
+      toLatLng(coordinates[Math.min(tipEnd + 2, coordinates.length - 1)]),
+    );
+    if (bearingDelta(inBearing, outBearing) < 125) continue;
 
-      const mid = Math.floor((i + j) / 2);
-      const midPt = toLatLng(coordinates[mid]);
-      if (haversineM(origin, midPt) < Math.min(spurPathM * 0.35, 80)) continue;
-
+    for (let j = tipEnd + 1; j < Math.min(i + 80, coordinates.length); j++) {
+      if (haversineM(toLatLng(coordinates[i]), toLatLng(coordinates[j])) > 35) {
+        continue;
+      }
+      const stubM = pathLengthM(coordinates, i, j);
+      if (stubM < minStubM) continue;
       ranges.push({ start: i + 1, end: j - 1 });
       break;
     }
@@ -91,10 +208,10 @@ export function findReverseSegmentSpurRanges(coordinates: Coord[]): SpurRange[] 
   if (coordinates.length < 16) return [];
 
   const ranges: SpurRange[] = [];
-  const matchM = 38;
-  const minGap = 8;
-  const window = Math.min(280, Math.floor(coordinates.length * 0.55));
-  const minSpurM = 40;
+  const matchM = 45;
+  const minGap = 6;
+  const window = Math.min(320, Math.floor(coordinates.length * 0.6));
+  const minSpurM = 28;
 
   for (let i = 0; i < coordinates.length - 1; i++) {
     const a = toLatLng(coordinates[i]);
@@ -179,10 +296,13 @@ export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
   const allRanges: SpurRange[] = [];
   const beforeM = totalPathLengthM(coordinates);
 
-  for (let pass = 0; pass < 4; pass++) {
-    const culDeSac = findDeadEndSpurRanges(current);
-    const reversed = findReverseSegmentSpurRanges(current);
-    const ranges = mergeSpurRanges([...culDeSac, ...reversed]);
+  for (let pass = 0; pass < 8; pass++) {
+    const ranges = mergeSpurRanges([
+      ...findDeadEndSpurRanges(current),
+      ...findMicroSpurRanges(current),
+      ...findHairpinSpurRanges(current),
+      ...findReverseSegmentSpurRanges(current),
+    ]);
 
     if (ranges.length === 0) break;
 
@@ -250,6 +370,38 @@ function isPointNearPolyline(
   return false;
 }
 
+function extractNearSubpaths(
+  coords: Coord[],
+  polyline: Coord[],
+  maxDistM: number,
+  minRunLengthM: number,
+): Coord[][] {
+  const runs: Coord[][] = [];
+  let current: Coord[] = [];
+
+  const flush = () => {
+    if (current.length < 2) {
+      current = [];
+      return;
+    }
+    if (pathLengthM(current, 0, current.length - 1) >= minRunLengthM) {
+      runs.push(current);
+    }
+    current = [];
+  };
+
+  for (const coord of coords) {
+    if (isPointNearPolyline(coord, polyline, maxDistM)) {
+      current.push(coord);
+    } else {
+      flush();
+    }
+  }
+  flush();
+
+  return runs;
+}
+
 /** Drop colored segment features that belonged to pruned spur geometry. */
 export function pruneMapGeoJson(
   mapGeojson: RouteMapGeoJson | null,
@@ -258,20 +410,35 @@ export function pruneMapGeoJson(
   if (!mapGeojson?.features.length) return mapGeojson;
 
   const features = mapGeojson.features
-    .map((feature) => {
-      const kept = feature.geometry.coordinates.filter((coord) =>
-        isPointNearPolyline(coord, prunedCoordinates, 42),
+    .flatMap((feature) => {
+      const subpaths = extractNearSubpaths(
+        feature.geometry.coordinates,
+        prunedCoordinates,
+        28,
+        35,
       );
-      if (kept.length < 2) return null;
-      return {
-        ...feature,
-        geometry: {
-          type: "LineString" as const,
-          coordinates: kept,
+      if (subpaths.length === 0) return [];
+
+      const longest = subpaths.reduce((best, path) =>
+        pathLengthM(path, 0, path.length - 1) >
+        pathLengthM(best, 0, best.length - 1)
+          ? path
+          : best,
+      );
+
+      if (longest.length < 2) return [];
+
+      return [
+        {
+          ...feature,
+          geometry: {
+            type: "LineString" as const,
+            coordinates: longest,
+          },
         },
-      };
+      ];
     })
-    .filter((feature): feature is NonNullable<typeof feature> => feature !== null);
+    .filter((feature) => feature.geometry.coordinates.length >= 2);
 
   if (features.length === 0) return null;
   return { type: "FeatureCollection", features };

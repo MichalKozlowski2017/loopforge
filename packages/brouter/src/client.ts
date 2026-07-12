@@ -35,7 +35,7 @@ function brouterProfileOverrides(
 ): Record<string, string> {
   const overrides: Record<string, string> = {
     correctMisplacedViaPoints: "1",
-    correctMisplacedViaPointsDistance: "800",
+    correctMisplacedViaPointsDistance: "1200",
   };
 
   if (bikeType === "gravel" || bikeType === "general") {
