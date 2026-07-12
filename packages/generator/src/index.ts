@@ -2,7 +2,9 @@ import type {
   GenerateRouteRequest,
   GeneratedRoute,
   LatLng,
+  OsmTags,
 } from "@loopforge/osm-types";
+import { getSurfaceStyle } from "@loopforge/osm-types";
 import {
   fetchRouteThroughWaypoints as fetchBrouterRoute,
   getBrouterConfig,
@@ -195,12 +197,28 @@ const MIN_PRUNE_REMOVED_M = 8;
 const MAX_SPUR_SHARE = 0.05;
 const MAX_BACKTRACK = 0.06;
 
+function pavedShareFromSegments(
+  segments: { tags: OsmTags; distanceM: number }[],
+): number {
+  let pavedM = 0;
+  let totalM = 0;
+  for (const segment of segments) {
+    if (segment.distanceM <= 0) continue;
+    totalM += segment.distanceM;
+    if (getSurfaceStyle(segment.tags).category === "asphalt") {
+      pavedM += segment.distanceM;
+    }
+  }
+  return totalM > 0 ? pavedM / totalM : 0;
+}
+
 function applySpurRefinement(
   routed: RoutedLoopResult,
   targetDistanceKm: number,
   start: LatLng,
   direction: GenerateRouteRequest["direction"],
   shape: LoopShape,
+  avoidAsphalt = false,
 ): {
   refined: RoutedLoopResult;
   metrics: ReturnType<typeof loopQualityMetrics>;
@@ -237,6 +255,10 @@ function applySpurRefinement(
     shape,
     start,
     direction,
+    {
+      avoidAsphalt,
+      pavedShare: pavedShareFromSegments(routed.segments),
+    },
   );
 
   return { refined, metrics, quality, pruned: usePruned };
@@ -279,6 +301,7 @@ async function generateRouteWithEngine(
           variant,
           scale,
           shape,
+          request.avoidAsphalt,
         );
         const routed = await fetchRoute({
           start: request.start,
@@ -300,6 +323,7 @@ async function generateRouteWithEngine(
           request.start,
           request.direction,
           shape,
+          request.avoidAsphalt,
         );
 
         // One follow-up scale if distance is off (not four scales every time).
@@ -310,7 +334,12 @@ async function generateRouteWithEngine(
           Date.now() < deadlineMs - 8_000
         ) {
           const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
-          scales.push(Math.min(1.35, Math.max(0.65, ratio * 0.98)));
+          const adjusted =
+            ratio > 1
+              ? 1 + (ratio - 1) * (request.avoidAsphalt ? 0.38 : 0.98)
+              : ratio * 0.98;
+          const maxScale = request.avoidAsphalt ? 1.14 : 1.35;
+          scales.push(Math.min(maxScale, Math.max(0.72, adjusted)));
         }
 
         const tooSpurHeavy =
@@ -401,7 +430,8 @@ async function generateRouteWithEngine(
   );
   if (
     finalMetrics.directionCoverage < 0.4 ||
-    finalMetrics.distanceError > 0.38
+    finalMetrics.distanceError >
+      (request.avoidAsphalt ? 0.42 : 0.38)
   ) {
     throw new Error(
       "Nie udało się dopasować trasy do dystansu i kierunku — spróbuj innego kierunku lub dystansu",

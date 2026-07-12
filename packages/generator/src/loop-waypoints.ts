@@ -98,7 +98,7 @@ export const MIN_KM_FOR_ARC_LOOP = 18;
 
 export type LoopShape = "arc" | "longitudinal";
 
-/** Shape order per variant — prefer arc on longer routes, longitudinal on shorter ones. */
+/** Shape order per variant — always try both; scoring picks the best routed result. */
 export function loopShapeForVariant(
   distanceKm: number,
   variant: number,
@@ -145,22 +145,32 @@ export function buildArcLoopWaypoints(
   direction: Direction,
   variant: number,
   scaleMultiplier = 1,
+  avoidAsphalt = false,
 ): LatLng[] {
   const baseBearing = DIRECTION_BEARING[direction];
   const idx = variant % VARIANT_POINT_COUNTS.length;
-  const pointCount = VARIANT_POINT_COUNTS[idx];
+  const pointCount = avoidAsphalt
+    ? 3 + (idx % 2)
+    : VARIANT_POINT_COUNTS[idx];
   const scale = VARIANT_SCALES[idx] * scaleMultiplier;
   const rotation = VARIANT_ROTATIONS[idx];
 
-  const arcHalfWidth = 54 + (idx % 3) * 8;
-  const { west, east } = arcSideBias(direction);
+  const arcHalfWidth = avoidAsphalt
+    ? 36 + (idx % 3) * 6
+    : 54 + (idx % 3) * 8;
+  const { west, east } = avoidAsphalt
+    ? { west: 1.22, east: 0.42 }
+    : arcSideBias(direction);
   const arcSpanDeg = arcHalfWidth * (west + east);
   const arcStart = baseBearing - arcHalfWidth * west + rotation * 0.12;
 
-  const roadDetourFactor = 1.42;
+  const roadDetourFactor = avoidAsphalt
+    ? 1.72 + Math.min(0.65, distanceKm / 75)
+    : 1.42;
   const pathFactor = arcPathFactor(pointCount, arcSpanDeg);
+  const reachBoost = avoidAsphalt ? 1.04 : 1;
   const radiusM =
-    ((distanceKm * 1000) / (pathFactor * roadDetourFactor)) * scale;
+    ((distanceKm * 1000 * reachBoost) / (pathFactor * roadDetourFactor)) * scale;
 
   const waypoints: LatLng[] = [];
   for (let i = 0; i < pointCount; i++) {
@@ -259,18 +269,29 @@ export function buildLongitudinalLoopWaypoints(
   direction: Direction,
   variant: number,
   scaleMultiplier = 1,
+  avoidAsphalt = false,
 ): LatLng[] {
   const idx = variant % VARIANT_SCALES.length;
   const scale = VARIANT_SCALES[idx] * scaleMultiplier;
   const bearing =
     (DIRECTION_BEARING[direction] + VARIANT_ROTATIONS[idx] * 0.35 + 360) % 360;
 
-  const outCount = 2 + (idx % 2);
-  const returnCount = 1 + (idx % 2);
-  const outShare = 0.42 + (idx % 3) * 0.04;
-  const lateralShare = 0.07 + (idx % 4) * 0.015;
+  const outCount = avoidAsphalt
+    ? distanceKm >= 35
+      ? 3 + (idx % 2)
+      : 2 + (idx % 2)
+    : 2 + (idx % 2);
+  const returnCount = avoidAsphalt ? 1 + (idx % 2) : 1 + (idx % 2);
+  const outShare = avoidAsphalt
+    ? 0.46 + (idx % 3) * 0.022
+    : 0.42 + (idx % 3) * 0.04;
+  const lateralShare = avoidAsphalt
+    ? 0.032 + (idx % 3) * 0.006
+    : 0.07 + (idx % 4) * 0.015;
 
-  const roadDetourFactor = 1.38;
+  const roadDetourFactor = avoidAsphalt
+    ? 1.58 + Math.min(0.62, distanceKm / 75)
+    : 1.38;
   const pathFactor = longitudinalPathFactor(
     outCount,
     returnCount,
@@ -314,6 +335,7 @@ export function buildLoopWaypoints(
   variant: number,
   scaleMultiplier = 1,
   shape?: LoopShape,
+  avoidAsphalt = false,
 ): LatLng[] {
   const resolved = shape ?? loopShapeForVariant(distanceKm, variant);
   return resolved === "arc"
@@ -323,6 +345,7 @@ export function buildLoopWaypoints(
         direction,
         variant,
         scaleMultiplier,
+        avoidAsphalt,
       )
     : buildLongitudinalLoopWaypoints(
         start,
@@ -330,10 +353,11 @@ export function buildLoopWaypoints(
         direction,
         variant,
         scaleMultiplier,
+        avoidAsphalt,
       );
 }
 
-/** Prefer arc loops when quality is comparable — user-facing “nice loop” shape. */
+/** Score route quality; when avoiding asphalt, paved share drives shape choice. */
 export function scoreLoopQualityWithShape(
   coordinates: [number, number][],
   targetDistanceKm: number,
@@ -341,6 +365,7 @@ export function scoreLoopQualityWithShape(
   shape: LoopShape,
   start?: LatLng,
   direction?: Direction,
+  options?: { avoidAsphalt?: boolean; pavedShare?: number },
 ): number {
   const base = scoreLoopQuality(
     coordinates,
@@ -349,23 +374,41 @@ export function scoreLoopQualityWithShape(
     start,
     direction,
   );
-  if (shape !== "arc") return base;
 
-  const { overlap, backtrack, spurShare, distanceError, directionCoverage } =
-    loopQualityMetrics(
-      coordinates,
-      targetDistanceKm,
-      actualDistanceKm,
-      start,
-      direction,
-    );
+  const pavedShare = options?.pavedShare ?? 0;
+  const metrics = loopQualityMetrics(
+    coordinates,
+    targetDistanceKm,
+    actualDistanceKm,
+    start,
+    direction,
+  );
+
   const arcViable =
-    overlap < 0.14 &&
-    backtrack < 0.07 &&
-    spurShare < 0.08 &&
-    distanceError < 0.22 &&
-    directionCoverage >= 0.45;
-  return arcViable ? base - 0.2 : base;
+    metrics.overlap < 0.14 &&
+    metrics.backtrack < 0.07 &&
+    metrics.spurShare < 0.08 &&
+    metrics.distanceError < 0.22 &&
+    metrics.directionCoverage >= 0.45;
+
+  let score = base;
+
+  if (options?.avoidAsphalt) {
+    score += pavedShare * 18;
+    score += Math.max(0, pavedShare - 0.28) ** 2 * 45;
+  }
+
+  if (shape === "arc" && arcViable) {
+    if (options?.avoidAsphalt) {
+      if (pavedShare < 0.3) score -= 0.4;
+      else if (pavedShare < 0.38) score -= 0.22;
+      else if (pavedShare < 0.48) score -= 0.08;
+    } else {
+      score -= 0.2;
+    }
+  }
+
+  return score;
 }
 
 const MAX_QUALITY_POINTS = 600;
