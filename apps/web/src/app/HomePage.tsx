@@ -54,6 +54,7 @@ const DEFAULT_FORM: RouteFormValues = {
   profile: "flow",
   avoidAsphalt: true,
   approachEnabled: false,
+  approachDistanceKm: 10,
   ...FALLBACK_START,
 };
 
@@ -109,6 +110,7 @@ export default function HomePage() {
           profile: data.profile ?? "flow",
           avoidAsphalt: data.avoidAsphalt ?? (data.bikeType === "mtb" || data.bikeType === "gravel"),
           approachEnabled: data.approachEnabled ?? false,
+          approachDistanceKm: data.approachDistanceKm ?? 10,
           lat: data.start.lat,
           lng: data.start.lng,
         });
@@ -166,6 +168,9 @@ export default function HomePage() {
               ? form.avoidAsphalt
               : undefined,
           approachEnabled: form.approachEnabled || undefined,
+          approachDistanceKm: form.approachEnabled
+            ? form.approachDistanceKm
+            : undefined,
         }),
         signal: AbortSignal.timeout(120_000),
       });

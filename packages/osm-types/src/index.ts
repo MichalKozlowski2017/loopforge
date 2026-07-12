@@ -51,6 +51,8 @@ export interface GenerateRouteRequest {
   avoidAsphalt?: boolean;
   /** Route a fast approach leg from start to loop entry before generating the loop. */
   approachEnabled?: boolean;
+  /** Target approach distance in km (air-line anchor along direction). */
+  approachDistanceKm?: number;
 }
 
 export interface SurfaceBreakdownItem {
@@ -115,6 +117,8 @@ export interface StoredRoute extends GeneratedRoute {
   profile?: RideProfile;
   avoidAsphalt?: boolean;
   approachEnabled?: boolean;
+  /** Configured approach target distance (km). */
+  approachDistanceKm?: number;
   loopEntry?: LatLng;
   rating?: "up" | "down";
   notes?: string;

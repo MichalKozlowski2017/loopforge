@@ -36,6 +36,7 @@ import {
 } from "./prune-spurs";
 import {
   computeLoopEntryTarget,
+  loopEntryOffsetM,
   loopEntryFromApproach,
   mergeApproachAndLoop,
   type RoutedLeg,
@@ -706,13 +707,17 @@ async function generateRouteWithApproach(
     userStart,
     request.direction,
     request.distanceKm,
+    request.approachDistanceKm,
   );
+  const approachTargetKm =
+    request.approachDistanceKm ??
+    Math.round(loopEntryOffsetM(request.distanceKm) / 100) / 10;
   const { onProgress } = options ?? {};
 
   reportProgress(onProgress, {
     phase: "approach",
     message: "Liczenie dojazdu do pętli",
-    detail: `Najszybsza trasa w kierunku ${DIRECTION_LABEL_PL[request.direction]}`,
+    detail: `~${approachTargetKm} km w kierunku ${DIRECTION_LABEL_PL[request.direction]}`,
     progress: 8,
   });
 

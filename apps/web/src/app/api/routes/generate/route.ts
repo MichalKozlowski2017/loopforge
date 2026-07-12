@@ -52,6 +52,9 @@ export async function POST(request: Request) {
           profile: body.profile,
           avoidAsphalt: body.avoidAsphalt,
           approachEnabled: body.approachEnabled,
+          approachDistanceKm: body.approachEnabled
+            ? body.approachDistanceKm
+            : undefined,
           start: body.start,
           loopEntry:
             body.approachEnabled &&

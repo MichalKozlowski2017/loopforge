@@ -61,10 +61,21 @@ export function loopEntryOffsetM(loopDistanceKm: number): number {
   );
 }
 
+export function approachTargetOffsetM(
+  loopDistanceKm: number,
+  approachDistanceKm?: number,
+): number {
+  if (approachDistanceKm != null && approachDistanceKm > 0) {
+    return Math.round(Math.min(40, Math.max(1, approachDistanceKm)) * 1000);
+  }
+  return loopEntryOffsetM(loopDistanceKm);
+}
+
 export function computeLoopEntryTarget(
   start: LatLng,
   direction: GenerateRouteRequest["direction"],
   loopDistanceKm: number,
+  approachDistanceKm?: number,
 ): LatLng {
   const bearing = {
     N: 0,
@@ -76,7 +87,11 @@ export function computeLoopEntryTarget(
     W: 270,
     NW: 315,
   }[direction];
-  return destinationPoint(start, bearing, loopEntryOffsetM(loopDistanceKm));
+  return destinationPoint(
+    start,
+    bearing,
+    approachTargetOffsetM(loopDistanceKm, approachDistanceKm),
+  );
 }
 
 function coordToLatLng(coord: [number, number]): LatLng {

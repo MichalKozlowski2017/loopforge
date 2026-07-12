@@ -11,6 +11,7 @@ export interface RouteFormValues {
   profile: RideProfile;
   avoidAsphalt: boolean;
   approachEnabled: boolean;
+  approachDistanceKm: number;
   lat: number;
   lng: number;
 }
@@ -34,6 +35,7 @@ const BIKE_TYPES: { value: BikeType; label: string }[] = [
 ];
 
 const DISTANCE_PRESETS = [20, 35, 50, 80, 120];
+const APPROACH_DISTANCE_PRESETS = [5, 8, 12, 15, 20];
 
 const PROFILES: { value: RideProfile; label: string; hint: string }[] = [
   { value: "flow", label: "Flow", hint: "Płynna jazda" },
@@ -145,6 +147,52 @@ export function RouteForm({
           </span>
         </span>
       </label>
+
+      {values.approachEnabled ? (
+        <div>
+          <label
+            htmlFor="approachDistance"
+            className="mb-2 block text-sm font-medium text-zinc-300"
+          >
+            Odległość dojazdu (km)
+          </label>
+          <input
+            id="approachDistance"
+            type="number"
+            min={1}
+            max={40}
+            step={1}
+            value={values.approachDistanceKm}
+            onChange={(event) =>
+              onChange({
+                ...values,
+                approachDistanceKm: Number(event.target.value),
+              })
+            }
+            className="mb-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+          />
+          <div className="flex flex-wrap gap-1.5">
+            {APPROACH_DISTANCE_PRESETS.map((km) => (
+              <button
+                key={km}
+                type="button"
+                onClick={() => onChange({ ...values, approachDistanceKm: km })}
+                className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
+                  values.approachDistanceKm === km
+                    ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-300"
+                    : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
+                }`}
+              >
+                {km} km
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">
+            Punkt startu pętli leży w wybranym kierunku w tej odległości — BRouter
+            dobiera najszybszą trasę dojazdu.
+          </p>
+        </div>
+      ) : null}
 
       <div>
         <label className="mb-2 block text-sm font-medium text-zinc-300">
