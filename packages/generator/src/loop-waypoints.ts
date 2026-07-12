@@ -93,11 +93,12 @@ const VARIANT_ROTATIONS = [
   0, 18, -18, 36, -36, 12, -12, 24, -24, 30, -30, 6, -6, 42, -42, 0,
 ];
 
-/** Fraction of route mileage that should lie in the half-plane of `direction`. */
+/** Fraction of route mileage inside a cone around `direction`. */
 export function directionCoverageRatio(
   coordinates: [number, number][],
   start: LatLng,
   direction: Direction,
+  halfWidthDeg = 90,
 ): number {
   if (coordinates.length < 2) return 0;
 
@@ -115,7 +116,7 @@ export function directionCoverageRatio(
     const mid = { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 };
     const bearing = bearingDeg(start, mid);
     const diff = Math.abs(((bearing - target + 540) % 360) - 180);
-    if (diff <= 90) inSectorM += segM;
+    if (diff <= halfWidthDeg) inSectorM += segM;
   }
 
   return totalM > 0 ? inSectorM / totalM : 0;
@@ -138,18 +139,21 @@ export function buildLoopWaypoints(
   const scale = VARIANT_SCALES[idx] * scaleMultiplier;
   const rotation = VARIANT_ROTATIONS[idx];
 
-  // Perimeter ≈ 2πR; roads add ~5–15% vs chords — not 38%.
-  const radiusM = ((distanceKm * 1000) / (2 * Math.PI)) * 1.02 * scale;
+  // Narrow arc (~110–130°) centered on direction — wide arcs pull the loop sideways (e.g. into E when NW chosen).
+  const arcHalfWidth = 54 + (idx % 3) * 8;
+  const arcSpanDeg = arcHalfWidth * 2;
+  const arcStart = baseBearing - arcHalfWidth + rotation * 0.12;
 
-  // Arc centered on chosen bearing (~220–250°), shifted by variant rotation.
-  const arcHalfWidth = 108 + (idx % 3) * 12;
-  const arcStart = baseBearing - arcHalfWidth + rotation * 0.35;
-  const arcSpan = arcHalfWidth * 2;
+  // Scale radius to arc span: loop ≈ 2πR × (arcSpan/360); calibrate for ~target distance.
+  const roadFactor = 0.92;
+  const radiusM =
+    ((distanceKm * 1000 * 360) / (2 * Math.PI * arcSpanDeg * roadFactor)) *
+    scale;
 
   const waypoints: LatLng[] = [];
   for (let i = 0; i < pointCount; i++) {
     const t = pointCount === 1 ? 0.5 : i / (pointCount - 1);
-    const bearing = arcStart + t * arcSpan;
+    const bearing = arcStart + t * arcSpanDeg;
     waypoints.push(destinationPoint(start, bearing, radiusM));
   }
 
@@ -282,7 +286,7 @@ export function loopQualityMetrics(
     Math.abs(actualDistanceKm - targetDistanceKm) / targetDistanceKm;
   const directionCoverage =
     start && direction
-      ? directionCoverageRatio(coordinates, start, direction)
+      ? directionCoverageRatio(coordinates, start, direction, 55)
       : 1;
 
   return {
@@ -311,7 +315,7 @@ export function scoreLoopQuality(
       direction,
     );
 
-  const directionPenalty = Math.max(0, 0.52 - directionCoverage) * 14;
+  const directionPenalty = Math.max(0, 0.58 - directionCoverage) * 18;
 
   return (
     overlap * 2 +
@@ -343,6 +347,6 @@ export function isGoodLoopQuality(
     backtrack < 0.05 &&
     spurShare < 0.06 &&
     distanceError < 0.18 &&
-    directionCoverage >= 0.5
+    directionCoverage >= 0.55
   );
 }

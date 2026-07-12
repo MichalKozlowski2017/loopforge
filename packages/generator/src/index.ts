@@ -307,7 +307,7 @@ async function generateRouteWithEngine(
 
         const tooSpurHeavy =
           metrics.spurShare > MAX_SPUR_SHARE || metrics.backtrack > MAX_BACKTRACK;
-        const wrongDirection = metrics.directionCoverage < 0.45;
+        const wrongDirection = metrics.directionCoverage < 0.52;
 
         if (tooSpurHeavy || wrongDirection) {
           if (quality < bestRejectedScore) {
@@ -335,10 +335,9 @@ async function generateRouteWithEngine(
           break;
         }
 
-        // Accept "good enough" early to avoid timeout on production.
         if (
-          metrics.directionCoverage >= 0.5 &&
-          metrics.distanceError < 0.22 &&
+          metrics.directionCoverage >= 0.55 &&
+          metrics.distanceError < 0.16 &&
           metrics.spurShare < 0.06
         ) {
           variantDone = true;
@@ -366,11 +365,39 @@ async function generateRouteWithEngine(
   }
 
   if (!best && bestRejected) {
-    best = bestRejected;
+    const rejectedMetrics = loopQualityMetrics(
+      bestRejected.coordinates,
+      request.distanceKm,
+      bestRejected.distanceKm,
+      request.start,
+      request.direction,
+    );
+    if (
+      rejectedMetrics.directionCoverage >= 0.48 &&
+      rejectedMetrics.distanceError < 0.35
+    ) {
+      best = bestRejected;
+    }
   }
 
   if (!best) {
     throw new Error("Could not generate loop through waypoints");
+  }
+
+  const finalMetrics = loopQualityMetrics(
+    best.coordinates,
+    request.distanceKm,
+    best.distanceKm,
+    request.start,
+    request.direction,
+  );
+  if (
+    finalMetrics.directionCoverage < 0.45 ||
+    finalMetrics.distanceError > 0.32
+  ) {
+    throw new Error(
+      "Nie udało się dopasować trasy do dystansu i kierunku — spróbuj innego kierunku lub dystansu",
+    );
   }
 
   return buildGeneratedRoute(request, best.coordinates, {
