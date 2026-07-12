@@ -88,9 +88,89 @@ const VARIANT_SCALES = [
   1.0, 0.9, 1.1, 0.85, 1.15, 0.92, 1.08, 0.88, 1.12, 0.95, 1.05, 0.87, 1.13,
   0.93, 1.07, 1.0,
 ];
+const VARIANT_POINT_COUNTS = [5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4];
 const VARIANT_ROTATIONS = [
   0, 6, -6, 10, -10, 4, -4, 8, -8, 12, -12, 3, -3, 14, -14, 0,
 ];
+
+/** Minimum target distance where an arc/ellipse loop is preferred. */
+export const MIN_KM_FOR_ARC_LOOP = 18;
+
+export type LoopShape = "arc" | "longitudinal";
+
+/** Shape order per variant — prefer arc on longer routes, longitudinal on shorter ones. */
+export function loopShapeForVariant(
+  distanceKm: number,
+  variant: number,
+): LoopShape {
+  const preferArc = distanceKm >= MIN_KM_FOR_ARC_LOOP;
+  const even = variant % 2 === 0;
+  return preferArc
+    ? even
+      ? "arc"
+      : "longitudinal"
+    : even
+      ? "longitudinal"
+      : "arc";
+}
+
+/** Bias arc west/east so NW loops don't drift over the river into eastern Warsaw. */
+function arcSideBias(direction: Direction): { west: number; east: number } {
+  switch (direction) {
+    case "NW":
+    case "W":
+    case "SW":
+      return { west: 1.35, east: 0.55 };
+    case "NE":
+    case "E":
+    case "SE":
+      return { west: 0.55, east: 1.35 };
+    default:
+      return { west: 1, east: 1 };
+  }
+}
+
+/** Estimate routed length for waypoints placed on a forward-facing arc. */
+function arcPathFactor(pointCount: number, arcSpanDeg: number): number {
+  const halfStepRad = toRadians(arcSpanDeg / (2 * (pointCount - 1 || 1)));
+  return pointCount <= 1
+    ? 2
+    : 2 + (pointCount - 1) * 2 * Math.sin(halfStepRad);
+}
+
+/** Arc / ellipse loop — works best when there is enough distance for a wide loop. */
+export function buildArcLoopWaypoints(
+  start: LatLng,
+  distanceKm: number,
+  direction: Direction,
+  variant: number,
+  scaleMultiplier = 1,
+): LatLng[] {
+  const baseBearing = DIRECTION_BEARING[direction];
+  const idx = variant % VARIANT_POINT_COUNTS.length;
+  const pointCount = VARIANT_POINT_COUNTS[idx];
+  const scale = VARIANT_SCALES[idx] * scaleMultiplier;
+  const rotation = VARIANT_ROTATIONS[idx];
+
+  const arcHalfWidth = 54 + (idx % 3) * 8;
+  const { west, east } = arcSideBias(direction);
+  const arcSpanDeg = arcHalfWidth * (west + east);
+  const arcStart = baseBearing - arcHalfWidth * west + rotation * 0.12;
+
+  const roadDetourFactor = 1.42;
+  const pathFactor = arcPathFactor(pointCount, arcSpanDeg);
+  const radiusM =
+    ((distanceKm * 1000) / (pathFactor * roadDetourFactor)) * scale;
+
+  const waypoints: LatLng[] = [];
+  for (let i = 0; i < pointCount; i++) {
+    const t = pointCount === 1 ? 0.5 : i / (pointCount - 1);
+    const bearing = arcStart + t * arcSpanDeg;
+    waypoints.push(destinationPoint(start, bearing, radiusM));
+  }
+
+  return waypoints;
+}
 
 /** Perpendicular bearing for a parallel return corridor (offset from the outbound line). */
 function returnCorridorBearing(
@@ -173,7 +253,7 @@ export function directionCoverageRatio(
  * Longitudinal loop: ride out in `direction`, return via a parallel corridor
  * so BRouter picks different roads (overlap/backtrack metrics guard same-road returns).
  */
-export function buildLoopWaypoints(
+export function buildLongitudinalLoopWaypoints(
   start: LatLng,
   distanceKm: number,
   direction: Direction,
@@ -224,6 +304,68 @@ export function buildLoopWaypoints(
   }
 
   return waypoints;
+}
+
+/** Build waypoints for the requested loop shape. */
+export function buildLoopWaypoints(
+  start: LatLng,
+  distanceKm: number,
+  direction: Direction,
+  variant: number,
+  scaleMultiplier = 1,
+  shape?: LoopShape,
+): LatLng[] {
+  const resolved = shape ?? loopShapeForVariant(distanceKm, variant);
+  return resolved === "arc"
+    ? buildArcLoopWaypoints(
+        start,
+        distanceKm,
+        direction,
+        variant,
+        scaleMultiplier,
+      )
+    : buildLongitudinalLoopWaypoints(
+        start,
+        distanceKm,
+        direction,
+        variant,
+        scaleMultiplier,
+      );
+}
+
+/** Prefer arc loops when quality is comparable — user-facing “nice loop” shape. */
+export function scoreLoopQualityWithShape(
+  coordinates: [number, number][],
+  targetDistanceKm: number,
+  actualDistanceKm: number,
+  shape: LoopShape,
+  start?: LatLng,
+  direction?: Direction,
+): number {
+  const base = scoreLoopQuality(
+    coordinates,
+    targetDistanceKm,
+    actualDistanceKm,
+    start,
+    direction,
+  );
+  if (shape !== "arc") return base;
+
+  const { overlap, backtrack, spurShare, distanceError, directionCoverage } =
+    loopQualityMetrics(
+      coordinates,
+      targetDistanceKm,
+      actualDistanceKm,
+      start,
+      direction,
+    );
+  const arcViable =
+    overlap < 0.14 &&
+    backtrack < 0.07 &&
+    spurShare < 0.08 &&
+    distanceError < 0.22 &&
+    directionCoverage >= 0.45;
+  return arcViable ? base - 0.2 : base;
 }
 
 const MAX_QUALITY_POINTS = 600;

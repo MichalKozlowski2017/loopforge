@@ -18,7 +18,9 @@ import {
   buildLoopWaypoints,
   isGoodLoopQuality,
   loopQualityMetrics,
-  scoreLoopQuality,
+  loopShapeForVariant,
+  scoreLoopQualityWithShape,
+  type LoopShape,
 } from "./loop-waypoints";
 import { pruneDeadEndSpurs, pruneMapGeoJson, routeLengthM } from "./prune-spurs";
 
@@ -198,6 +200,7 @@ function applySpurRefinement(
   targetDistanceKm: number,
   start: LatLng,
   direction: GenerateRouteRequest["direction"],
+  shape: LoopShape,
 ): {
   refined: RoutedLoopResult;
   metrics: ReturnType<typeof loopQualityMetrics>;
@@ -227,10 +230,11 @@ function applySpurRefinement(
     start,
     direction,
   );
-  const quality = scoreLoopQuality(
+  const quality = scoreLoopQualityWithShape(
     coordinates,
     targetDistanceKm,
     refined.distanceKm,
+    shape,
     start,
     direction,
   );
@@ -266,12 +270,14 @@ async function generateRouteWithEngine(
         if (Date.now() > deadlineMs && best) break;
 
         const scale = scales[si];
+        const shape = loopShapeForVariant(request.distanceKm, variant);
         const waypoints = buildLoopWaypoints(
           request.start,
           request.distanceKm,
           request.direction,
           variant,
           scale,
+          shape,
         );
         const routed = await fetchRoute({
           start: request.start,
@@ -291,6 +297,7 @@ async function generateRouteWithEngine(
           request.distanceKm,
           request.start,
           request.direction,
+          shape,
         );
 
         // One follow-up scale if distance is off (not four scales every time).
