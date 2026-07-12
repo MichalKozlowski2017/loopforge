@@ -249,6 +249,7 @@ async function generateRouteWithEngine(
     bikeType: GenerateRouteRequest["bikeType"];
     waypoints: LatLng[];
     rideProfile?: GenerateRouteRequest["profile"];
+    avoidAsphalt?: boolean;
     skipGpx: boolean;
   }) => Promise<RoutedLoopResult>,
 ): Promise<GeneratedRoute> {
@@ -284,6 +285,7 @@ async function generateRouteWithEngine(
           bikeType: request.bikeType,
           waypoints,
           rideProfile: request.profile,
+          avoidAsphalt: request.avoidAsphalt,
           skipGpx: true,
         });
 

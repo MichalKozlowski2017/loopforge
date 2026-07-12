@@ -30,6 +30,7 @@ const DEFAULT_FORM: RouteFormValues = {
   distanceKm: 45,
   direction: "NE",
   profile: "flow",
+  avoidAsphalt: true,
   ...FALLBACK_START,
 };
 
@@ -79,6 +80,7 @@ export default function HomePage() {
           distanceKm: Math.round(data.metrics.distanceKm),
           direction: data.direction,
           profile: data.profile ?? "flow",
+          avoidAsphalt: data.avoidAsphalt ?? (data.bikeType === "mtb" || data.bikeType === "gravel"),
           lat: data.start.lat,
           lng: data.start.lng,
         });
@@ -127,6 +129,10 @@ export default function HomePage() {
           distanceKm: form.distanceKm,
           direction: form.direction,
           profile: form.profile,
+          avoidAsphalt:
+            form.bikeType === "gravel" || form.bikeType === "mtb"
+              ? form.avoidAsphalt
+              : undefined,
         }),
         signal: AbortSignal.timeout(120_000),
       });

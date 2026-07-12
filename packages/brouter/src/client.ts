@@ -32,6 +32,7 @@ const BIKE_PROFILE: Record<BikeType, string> = {
 function brouterProfileOverrides(
   bikeType: BikeType,
   rideProfile?: RideProfile,
+  avoidAsphalt?: boolean,
 ): Record<string, string> {
   const overrides: Record<string, string> = {
     correctMisplacedViaPoints: "1",
@@ -58,6 +59,19 @@ function brouterProfileOverrides(
     overrides.prefer_forests = "1";
   }
 
+  if (
+    avoidAsphalt &&
+    (bikeType === "gravel" || bikeType === "mtb" || bikeType === "general")
+  ) {
+    if (bikeType === "mtb") {
+      overrides.smallpaved_factor = "-2";
+      overrides.path_preference = "32";
+    } else {
+      overrides.prefer_unpaved_paths = "1";
+      overrides.prefer_forests = "1";
+    }
+  }
+
   return overrides;
 }
 
@@ -65,9 +79,10 @@ function appendProfileOverrides(
   query: URLSearchParams,
   bikeType: BikeType,
   rideProfile?: RideProfile,
+  avoidAsphalt?: boolean,
 ): void {
   for (const [key, value] of Object.entries(
-    brouterProfileOverrides(bikeType, rideProfile),
+    brouterProfileOverrides(bikeType, rideProfile, avoidAsphalt),
   )) {
     query.set(`profile:${key}`, value);
   }
@@ -85,6 +100,7 @@ export interface WaypointRouteParams {
   bikeType: BikeType;
   waypoints: LatLng[];
   rideProfile?: RideProfile;
+  avoidAsphalt?: boolean;
   /** Skip extra GPX request — use buildGpx() on the client/generator side. */
   skipGpx?: boolean;
 }
@@ -218,7 +234,11 @@ async function fetchBrouterRoute(
   bikeType: BikeType,
   points: LatLng[],
   trackName: string,
-  options?: { skipGpx?: boolean; rideProfile?: RideProfile },
+  options?: {
+    skipGpx?: boolean;
+    rideProfile?: RideProfile;
+    avoidAsphalt?: boolean;
+  },
 ): Promise<BrouterRouteResult> {
   const lonlats = points.map((p) => `${p.lng},${p.lat}`).join("|");
   const query = new URLSearchParams({
@@ -226,7 +246,12 @@ async function fetchBrouterRoute(
     profile: BIKE_PROFILE[bikeType],
     format: "geojson",
   });
-  appendProfileOverrides(query, bikeType, options?.rideProfile);
+  appendProfileOverrides(
+    query,
+    bikeType,
+    options?.rideProfile,
+    options?.avoidAsphalt,
+  );
 
   const response = await fetch(`${config.baseUrl}/brouter?${query.toString()}`, {
     signal: AbortSignal.timeout(45_000),
@@ -290,7 +315,7 @@ export async function fetchRouteThroughWaypoints(
     params.bikeType,
     loop,
     `Loopforge ${params.bikeType}`,
-    { skipGpx: params.skipGpx, rideProfile: params.rideProfile },
+    { skipGpx: params.skipGpx, rideProfile: params.rideProfile, avoidAsphalt: params.avoidAsphalt },
   );
 }
 

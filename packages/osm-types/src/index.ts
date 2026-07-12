@@ -47,6 +47,8 @@ export interface GenerateRouteRequest {
   distanceKm: number;
   direction: Direction;
   profile?: RideProfile;
+  /** Penalize paved surfaces (gravel / MTB). Not a hard ban — asphalt when no alternative. */
+  avoidAsphalt?: boolean;
 }
 
 export interface SurfaceBreakdownItem {
@@ -105,6 +107,7 @@ export interface StoredRoute extends GeneratedRoute {
   direction: Direction;
   start: LatLng;
   profile?: RideProfile;
+  avoidAsphalt?: boolean;
   rating?: "up" | "down";
   notes?: string;
 }

@@ -9,6 +9,7 @@ export interface RouteFormValues {
   distanceKm: number;
   direction: Direction;
   profile: RideProfile;
+  avoidAsphalt: boolean;
   lat: number;
   lng: number;
 }
@@ -101,6 +102,28 @@ export function RouteForm({
           ))}
         </div>
       </div>
+
+      {values.bikeType === "gravel" || values.bikeType === "mtb" ? (
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3 transition hover:border-zinc-500">
+          <input
+            type="checkbox"
+            checked={values.avoidAsphalt}
+            onChange={(event) =>
+              onChange({ ...values, avoidAsphalt: event.target.checked })
+            }
+            className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-emerald-600 focus:ring-emerald-500"
+          />
+          <span>
+            <span className="block text-sm font-medium text-zinc-200">
+              Unikaj asfaltu
+            </span>
+            <span className="mt-0.5 block text-xs text-zinc-500">
+              Priorytet szuteru, leśnych dróg i ścieżek. Asfalt tylko gdy nie ma
+              sensownej alternatywy.
+            </span>
+          </span>
+        </label>
+      ) : null}
 
       <div>
         <label className="mb-2 block text-sm font-medium text-zinc-300">
