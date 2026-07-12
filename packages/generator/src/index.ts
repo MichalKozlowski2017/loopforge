@@ -297,12 +297,11 @@ async function generateRouteWithEngine(
         if (
           si === 0 &&
           scales.length === 1 &&
-          metrics.distanceError > 0.12 &&
+          metrics.distanceError > 0.1 &&
           Date.now() < deadlineMs - 8_000
         ) {
-          scales.push(
-            refined.distanceKm > request.distanceKm ? 0.84 : 1.06,
-          );
+          const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
+          scales.push(Math.min(1.35, Math.max(0.65, ratio * 0.98)));
         }
 
         const tooSpurHeavy =
@@ -392,8 +391,8 @@ async function generateRouteWithEngine(
     request.direction,
   );
   if (
-    finalMetrics.directionCoverage < 0.45 ||
-    finalMetrics.distanceError > 0.32
+    finalMetrics.directionCoverage < 0.4 ||
+    finalMetrics.distanceError > 0.38
   ) {
     throw new Error(
       "Nie udało się dopasować trasy do dystansu i kierunku — spróbuj innego kierunku lub dystansu",

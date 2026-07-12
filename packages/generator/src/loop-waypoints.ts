@@ -93,6 +93,22 @@ const VARIANT_ROTATIONS = [
   0, 18, -18, 36, -36, 12, -12, 24, -24, 30, -30, 6, -6, 42, -42, 0,
 ];
 
+/** Bias arc west/east so NW loops don't drift over the river into eastern Warsaw. */
+function arcSideBias(direction: Direction): { west: number; east: number } {
+  switch (direction) {
+    case "NW":
+    case "W":
+    case "SW":
+      return { west: 1.35, east: 0.55 };
+    case "NE":
+    case "E":
+    case "SE":
+      return { west: 0.55, east: 1.35 };
+    default:
+      return { west: 1, east: 1 };
+  }
+}
+
 /** Fraction of route mileage inside a cone around `direction`. */
 export function directionCoverageRatio(
   coordinates: [number, number][],
@@ -141,14 +157,20 @@ export function buildLoopWaypoints(
 
   // Narrow arc (~110–130°) centered on direction — wide arcs pull the loop sideways (e.g. into E when NW chosen).
   const arcHalfWidth = 54 + (idx % 3) * 8;
-  const arcSpanDeg = arcHalfWidth * 2;
-  const arcStart = baseBearing - arcHalfWidth + rotation * 0.12;
+  const { west, east } = arcSideBias(direction);
+  const arcSpanDeg = arcHalfWidth * (west + east);
+  const arcStart =
+    baseBearing - arcHalfWidth * west + rotation * 0.12;
 
-  // Scale radius to arc span: loop ≈ 2πR × (arcSpan/360); calibrate for ~target distance.
-  const roadFactor = 0.92;
+  // Sequential via-routing length ≈ 2R (out+back to start) + (n-1) chords along the arc.
+  const halfStepRad = toRadians(arcSpanDeg / (2 * (pointCount - 1 || 1)));
+  const pathFactor =
+    pointCount <= 1
+      ? 2
+      : 2 + (pointCount - 1) * 2 * Math.sin(halfStepRad);
+  const roadDetourFactor = 1.42;
   const radiusM =
-    ((distanceKm * 1000 * 360) / (2 * Math.PI * arcSpanDeg * roadFactor)) *
-    scale;
+    ((distanceKm * 1000) / (pathFactor * roadDetourFactor)) * scale;
 
   const waypoints: LatLng[] = [];
   for (let i = 0; i < pointCount; i++) {
