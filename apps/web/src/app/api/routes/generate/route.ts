@@ -51,7 +51,14 @@ export async function POST(request: Request) {
           direction: body.direction,
           profile: body.profile,
           avoidAsphalt: body.avoidAsphalt,
+          approachEnabled: body.approachEnabled,
           start: body.start,
+          loopEntry:
+            body.approachEnabled &&
+            generated.geojson.properties.loopEntry &&
+            typeof generated.geojson.properties.loopEntry === "object"
+              ? (generated.geojson.properties.loopEntry as StoredRoute["loopEntry"])
+              : undefined,
         };
 
         await saveRoute(stored);

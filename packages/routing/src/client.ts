@@ -211,6 +211,51 @@ export async function isRoutingReady(config?: RoutingConfig): Promise<boolean> {
   }
 }
 
+export async function fetchRouteBetweenPoints(
+  params: {
+    from: LatLng;
+    to: LatLng;
+    bikeType: BikeType;
+    skipGpx?: boolean;
+  },
+  config?: RoutingConfig,
+): Promise<RoutingRouteResult> {
+  const resolved = config ?? getRoutingConfig();
+  if (!resolved) {
+    throw new Error("DATABASE_URL is not configured");
+  }
+
+  return withClient(resolved, async (client) => {
+    const segment = await routeSegment(
+      client,
+      params.from,
+      params.to,
+      params.bikeType,
+    );
+    if (segment.coordinates.length < 2) {
+      throw new Error("pgRouting returned an empty approach route");
+    }
+
+    const segmentsForScoring = segment.segments.map(({ tags, distanceM }) => ({
+      tags,
+      distanceM,
+    }));
+    const mapGeojson = buildColoredGeoJsonFromSegments(segment.segments);
+    const trackName = "Loopforge dojazd";
+
+    return {
+      coordinates: segment.coordinates,
+      distanceKm: segment.distanceM / 1000,
+      elevationGainM: 0,
+      segments: segmentsForScoring,
+      mapGeojson,
+      gpx: params.skipGpx
+        ? ""
+        : buildGpx(trackName, segment.coordinates, params.from),
+    };
+  });
+}
+
 export async function fetchRouteThroughWaypoints(
   params: WaypointRouteParams,
   config?: RoutingConfig,

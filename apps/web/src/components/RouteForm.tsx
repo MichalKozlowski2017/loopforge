@@ -10,6 +10,7 @@ export interface RouteFormValues {
   direction: Direction;
   profile: RideProfile;
   avoidAsphalt: boolean;
+  approachEnabled: boolean;
   lat: number;
   lng: number;
 }
@@ -125,6 +126,26 @@ export function RouteForm({
         </label>
       ) : null}
 
+      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3 transition hover:border-zinc-500">
+        <input
+          type="checkbox"
+          checked={values.approachEnabled}
+          onChange={(event) =>
+            onChange({ ...values, approachEnabled: event.target.checked })
+          }
+          className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-emerald-600 focus:ring-emerald-500"
+        />
+        <span>
+          <span className="block text-sm font-medium text-zinc-200">
+            Dojazd do pętli
+          </span>
+          <span className="mt-0.5 block text-xs text-zinc-500">
+            Najszybsza trasa z punktu startu do miejsca pętli — dystans poniżej
+            dotyczy samej pętli, bez dojazdu.
+          </span>
+        </span>
+      </label>
+
       <div>
         <label className="mb-2 block text-sm font-medium text-zinc-300">
           Punkt startu
@@ -215,7 +236,8 @@ export function RouteForm({
         </details>
 
         <p className="mt-2 text-[11px] text-zinc-500">
-          Zielony marker — przeciągnij na mapie lub użyj wyszukiwarki.
+          Zielony marker — start. Pomarańczowy — początek pętli (gdy włączony
+          dojazd).
         </p>
       </div>
 
@@ -224,7 +246,7 @@ export function RouteForm({
           htmlFor="distance"
           className="mb-2 block text-sm font-medium text-zinc-300"
         >
-          Dystans (km)
+          {values.approachEnabled ? "Dystans pętli (km)" : "Dystans (km)"}
         </label>
         <input
           id="distance"

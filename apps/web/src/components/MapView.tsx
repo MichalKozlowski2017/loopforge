@@ -14,6 +14,7 @@ export interface StartPoint {
 interface MapViewProps {
   center: [number, number];
   start: StartPoint;
+  loopEntry?: StartPoint | null;
   route?: RouteFeature | null;
   mapGeojson?: RouteMapGeoJson | null;
   pickStart?: boolean;
@@ -78,6 +79,7 @@ function fitToCoordinates(
 export function MapView({
   center,
   start,
+  loopEntry = null,
   route,
   mapGeojson,
   pickStart = false,
@@ -87,6 +89,7 @@ export function MapView({
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
+  const loopEntryMarkerRef = useRef<maplibregl.Marker | null>(null);
   const onStartChangeRef = useRef(onStartChange);
   const routeHandlersRef = useRef<{
     enter?: () => void;
@@ -275,6 +278,8 @@ export function MapView({
       map.off("load", onLoad);
       markerRef.current?.remove();
       markerRef.current = null;
+      loopEntryMarkerRef.current?.remove();
+      loopEntryMarkerRef.current = null;
       popupRef.current?.remove();
       popupRef.current = null;
       map.remove();
@@ -311,6 +316,28 @@ export function MapView({
       markerRef.current.setLngLat([start.lng, start.lat]);
     }
   }, [start.lat, start.lng, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    if (!loopEntry) {
+      loopEntryMarkerRef.current?.remove();
+      loopEntryMarkerRef.current = null;
+      return;
+    }
+
+    if (!loopEntryMarkerRef.current) {
+      const marker = new maplibregl.Marker({
+        color: "#f59e0b",
+      })
+        .setLngLat([loopEntry.lng, loopEntry.lat])
+        .addTo(map);
+      loopEntryMarkerRef.current = marker;
+    } else {
+      loopEntryMarkerRef.current.setLngLat([loopEntry.lng, loopEntry.lat]);
+    }
+  }, [loopEntry?.lat, loopEntry?.lng, mapReady, loopEntry]);
 
   useEffect(() => {
     const map = mapRef.current;

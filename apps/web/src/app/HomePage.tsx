@@ -30,12 +30,30 @@ const MapView = dynamic(
 
 const FALLBACK_START = { lat: 52.2297, lng: 21.0122 };
 
+function extractLoopEntry(route: StoredRoute | null): { lat: number; lng: number } | null {
+  if (!route) return null;
+  if (route.loopEntry) return route.loopEntry;
+  const entry = route.geojson.properties.loopEntry;
+  if (
+    entry &&
+    typeof entry === "object" &&
+    "lat" in entry &&
+    "lng" in entry &&
+    typeof (entry as { lat: unknown }).lat === "number" &&
+    typeof (entry as { lng: unknown }).lng === "number"
+  ) {
+    return entry as { lat: number; lng: number };
+  }
+  return null;
+}
+
 const DEFAULT_FORM: RouteFormValues = {
   bikeType: "gravel",
   distanceKm: 45,
   direction: "NE",
   profile: "flow",
   avoidAsphalt: true,
+  approachEnabled: false,
   ...FALLBACK_START,
 };
 
@@ -84,10 +102,13 @@ export default function HomePage() {
         setNotes(data.notes ?? "");
         setForm({
           bikeType: data.bikeType,
-          distanceKm: Math.round(data.metrics.distanceKm),
+          distanceKm: Math.round(
+            data.metrics.loopDistanceKm ?? data.metrics.distanceKm,
+          ),
           direction: data.direction,
           profile: data.profile ?? "flow",
           avoidAsphalt: data.avoidAsphalt ?? (data.bikeType === "mtb" || data.bikeType === "gravel"),
+          approachEnabled: data.approachEnabled ?? false,
           lat: data.start.lat,
           lng: data.start.lng,
         });
@@ -144,6 +165,7 @@ export default function HomePage() {
             form.bikeType === "gravel" || form.bikeType === "mtb"
               ? form.avoidAsphalt
               : undefined,
+          approachEnabled: form.approachEnabled || undefined,
         }),
         signal: AbortSignal.timeout(120_000),
       });
@@ -229,9 +251,29 @@ export default function HomePage() {
             </div>
             <dl className="grid grid-cols-2 gap-2 text-sm">
               <div>
-                <dt className="text-zinc-500">Dystans</dt>
+                <dt className="text-zinc-500">
+                  {(route.approachEnabled ?? false) ||
+                  route.metrics.approachDistanceKm != null
+                    ? "Razem"
+                    : "Dystans"}
+                </dt>
                 <dd>{route.metrics.distanceKm.toFixed(1)} km</dd>
               </div>
+              {((route.approachEnabled ?? false) ||
+                route.metrics.approachDistanceKm != null) &&
+              route.metrics.loopDistanceKm != null &&
+              route.metrics.approachDistanceKm != null ? (
+                <>
+                  <div>
+                    <dt className="text-zinc-500">Pętla</dt>
+                    <dd>{route.metrics.loopDistanceKm.toFixed(1)} km</dd>
+                  </div>
+                  <div>
+                    <dt className="text-zinc-500">Dojazd</dt>
+                    <dd>{route.metrics.approachDistanceKm.toFixed(1)} km</dd>
+                  </div>
+                </>
+              ) : null}
               <div>
                 <dt className="text-zinc-500">Przewyższenie</dt>
                 <dd>~{route.metrics.elevationGainM} m</dd>
@@ -307,11 +349,13 @@ export default function HomePage() {
           mapGeojson={route?.mapGeojson ?? null}
           pickStart={pickOnMap && !loading}
           onStartChange={handleStartChange}
+          loopEntry={route?.loopEntry ?? extractLoopEntry(route) ?? null}
         />
         {loading ? (
           <MapGenerationOverlay
             seconds={loadingSeconds}
             progress={generationProgress}
+            showApproach={form.approachEnabled}
           />
         ) : null}
         {route?.mapGeojson ? <SurfaceLegend /> : null}

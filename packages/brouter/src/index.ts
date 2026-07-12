@@ -5,6 +5,7 @@ export {
 } from "./colored-geojson";
 export { SURFACE_LEGEND } from "@loopforge/osm-types";
 export {
+  fetchRouteBetweenPoints,
   fetchRouteThroughWaypoints,
   fetchRoundTrip,
   surfaceBreakdownFromSegments,

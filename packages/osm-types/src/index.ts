@@ -49,6 +49,8 @@ export interface GenerateRouteRequest {
   profile?: RideProfile;
   /** Penalize paved surfaces (gravel / MTB). Not a hard ban — asphalt when no alternative. */
   avoidAsphalt?: boolean;
+  /** Route a fast approach leg from start to loop entry before generating the loop. */
+  approachEnabled?: boolean;
 }
 
 export interface SurfaceBreakdownItem {
@@ -59,6 +61,10 @@ export interface SurfaceBreakdownItem {
 
 export interface RouteMetrics {
   distanceKm: number;
+  /** Loop portion only — set when approach leg is included. */
+  loopDistanceKm?: number;
+  /** Approach leg only — set when approach is enabled. */
+  approachDistanceKm?: number;
   elevationGainM: number;
   surfaceBreakdown: SurfaceBreakdownItem[];
   score: number;
@@ -108,12 +114,15 @@ export interface StoredRoute extends GeneratedRoute {
   start: LatLng;
   profile?: RideProfile;
   avoidAsphalt?: boolean;
+  approachEnabled?: boolean;
+  loopEntry?: LatLng;
   rating?: "up" | "down";
   notes?: string;
 }
 
 export type RouteGenerationPhase =
   | "planning"
+  | "approach"
   | "variants"
   | "routing"
   | "scoring"

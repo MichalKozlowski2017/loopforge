@@ -1,31 +1,41 @@
 "use client";
 
-import type { RouteGenerationPhase, RouteGenerationProgress } from "@loopforge/osm-types";
-
-const PHASE_STEPS: { phase: RouteGenerationPhase; title: string }[] = [
-  { phase: "planning", title: "Planuję kształt pętli" },
-  { phase: "variants", title: "Losuję warianty" },
-  { phase: "routing", title: "BRouter liczy trasy" },
-  { phase: "scoring", title: "Porównuję warianty" },
-  { phase: "refining", title: "Dopasowuję dystans" },
-  { phase: "finalizing", title: "Spinam GPX" },
-];
-
-function phaseIndex(phase: RouteGenerationPhase): number {
-  const index = PHASE_STEPS.findIndex((step) => step.phase === phase);
-  return index >= 0 ? index : 0;
-}
+import type { RouteGenerationProgress } from "@loopforge/osm-types";
 
 interface MapGenerationOverlayProps {
   seconds: number;
   progress: RouteGenerationProgress | null;
+  showApproach?: boolean;
+}
+
+const APPROACH_STEP = {
+  phase: "approach" as const,
+  title: "Dojazd do pętli",
+};
+
+function buildPhaseSteps(showApproach: boolean) {
+  const steps = [
+    { phase: "planning" as const, title: "Planuję kształt pętli" },
+    ...(showApproach ? [APPROACH_STEP] : []),
+    { phase: "variants" as const, title: "Losuję warianty" },
+    { phase: "routing" as const, title: "BRouter liczy trasy" },
+    { phase: "scoring" as const, title: "Porównuję warianty" },
+    { phase: "refining" as const, title: "Dopasowuję dystans" },
+    { phase: "finalizing" as const, title: "Spinam GPX" },
+  ];
+  return steps;
 }
 
 export function MapGenerationOverlay({
   seconds,
   progress,
+  showApproach = false,
 }: MapGenerationOverlayProps) {
-  const activeIndex = progress ? phaseIndex(progress.phase) : 0;
+  const phaseSteps = buildPhaseSteps(showApproach);
+  const activeIndex = progress
+    ? phaseSteps.findIndex((step) => step.phase === progress.phase)
+    : 0;
+  const safeActiveIndex = activeIndex >= 0 ? activeIndex : 0;
   const barPercent = progress?.progress ?? 4;
   const subtitle = progress?.detail ?? progress?.message ?? "Startuję…";
   const showSlowHint =
@@ -112,9 +122,9 @@ export function MapGenerationOverlay({
           </div>
 
           <ol className="space-y-2">
-            {PHASE_STEPS.map((step, index) => {
-              const done = index < activeIndex;
-              const active = index === activeIndex;
+            {phaseSteps.map((step, index) => {
+              const done = index < safeActiveIndex;
+              const active = index === safeActiveIndex;
               return (
                 <li
                   key={step.phase}

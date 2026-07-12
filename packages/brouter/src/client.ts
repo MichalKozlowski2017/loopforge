@@ -302,6 +302,32 @@ async function fetchBrouterRoute(
   };
 }
 
+/** Route between two points — fast paved bias when rideProfile is "fast". */
+export async function fetchRouteBetweenPoints(
+  config: BrouterConfig,
+  params: {
+    from: LatLng;
+    to: LatLng;
+    bikeType: BikeType;
+    rideProfile?: RideProfile;
+    avoidAsphalt?: boolean;
+    skipGpx?: boolean;
+  },
+): Promise<BrouterRouteResult> {
+  await ensureBrouterServer(config);
+  return fetchBrouterRoute(
+    config,
+    params.bikeType,
+    [params.from, params.to],
+    "Loopforge dojazd",
+    {
+      skipGpx: params.skipGpx ?? true,
+      rideProfile: params.rideProfile ?? "fast",
+      avoidAsphalt: params.avoidAsphalt ?? false,
+    },
+  );
+}
+
 /** Route through explicit waypoints and return to start (closed loop). */
 export async function fetchRouteThroughWaypoints(
   config: BrouterConfig,
