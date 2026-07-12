@@ -456,11 +456,9 @@ assign any_cycleroute
   assign penaltymax = max roughness_penalty max tracktype_surface_penalty max wet_penalty trafficpenalty
 
   assign footway_avoid_extra
-    switch avoid_footways
-      switch highway=footway switch footway=sidewalk 80 50
-      switch highway=pedestrian 50
-      0
-    0
+    if and avoid_footways highway=footway then ( switch footway=sidewalk 80 50 )
+    else if and avoid_footways highway=pedestrian then 50
+    else 0
 
   assign rawcostfactor ( # can be <1, adjusted to >=1 in final step of calculation of costfactor, uphillcostfactor,downhillcostfactor
     switch and highway= not route=ferry  10000 #only highways unless ferry

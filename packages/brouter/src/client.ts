@@ -22,17 +22,27 @@ const DIRECTION_BEARING: Record<Direction, number> = {
   NW: 315,
 };
 
+const MTB_CUSTOM_PROFILE = "customprofiles/loopforge-mtb";
+const MTB_STOCK_PROFILE = "mtb";
+
 const BIKE_PROFILE: Record<BikeType, string> = {
   gravel: "customprofiles/loopforge-gravel",
   road: "fastbike",
-  mtb: "customprofiles/loopforge-mtb",
+  mtb: MTB_CUSTOM_PROFILE,
   general: "customprofiles/loopforge-trekking",
 };
+
+function profilesForRequest(bikeType: BikeType): string[] {
+  return bikeType === "mtb"
+    ? [MTB_CUSTOM_PROFILE, MTB_STOCK_PROFILE]
+    : [BIKE_PROFILE[bikeType]];
+}
 
 function brouterProfileOverrides(
   bikeType: BikeType,
   rideProfile?: RideProfile,
   avoidAsphalt?: boolean,
+  profileName?: string,
 ): Record<string, string> {
   const overrides: Record<string, string> = {
     correctMisplacedViaPoints: "1",
@@ -55,38 +65,58 @@ function brouterProfileOverrides(
   }
 
   if (bikeType === "mtb") {
-    overrides.prefer_unpaved_paths = "1";
-    overrides.prefer_forests = "1";
+    const customMtb = (profileName ?? MTB_CUSTOM_PROFILE) === MTB_CUSTOM_PROFILE;
+    if (rideProfile === "technical") {
+      overrides.path_preference = "28";
+    } else if (rideProfile === "fast") {
+      overrides.path_preference = "12";
+      overrides.smallpaved_factor = "-0.5";
+    }
+
+    if (avoidAsphalt) {
+      overrides.smallpaved_factor = "-2";
+      overrides.path_preference = "32";
+      if (customMtb) {
+        overrides.avoid_footways = "1";
+      } else {
+        // Stock mtb profile — no avoid_footways tunable; block foot-only ways.
+        overrides.StrictNOBicycleaccess = "1";
+      }
+    }
   }
 
   if (
     avoidAsphalt &&
-    (bikeType === "gravel" || bikeType === "mtb" || bikeType === "general")
+    (bikeType === "gravel" || bikeType === "general")
   ) {
     overrides.avoid_footways = "1";
-    if (bikeType === "mtb") {
-      overrides.smallpaved_factor = "-2";
-      overrides.path_preference = "32";
-    } else {
-      overrides.prefer_unpaved_paths = "1";
-      overrides.prefer_forests = "1";
-    }
+    overrides.prefer_unpaved_paths = "1";
+    overrides.prefer_forests = "1";
   }
 
   return overrides;
 }
 
-function appendProfileOverrides(
-  query: URLSearchParams,
+function buildBrouterQuery(
   bikeType: BikeType,
+  lonlats: string,
+  profileName: string,
   rideProfile?: RideProfile,
   avoidAsphalt?: boolean,
-): void {
+): URLSearchParams {
+  const query = new URLSearchParams({
+    lonlats,
+    profile: profileName,
+    format: "geojson",
+  });
+
   for (const [key, value] of Object.entries(
-    brouterProfileOverrides(bikeType, rideProfile, avoidAsphalt),
+    brouterProfileOverrides(bikeType, rideProfile, avoidAsphalt, profileName),
   )) {
     query.set(`profile:${key}`, value);
   }
+
+  return query;
 }
 
 export interface RoundTripParams {
@@ -242,65 +272,75 @@ async function fetchBrouterRoute(
   },
 ): Promise<BrouterRouteResult> {
   const lonlats = points.map((p) => `${p.lng},${p.lat}`).join("|");
-  const query = new URLSearchParams({
-    lonlats,
-    profile: BIKE_PROFILE[bikeType],
-    format: "geojson",
-  });
-  appendProfileOverrides(
-    query,
-    bikeType,
-    options?.rideProfile,
-    options?.avoidAsphalt,
-  );
+  const profiles = profilesForRequest(bikeType);
+  let lastError: Error | null = null;
 
-  const response = await fetch(`${config.baseUrl}/brouter?${query.toString()}`, {
-    signal: AbortSignal.timeout(45_000),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text.trim() || `BRouter HTTP ${response.status}`);
-  }
-
-  const geojson = (await response.json()) as BrouterGeoJson;
-  const feature = geojson.features[0];
-  if (!feature?.geometry?.coordinates?.length) {
-    throw new Error("BRouter returned an empty route");
-  }
-
-  const coordinates = filterCoordinates(feature.geometry.coordinates);
-  if (coordinates.length < 2) {
-    throw new Error("BRouter returned invalid route coordinates");
-  }
-
-  const messages = feature.properties.messages as string[][] | undefined;
-  const segments = parseSegmentsFromMessages(messages);
-  const mapGeojson = buildColoredGeoJsonFromRoute(coordinates, messages);
-  const distanceKm = distanceFromCoordinates(coordinates) / 1000;
-  const elevationGainM = Number(feature.properties["filtered ascend"] ?? 0);
-
-  let gpx = "";
-  if (!options?.skipGpx) {
-    const gpxResponse = await fetch(
-      `${config.baseUrl}/brouter?${new URLSearchParams({
-        ...Object.fromEntries(query),
-        format: "gpx",
-        trackname: trackName,
-      }).toString()}`,
-      { signal: AbortSignal.timeout(45_000) },
+  for (let i = 0; i < profiles.length; i++) {
+    const profile = profiles[i]!;
+    const query = buildBrouterQuery(
+      bikeType,
+      lonlats,
+      profile,
+      options?.rideProfile,
+      options?.avoidAsphalt,
     );
-    gpx = gpxResponse.ok ? await gpxResponse.text() : "";
+
+    const response = await fetch(`${config.baseUrl}/brouter?${query.toString()}`, {
+      signal: AbortSignal.timeout(45_000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      lastError = new Error(text.trim() || `BRouter HTTP ${response.status}`);
+      const canRetryMtb =
+        bikeType === "mtb" &&
+        response.status === 500 &&
+        i < profiles.length - 1;
+      if (canRetryMtb) continue;
+      throw lastError;
+    }
+
+    const geojson = (await response.json()) as BrouterGeoJson;
+    const feature = geojson.features[0];
+    if (!feature?.geometry?.coordinates?.length) {
+      throw new Error("BRouter returned an empty route");
+    }
+
+    const coordinates = filterCoordinates(feature.geometry.coordinates);
+    if (coordinates.length < 2) {
+      throw new Error("BRouter returned invalid route coordinates");
+    }
+
+    const messages = feature.properties.messages as string[][] | undefined;
+    const segments = parseSegmentsFromMessages(messages);
+    const mapGeojson = buildColoredGeoJsonFromRoute(coordinates, messages);
+    const distanceKm = distanceFromCoordinates(coordinates) / 1000;
+    const elevationGainM = Number(feature.properties["filtered ascend"] ?? 0);
+
+    let gpx = "";
+    if (!options?.skipGpx) {
+      const gpxResponse = await fetch(
+        `${config.baseUrl}/brouter?${new URLSearchParams({
+          ...Object.fromEntries(query),
+          format: "gpx",
+          trackname: trackName,
+        }).toString()}`,
+        { signal: AbortSignal.timeout(45_000) },
+      );
+      gpx = gpxResponse.ok ? await gpxResponse.text() : "";
+    }
+
+    return {
+      coordinates,
+      distanceKm,
+      elevationGainM,
+      segments,
+      mapGeojson,
+      gpx,
+    };
   }
 
-  return {
-    coordinates,
-    distanceKm,
-    elevationGainM,
-    segments,
-    mapGeojson,
-    gpx,
-  };
+  throw lastError ?? new Error("BRouter request failed");
 }
 
 /** Route between two points — fast paved bias when rideProfile is "fast". */
