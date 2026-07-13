@@ -7,6 +7,7 @@ export { SURFACE_LEGEND } from "@loopforge/osm-types";
 export {
   APPROACH_BROUTER_PROFILE,
   fetchApproachRouteBetweenPoints,
+  fetchApproachRouteThroughPoints,
   fetchRouteBetweenPoints,
   fetchRouteThroughWaypoints,
   fetchRoundTrip,

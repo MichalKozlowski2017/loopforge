@@ -9,6 +9,7 @@ import { getSurfaceStyle } from "@loopforge/osm-types";
 import {
   fetchRouteThroughWaypoints as fetchBrouterRoute,
   fetchApproachRouteBetweenPoints as fetchBrouterApproach,
+  fetchApproachRouteThroughPoints as fetchBrouterApproachThrough,
   getBrouterConfig,
 } from "@loopforge/brouter";
 import {
@@ -45,6 +46,7 @@ import {
   type RoutedLeg,
 } from "./approach";
 import { refineApproachForLoopEntry } from "./approach-entry";
+import { approachLooksLikeCemeteryDetour } from "./approach-sanitize";
 import {
   buildApproachCorridorWaypoints,
 } from "./loop-anchor";
@@ -862,6 +864,18 @@ function appendApproachCoordinates(
   }
 }
 
+function brouterResultToApproachLeg(
+  routed: Awaited<ReturnType<typeof fetchBrouterApproach>>,
+): RoutedLeg {
+  return {
+    coordinates: routed.coordinates,
+    distanceKm: routed.distanceKm,
+    elevationGainM: routed.elevationGainM,
+    segments: routed.segments,
+    mapGeojson: routed.mapGeojson,
+  };
+}
+
 async function fetchApproachLegSegment(
   from: LatLng,
   to: LatLng,
@@ -895,13 +909,7 @@ async function fetchApproachLegSegment(
       to,
       skipGpx: true,
     });
-    return {
-      coordinates: routed.coordinates,
-      distanceKm: routed.distanceKm,
-      elevationGainM: routed.elevationGainM,
-      segments: routed.segments,
-      mapGeojson: routed.mapGeojson,
-    };
+    return brouterResultToApproachLeg(routed);
   }
 
   const coordinates = [...lineCoordinates(from, to)] as [number, number][];
@@ -927,6 +935,39 @@ async function fetchApproachLeg(
   corridorWaypoints: LatLng[] = [],
 ): Promise<RoutedLeg> {
   const chain = [from, ...corridorWaypoints, to];
+  const brouterConfig = getBrouterConfig();
+  const preference = routingEnginePreference();
+
+  if (brouterConfig && preference !== "pgrouting") {
+    const routePoints = async (points: LatLng[]) => {
+      if (points.length === 2) {
+        const routed = await fetchBrouterApproach(brouterConfig, {
+          from: points[0]!,
+          to: points[1]!,
+          skipGpx: true,
+        });
+        return brouterResultToApproachLeg(routed);
+      }
+      const routed = await fetchBrouterApproachThrough(brouterConfig, {
+        points,
+        skipGpx: true,
+      });
+      return brouterResultToApproachLeg(routed);
+    };
+
+    let leg = await routePoints(chain);
+    if (approachLooksLikeCemeteryDetour(leg, from, to)) {
+      const direct = await routePoints([from, to]);
+      if (
+        !approachLooksLikeCemeteryDetour(direct, from, to) ||
+        direct.distanceKm < leg.distanceKm * 0.98
+      ) {
+        leg = direct;
+      }
+    }
+    return leg;
+  }
+
   if (chain.length === 2) {
     return fetchApproachLegSegment(from, to, bikeType);
   }

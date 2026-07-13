@@ -26,7 +26,7 @@ const MTB_CUSTOM_PROFILE = "customprofiles/loopforge-mtb";
 const MTB_STOCK_PROFILE = "mtb";
 
 /** Paved, direct routing for the approach leg — independent of loop bike type. */
-export const APPROACH_BROUTER_PROFILE = "fastbike";
+export const APPROACH_BROUTER_PROFILE = "customprofiles/loopforge-approach";
 
 const BIKE_PROFILE: Record<BikeType, string> = {
   gravel: "customprofiles/loopforge-gravel",
@@ -416,7 +416,7 @@ async function fetchBrouterRoute(
   throw lastError ?? new Error("BRouter request failed");
 }
 
-/** Route approach leg on paved roads (fastbike), ignoring loop bike type / avoid-asphalt. */
+/** Route approach leg on paved roads (loopforge-approach), ignoring loop bike type. */
 export async function fetchApproachRouteBetweenPoints(
   config: BrouterConfig,
   params: {
@@ -429,6 +429,26 @@ export async function fetchApproachRouteBetweenPoints(
   return fetchApproachBrouterRoute(
     config,
     [params.from, params.to],
+    "Loopforge dojazd",
+    params.skipGpx ?? true,
+  );
+}
+
+/** Route approach through corridor waypoints in one BRouter request. */
+export async function fetchApproachRouteThroughPoints(
+  config: BrouterConfig,
+  params: {
+    points: LatLng[];
+    skipGpx?: boolean;
+  },
+): Promise<BrouterRouteResult> {
+  await ensureBrouterServer(config);
+  if (params.points.length < 2) {
+    throw new Error("Approach route needs at least two points");
+  }
+  return fetchApproachBrouterRoute(
+    config,
+    params.points,
     "Loopforge dojazd",
     params.skipGpx ?? true,
   );
