@@ -27,6 +27,7 @@ const MTB_STOCK_PROFILE = "mtb";
 
 /** Paved, direct routing for the approach leg — independent of loop bike type. */
 export const APPROACH_BROUTER_PROFILE = "customprofiles/loopforge-approach";
+const APPROACH_FALLBACK_PROFILE = "fastbike";
 
 const BIKE_PROFILE: Record<BikeType, string> = {
   gravel: "customprofiles/loopforge-gravel",
@@ -122,15 +123,20 @@ function buildBrouterQuery(
   return query;
 }
 
-function buildApproachBrouterQuery(lonlats: string): URLSearchParams {
+function buildApproachBrouterQuery(
+  lonlats: string,
+  profileName: string,
+): URLSearchParams {
   const query = new URLSearchParams({
     lonlats,
-    profile: APPROACH_BROUTER_PROFILE,
+    profile: profileName,
     format: "geojson",
   });
-  query.set("profile:correctMisplacedViaPoints", "1");
-  query.set("profile:correctMisplacedViaPointsDistance", "1200");
-  query.set("profile:allow_ferries", "0");
+  if (profileName === APPROACH_BROUTER_PROFILE) {
+    query.set("profile:correctMisplacedViaPoints", "1");
+    query.set("profile:correctMisplacedViaPointsDistance", "1200");
+    query.set("profile:allow_ferries", "0");
+  }
   return query;
 }
 
@@ -141,55 +147,69 @@ async function fetchApproachBrouterRoute(
   skipGpx = true,
 ): Promise<BrouterRouteResult> {
   const lonlats = points.map((p) => `${p.lng},${p.lat}`).join("|");
-  const query = buildApproachBrouterQuery(lonlats);
+  const profiles = [APPROACH_BROUTER_PROFILE, APPROACH_FALLBACK_PROFILE];
+  let lastError: Error | null = null;
 
-  const response = await fetch(`${config.baseUrl}/brouter?${query.toString()}`, {
-    signal: AbortSignal.timeout(45_000),
-  });
+  for (let i = 0; i < profiles.length; i++) {
+    const profileName = profiles[i]!;
+    const query = buildApproachBrouterQuery(lonlats, profileName);
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text.trim() || `BRouter HTTP ${response.status}`);
+    const response = await fetch(`${config.baseUrl}/brouter?${query.toString()}`, {
+      signal: AbortSignal.timeout(45_000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      lastError = new Error(text.trim() || `BRouter HTTP ${response.status}`);
+      if (response.status === 500 && i < profiles.length - 1) continue;
+      throw lastError;
+    }
+
+    const geojson = (await response.json()) as BrouterGeoJson;
+    const feature = geojson.features[0];
+    if (!feature?.geometry?.coordinates?.length) {
+      lastError = new Error("BRouter returned an empty route");
+      if (i < profiles.length - 1) continue;
+      throw lastError;
+    }
+
+    const coordinates = filterCoordinates(feature.geometry.coordinates);
+    if (coordinates.length < 2) {
+      lastError = new Error("BRouter returned invalid route coordinates");
+      if (i < profiles.length - 1) continue;
+      throw lastError;
+    }
+
+    const messages = feature.properties.messages as string[][] | undefined;
+    const segments = parseSegmentsFromMessages(messages);
+    const mapGeojson = buildColoredGeoJsonFromRoute(coordinates, messages);
+    const distanceKm = distanceFromCoordinates(coordinates) / 1000;
+    const elevationGainM = Number(feature.properties["filtered ascend"] ?? 0);
+
+    let gpx = "";
+    if (!skipGpx) {
+      const gpxResponse = await fetch(
+        `${config.baseUrl}/brouter?${new URLSearchParams({
+          ...Object.fromEntries(query),
+          format: "gpx",
+          trackname: trackName,
+        }).toString()}`,
+        { signal: AbortSignal.timeout(45_000) },
+      );
+      gpx = gpxResponse.ok ? await gpxResponse.text() : "";
+    }
+
+    return {
+      coordinates,
+      distanceKm,
+      elevationGainM,
+      segments,
+      mapGeojson,
+      gpx,
+    };
   }
 
-  const geojson = (await response.json()) as BrouterGeoJson;
-  const feature = geojson.features[0];
-  if (!feature?.geometry?.coordinates?.length) {
-    throw new Error("BRouter returned an empty route");
-  }
-
-  const coordinates = filterCoordinates(feature.geometry.coordinates);
-  if (coordinates.length < 2) {
-    throw new Error("BRouter returned invalid route coordinates");
-  }
-
-  const messages = feature.properties.messages as string[][] | undefined;
-  const segments = parseSegmentsFromMessages(messages);
-  const mapGeojson = buildColoredGeoJsonFromRoute(coordinates, messages);
-  const distanceKm = distanceFromCoordinates(coordinates) / 1000;
-  const elevationGainM = Number(feature.properties["filtered ascend"] ?? 0);
-
-  let gpx = "";
-  if (!skipGpx) {
-    const gpxResponse = await fetch(
-      `${config.baseUrl}/brouter?${new URLSearchParams({
-        ...Object.fromEntries(query),
-        format: "gpx",
-        trackname: trackName,
-      }).toString()}`,
-      { signal: AbortSignal.timeout(45_000) },
-    );
-    gpx = gpxResponse.ok ? await gpxResponse.text() : "";
-  }
-
-  return {
-    coordinates,
-    distanceKm,
-    elevationGainM,
-    segments,
-    mapGeojson,
-    gpx,
-  };
+  throw lastError ?? new Error("BRouter approach request failed");
 }
 
 export interface RoundTripParams {

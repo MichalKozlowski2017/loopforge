@@ -221,15 +221,11 @@ assign town_penalty
      switch estimated_town_class=5  0.8
      switch estimated_town_class=6  1 99 0
 
-assign is_cemetery_area or landuse=cemetery amenity=grave_yard
-assign cemetery_penalty switch is_cemetery_area 35 0
-
 assign costfactor
   switch and highway= not route=ferry  10000
   switch or highway=proposed highway=abandoned 10000
 
   min 9999
-  add cemetery_penalty
   add max onewaypenalty accesspenalty
   add trafficpenalty
   add town_penalty
