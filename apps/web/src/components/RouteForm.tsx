@@ -190,10 +190,9 @@ export function RouteForm({
             ))}
           </div>
           <p className="mt-2 text-xs text-zinc-500">
-            Dojazd prowadzi w wybranym kierunku głównymi drogami. Pomarańczowy
-            marker to start pętli — tam, gdzie kończy się dojazd (zwykle przy
-            skrzyżowaniu, nie na końcu ślepego odcinka). Powrót do domu tą samą
-            drogą.
+            Dojazd liczony profilem szosowym (główne drogi). Pomarańczowy marker
+            to start pętli — tam, gdzie kończy się dojazd (zwykle przy
+            skrzyżowaniu). Powrót do domu tą samą drogą.
           </p>
         </div>
       ) : null}

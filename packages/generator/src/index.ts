@@ -8,12 +8,12 @@ import type {
 import { getSurfaceStyle } from "@loopforge/osm-types";
 import {
   fetchRouteThroughWaypoints as fetchBrouterRoute,
-  fetchRouteBetweenPoints as fetchBrouterBetween,
+  fetchApproachRouteBetweenPoints as fetchBrouterApproach,
   getBrouterConfig,
 } from "@loopforge/brouter";
 import {
   fetchRouteThroughWaypoints as fetchPgRoute,
-  fetchRouteBetweenPoints as fetchPgBetween,
+  fetchApproachRouteBetweenPoints as fetchPgApproach,
   isRoutingReady,
   surfaceBreakdownFromSegments,
 } from "@loopforge/routing";
@@ -865,14 +865,14 @@ function appendApproachCoordinates(
 async function fetchApproachLegSegment(
   from: LatLng,
   to: LatLng,
-  bikeType: GenerateRouteRequest["bikeType"],
+  _bikeType: GenerateRouteRequest["bikeType"],
 ): Promise<RoutedLeg> {
   const preference = routingEnginePreference();
 
   if (preference !== "brouter") {
     const pgReady = await isRoutingReady();
     if (pgReady) {
-      const routed = await fetchPgBetween({ from, to, bikeType, skipGpx: true });
+      const routed = await fetchPgApproach({ from, to, skipGpx: true });
       return {
         coordinates: routed.coordinates,
         distanceKm: routed.distanceKm,
@@ -890,13 +890,10 @@ async function fetchApproachLegSegment(
 
   const brouterConfig = getBrouterConfig();
   if (brouterConfig) {
-    const routed = await fetchBrouterBetween(brouterConfig, {
+    const routed = await fetchBrouterApproach(brouterConfig, {
       from,
       to,
-      bikeType,
       skipGpx: true,
-      rideProfile: "fast",
-      avoidAsphalt: false,
     });
     return {
       coordinates: routed.coordinates,

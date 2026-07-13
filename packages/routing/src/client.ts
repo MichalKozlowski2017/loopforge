@@ -211,6 +211,20 @@ export async function isRoutingReady(config?: RoutingConfig): Promise<boolean> {
   }
 }
 
+export async function fetchApproachRouteBetweenPoints(
+  params: {
+    from: LatLng;
+    to: LatLng;
+    skipGpx?: boolean;
+  },
+  config?: RoutingConfig,
+): Promise<RoutingRouteResult> {
+  return fetchRouteBetweenPoints(
+    { ...params, bikeType: "road" },
+    config,
+  );
+}
+
 export async function fetchRouteBetweenPoints(
   params: {
     from: LatLng;

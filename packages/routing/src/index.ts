@@ -1,5 +1,6 @@
 export { getRoutingConfig, isRoutingConfigured, costColumnForBikeType, type RoutingConfig } from "./config";
 export {
+  fetchApproachRouteBetweenPoints,
   fetchRouteBetweenPoints,
   fetchRouteThroughWaypoints,
   isRoutingReady,

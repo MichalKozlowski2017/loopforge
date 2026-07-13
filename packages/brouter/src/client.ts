@@ -25,6 +25,9 @@ const DIRECTION_BEARING: Record<Direction, number> = {
 const MTB_CUSTOM_PROFILE = "customprofiles/loopforge-mtb";
 const MTB_STOCK_PROFILE = "mtb";
 
+/** Paved, direct routing for the approach leg — independent of loop bike type. */
+export const APPROACH_BROUTER_PROFILE = "fastbike";
+
 const BIKE_PROFILE: Record<BikeType, string> = {
   gravel: "customprofiles/loopforge-gravel",
   road: "fastbike",
@@ -117,6 +120,76 @@ function buildBrouterQuery(
   }
 
   return query;
+}
+
+function buildApproachBrouterQuery(lonlats: string): URLSearchParams {
+  const query = new URLSearchParams({
+    lonlats,
+    profile: APPROACH_BROUTER_PROFILE,
+    format: "geojson",
+  });
+  query.set("profile:correctMisplacedViaPoints", "1");
+  query.set("profile:correctMisplacedViaPointsDistance", "1200");
+  query.set("profile:allow_ferries", "0");
+  return query;
+}
+
+async function fetchApproachBrouterRoute(
+  config: BrouterConfig,
+  points: LatLng[],
+  trackName: string,
+  skipGpx = true,
+): Promise<BrouterRouteResult> {
+  const lonlats = points.map((p) => `${p.lng},${p.lat}`).join("|");
+  const query = buildApproachBrouterQuery(lonlats);
+
+  const response = await fetch(`${config.baseUrl}/brouter?${query.toString()}`, {
+    signal: AbortSignal.timeout(45_000),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text.trim() || `BRouter HTTP ${response.status}`);
+  }
+
+  const geojson = (await response.json()) as BrouterGeoJson;
+  const feature = geojson.features[0];
+  if (!feature?.geometry?.coordinates?.length) {
+    throw new Error("BRouter returned an empty route");
+  }
+
+  const coordinates = filterCoordinates(feature.geometry.coordinates);
+  if (coordinates.length < 2) {
+    throw new Error("BRouter returned invalid route coordinates");
+  }
+
+  const messages = feature.properties.messages as string[][] | undefined;
+  const segments = parseSegmentsFromMessages(messages);
+  const mapGeojson = buildColoredGeoJsonFromRoute(coordinates, messages);
+  const distanceKm = distanceFromCoordinates(coordinates) / 1000;
+  const elevationGainM = Number(feature.properties["filtered ascend"] ?? 0);
+
+  let gpx = "";
+  if (!skipGpx) {
+    const gpxResponse = await fetch(
+      `${config.baseUrl}/brouter?${new URLSearchParams({
+        ...Object.fromEntries(query),
+        format: "gpx",
+        trackname: trackName,
+      }).toString()}`,
+      { signal: AbortSignal.timeout(45_000) },
+    );
+    gpx = gpxResponse.ok ? await gpxResponse.text() : "";
+  }
+
+  return {
+    coordinates,
+    distanceKm,
+    elevationGainM,
+    segments,
+    mapGeojson,
+    gpx,
+  };
 }
 
 export interface RoundTripParams {
@@ -343,7 +416,25 @@ async function fetchBrouterRoute(
   throw lastError ?? new Error("BRouter request failed");
 }
 
-/** Route between two points — fast paved bias when rideProfile is "fast". */
+/** Route approach leg on paved roads (fastbike), ignoring loop bike type / avoid-asphalt. */
+export async function fetchApproachRouteBetweenPoints(
+  config: BrouterConfig,
+  params: {
+    from: LatLng;
+    to: LatLng;
+    skipGpx?: boolean;
+  },
+): Promise<BrouterRouteResult> {
+  await ensureBrouterServer(config);
+  return fetchApproachBrouterRoute(
+    config,
+    [params.from, params.to],
+    "Loopforge dojazd",
+    params.skipGpx ?? true,
+  );
+}
+
+/** Route between two points — uses the loop bike profile and ride preferences. */
 export async function fetchRouteBetweenPoints(
   config: BrouterConfig,
   params: {
