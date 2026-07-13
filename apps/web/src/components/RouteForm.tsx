@@ -1,8 +1,9 @@
 "use client";
 
-import type { BikeType, Direction, RideProfile } from "@loopforge/osm-types";
+import type { BikeType, Direction, RideProfile, RouteViaPoint } from "@loopforge/osm-types";
 import { DirectionCompass } from "@/components/DirectionCompass";
 import { LocationSearch } from "@/components/LocationSearch";
+import { ViaPointsEditor } from "@/components/ViaPointsEditor";
 
 export interface RouteFormValues {
   bikeType: BikeType;
@@ -14,6 +15,7 @@ export interface RouteFormValues {
   approachDistanceKm: number;
   lat: number;
   lng: number;
+  viaPoints: RouteViaPoint[];
 }
 
 interface RouteFormProps {
@@ -284,8 +286,8 @@ export function RouteForm({
         </details>
 
         <p className="mt-2 text-[11px] text-zinc-500">
-          Zielony marker — start. Pomarańczowy — początek pętli (gdy włączony
-          dojazd).
+          Zielony — start. Pomarańczowy — początek pętli (dojazd). Fioletowy z
+          numerem — przejazd przez.
         </p>
       </div>
 
@@ -329,6 +331,18 @@ export function RouteForm({
       <DirectionCompass
         value={values.direction}
         onChange={(direction) => onChange({ ...values, direction })}
+      />
+
+      <ViaPointsEditor
+        viaPoints={values.viaPoints}
+        routeRequest={{
+          start: { lat: values.lat, lng: values.lng },
+          direction: values.direction,
+          distanceKm: values.distanceKm,
+          approachEnabled: values.approachEnabled,
+          approachDistanceKm: values.approachDistanceKm,
+        }}
+        onChange={(viaPoints) => onChange({ ...values, viaPoints })}
       />
 
       <button

@@ -26,6 +26,11 @@ export interface LatLng {
   lng: number;
 }
 
+/** User-chosen must-pass point on the loop (not the home start). */
+export interface RouteViaPoint extends LatLng {
+  label?: string;
+}
+
 export interface OsmTags {
   [key: string]: string | undefined;
   highway?: string;
@@ -53,6 +58,8 @@ export interface GenerateRouteRequest {
   approachEnabled?: boolean;
   /** Target approach distance in km (air-line anchor along direction). */
   approachDistanceKm?: number;
+  /** Must-pass places on the loop (max 3), validated against loop zone. */
+  viaPoints?: RouteViaPoint[];
 }
 
 export interface SurfaceBreakdownItem {
@@ -120,6 +127,7 @@ export interface StoredRoute extends GeneratedRoute {
   /** Configured approach target distance (km). */
   approachDistanceKm?: number;
   loopEntry?: LatLng;
+  viaPoints?: RouteViaPoint[];
   rating?: "up" | "down";
   notes?: string;
 }

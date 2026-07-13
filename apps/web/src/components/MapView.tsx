@@ -11,10 +11,15 @@ export interface StartPoint {
   lng: number;
 }
 
+export interface ViaMapPoint extends StartPoint {
+  label?: string;
+}
+
 interface MapViewProps {
   center: [number, number];
   start: StartPoint;
   loopEntry?: StartPoint | null;
+  viaPoints?: ViaMapPoint[];
   route?: RouteFeature | null;
   mapGeojson?: RouteMapGeoJson | null;
   pickStart?: boolean;
@@ -80,6 +85,7 @@ export function MapView({
   center,
   start,
   loopEntry = null,
+  viaPoints = [],
   route,
   mapGeojson,
   pickStart = false,
@@ -90,6 +96,7 @@ export function MapView({
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const loopEntryMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const viaMarkerRefs = useRef<maplibregl.Marker[]>([]);
   const onStartChangeRef = useRef(onStartChange);
   const routeHandlersRef = useRef<{
     enter?: () => void;
@@ -280,6 +287,8 @@ export function MapView({
       markerRef.current = null;
       loopEntryMarkerRef.current?.remove();
       loopEntryMarkerRef.current = null;
+      for (const marker of viaMarkerRefs.current) marker.remove();
+      viaMarkerRefs.current = [];
       popupRef.current?.remove();
       popupRef.current = null;
       map.remove();
@@ -338,6 +347,34 @@ export function MapView({
       loopEntryMarkerRef.current.setLngLat([loopEntry.lng, loopEntry.lat]);
     }
   }, [loopEntry?.lat, loopEntry?.lng, mapReady, loopEntry]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    for (const marker of viaMarkerRefs.current) marker.remove();
+    viaMarkerRefs.current = [];
+
+    viaPoints.forEach((point, index) => {
+      if (
+        !Number.isFinite(point.lat) ||
+        !Number.isFinite(point.lng) ||
+        (Math.abs(point.lat) < 0.0001 && Math.abs(point.lng) < 0.0001)
+      ) {
+        return;
+      }
+
+      const el = document.createElement("div");
+      el.className =
+        "flex h-7 w-7 items-center justify-center rounded-full border-2 border-violet-300 bg-violet-600 text-xs font-bold text-white shadow-md";
+      el.textContent = String(index + 1);
+
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([point.lng, point.lat])
+        .addTo(map);
+      viaMarkerRefs.current.push(marker);
+    });
+  }, [viaPoints, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;

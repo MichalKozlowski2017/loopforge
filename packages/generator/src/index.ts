@@ -19,8 +19,9 @@ import {
 } from "@loopforge/routing";
 import { buildGpx } from "@loopforge/gpx";
 import { scoreRoute } from "@loopforge/scoring";
+import { buildLoopWaypointsWithVia } from "./via-points";
+import { validateViaPointsForRoute } from "./via-validation";
 import {
-  buildLoopWaypoints,
   createGenerationJitter,
   isGoodLoopQuality,
   loopQualityMetrics,
@@ -270,6 +271,7 @@ function applySpurRefinement(
   shape: LoopShape,
   avoidAsphalt = false,
   approachCoordinates?: [number, number][],
+  viaPointsMode = false,
 ): {
   refined: RoutedLoopResult;
   metrics: ReturnType<typeof loopQualityMetrics> & { approachOverlap: number };
@@ -317,6 +319,7 @@ function applySpurRefinement(
       avoidAsphalt,
       pavedShare: pavedShareFromSegments(routed.segments),
       approachOverlap,
+      viaPointsMode,
     },
   );
 
@@ -399,15 +402,18 @@ async function generateRouteWithEngine(
           variantTotal: variants,
         });
 
-        const waypoints = buildLoopWaypoints(
+        const viaCoords =
+          request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
+        const waypoints = buildLoopWaypointsWithVia(
           request.start,
           request.distanceKm,
           request.direction,
           variant,
           scale,
           shape,
-          request.avoidAsphalt,
+          request.avoidAsphalt ?? false,
           jitter,
+          viaCoords,
           options?.homeStart ? { homeStart: options.homeStart } : undefined,
         );
         const routed = await fetchRoute({
@@ -432,6 +438,7 @@ async function generateRouteWithEngine(
           shape,
           request.avoidAsphalt,
           options?.approachCoordinates,
+          (request.viaPoints?.length ?? 0) > 0,
         );
 
         reportProgress(onProgress, {
@@ -463,13 +470,18 @@ async function generateRouteWithEngine(
           });
 
           const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
+          const hasVias = (request.viaPoints?.length ?? 0) > 0;
           const adjusted =
             ratio > 1
-              ? 1 + (ratio - 1) * (request.avoidAsphalt ? 0.38 : 0.98)
+              ? 1 +
+                (ratio - 1) *
+                  (hasVias ? 0.92 : request.avoidAsphalt ? 0.38 : 0.98)
               : ratio * 0.98;
-          const maxScale = request.avoidAsphalt
-            ? Math.min(1.28, 1.08 + request.distanceKm / 400)
-            : 1.35;
+          const maxScale = hasVias
+            ? Math.min(1.45, 1.12 + request.distanceKm / 350)
+            : request.avoidAsphalt
+              ? Math.min(1.28, 1.08 + request.distanceKm / 400)
+              : 1.35;
           scales.push(Math.min(maxScale, Math.max(0.72, adjusted)));
         }
 
@@ -487,7 +499,11 @@ async function generateRouteWithEngine(
           bestLowOverlap = refined;
         }
 
-        if (tooSpurHeavy || wrongDirection) {
+        const tooShortWithVias =
+          (request.viaPoints?.length ?? 0) > 0 &&
+          metrics.distanceError > 0.22;
+
+        if (tooSpurHeavy || wrongDirection || tooShortWithVias) {
           if (quality < bestRejectedScore) {
             bestRejectedScore = quality;
             bestRejected = refined;
@@ -581,9 +597,11 @@ async function generateRouteWithEngine(
           options.approachCoordinates,
         )
       : 0;
+    const hasVias = (request.viaPoints?.length ?? 0) > 0;
+    const rejectedDistanceLimit = hasVias ? 0.32 : 0.45;
     if (
       rejectedMetrics.directionCoverage >= 0.38 &&
-      rejectedMetrics.distanceError < 0.45 &&
+      rejectedMetrics.distanceError < rejectedDistanceLimit &&
       rejectedApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED
     ) {
       best = bestRejected;
@@ -605,9 +623,11 @@ async function generateRouteWithEngine(
           options.approachCoordinates,
         )
       : 0;
+    const hasVias = (request.viaPoints?.length ?? 0) > 0;
+    const fallbackDistanceLimit = hasVias ? 0.35 : 0.52;
     if (
       fallbackMetrics.directionCoverage >= 0.32 &&
-      fallbackMetrics.distanceError < 0.52 &&
+      fallbackMetrics.distanceError < fallbackDistanceLimit &&
       fallbackApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED
     ) {
       best = bestFallback;
@@ -620,15 +640,18 @@ async function generateRouteWithEngine(
       if (Date.now() > deadlineMs) break;
       try {
         const shape = loopShapeForVariant(request.distanceKm, variant);
-        const waypoints = buildLoopWaypoints(
+        const viaCoords =
+          request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
+        const waypoints = buildLoopWaypointsWithVia(
           request.start,
           request.distanceKm,
           request.direction,
           variant,
           1.0,
           shape,
-          request.avoidAsphalt,
+          request.avoidAsphalt ?? false,
           jitter,
+          viaCoords,
           options?.homeStart ? { homeStart: options.homeStart } : undefined,
         );
         const routed = await fetchRoute({
@@ -647,6 +670,7 @@ async function generateRouteWithEngine(
           shape,
           request.avoidAsphalt,
           options?.approachCoordinates,
+          (request.viaPoints?.length ?? 0) > 0,
         );
         const recoveryApproachOverlap = options?.approachCoordinates
           ? approachOverlapShare(
@@ -688,9 +712,12 @@ async function generateRouteWithEngine(
     progress: 94,
   });
 
-  const maxDistanceError = request.avoidAsphalt
-    ? Math.min(0.48, 0.3 + request.distanceKm / 500)
-    : 0.38;
+  const hasViaPoints = (request.viaPoints?.length ?? 0) > 0;
+  const maxDistanceError = hasViaPoints
+    ? 0.3
+    : request.avoidAsphalt
+      ? Math.min(0.48, 0.3 + request.distanceKm / 500)
+      : 0.38;
   const approachMode = options?.approachCoordinates != null;
   const minDirectionCoverage = usedRelaxedFallback
     ? 0.3
@@ -698,7 +725,9 @@ async function generateRouteWithEngine(
       ? 0.36
       : 0.42;
   const distanceErrorLimit = usedRelaxedFallback
-    ? Math.min(0.58, maxDistanceError + 0.14)
+    ? hasViaPoints
+      ? Math.min(0.38, maxDistanceError + 0.08)
+      : Math.min(0.58, maxDistanceError + 0.14)
     : approachMode
       ? Math.min(0.52, maxDistanceError + 0.1)
       : maxDistanceError;
@@ -739,7 +768,9 @@ async function generateRouteWithEngine(
     finalMetrics.distanceError > distanceErrorLimit
   ) {
     throw new Error(
-      "Nie udało się dopasować trasy do dystansu i kierunku — spróbuj innego kierunku lub dystansu",
+      hasViaPoints && finalMetrics.distanceError > distanceErrorLimit
+        ? `Trasa z punktami przejazdu wyszła za krótka (${best.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km) — dodaj punkty bliżej obwodu pętli lub zmniejsz dystans.`
+        : "Nie udało się dopasować trasy do dystansu i kierunku — spróbuj innego kierunku lub dystansu",
     );
   }
 
@@ -1004,10 +1035,40 @@ function routingEnginePreference(): "auto" | "pgrouting" | "brouter" {
 }
 
 export { prepareCoordinatesForNavigation } from "./prune-spurs";
+export {
+  MAX_VIA_POINTS,
+  estimateLoopAnchor,
+  validateViaPointForRoute,
+  validateViaPointsForRoute,
+} from "./via-validation";
+export type {
+  ViaPointRouteContext,
+  ViaPointStatus,
+  ViaPointValidation,
+} from "./via-validation";
+
 export async function generateRoute(
   request: GenerateRouteRequest,
   options?: GenerateRouteOptions,
 ): Promise<GeneratedRoute> {
+  if (request.viaPoints?.length) {
+    const validation = validateViaPointsForRoute(
+      {
+        start: request.start,
+        direction: request.direction,
+        distanceKm: request.distanceKm,
+        approachEnabled: request.approachEnabled,
+        approachDistanceKm: request.approachDistanceKm,
+      },
+      request.viaPoints,
+    );
+    if (!validation.ok) {
+      throw new Error(
+        validation.message ?? "Nieprawidłowe punkty przejazdu na trasie.",
+      );
+    }
+  }
+
   if (request.approachEnabled) {
     return generateRouteWithApproach(request, options);
   }

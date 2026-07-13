@@ -11,87 +11,22 @@ import { scoreRoute } from "@loopforge/scoring";
 import { surfaceBreakdownFromSegments } from "@loopforge/routing";
 import { prepareCoordinatesForNavigation } from "./prune-spurs";
 
+export {
+  approachTargetOffsetM,
+  computeLoopEntryTarget,
+  loopEntryOffsetM,
+} from "./loop-anchor";
+
 const APPROACH_COLOR = "#64748b";
 const APPROACH_LABEL = "Dojazd";
 const EARTH_RADIUS_M = 6_371_000;
-
-function toRadians(deg: number): number {
-  return (deg * Math.PI) / 180;
-}
-
-function toDegrees(rad: number): number {
-  return (rad * 180) / Math.PI;
-}
-
-function destinationPoint(
-  start: LatLng,
-  bearingDeg: number,
-  distanceM: number,
-): LatLng {
-  const bearing = toRadians(bearingDeg);
-  const lat1 = toRadians(start.lat);
-  const lng1 = toRadians(start.lng);
-  const angular = distanceM / EARTH_RADIUS_M;
-
-  const lat2 = Math.asin(
-    Math.sin(lat1) * Math.cos(angular) +
-      Math.cos(lat1) * Math.sin(angular) * Math.cos(bearing),
-  );
-  const lng2 =
-    lng1 +
-    Math.atan2(
-      Math.sin(bearing) * Math.sin(angular) * Math.cos(lat1),
-      Math.cos(angular) - Math.sin(lat1) * Math.sin(lat2),
-    );
-
-  return { lat: toDegrees(lat2), lng: toDegrees(lng2) };
-}
 
 export interface RoutedLeg {
   coordinates: [number, number][];
   distanceKm: number;
   elevationGainM: number;
-  segments: { tags: import("@loopforge/osm-types").OsmTags; distanceM: number }[];
+  segments: { tags: OsmTags; distanceM: number }[];
   mapGeojson?: RouteMapGeoJson | null;
-}
-
-export function loopEntryOffsetM(loopDistanceKm: number): number {
-  return Math.round(
-    Math.min(18_000, Math.max(4_000, loopDistanceKm * 160)),
-  );
-}
-
-export function approachTargetOffsetM(
-  loopDistanceKm: number,
-  approachDistanceKm?: number,
-): number {
-  if (approachDistanceKm != null && approachDistanceKm > 0) {
-    return Math.round(Math.min(40, Math.max(1, approachDistanceKm)) * 1000);
-  }
-  return loopEntryOffsetM(loopDistanceKm);
-}
-
-export function computeLoopEntryTarget(
-  start: LatLng,
-  direction: GenerateRouteRequest["direction"],
-  loopDistanceKm: number,
-  approachDistanceKm?: number,
-): LatLng {
-  const bearing = {
-    N: 0,
-    NE: 45,
-    E: 90,
-    SE: 135,
-    S: 180,
-    SW: 225,
-    W: 270,
-    NW: 315,
-  }[direction];
-  return destinationPoint(
-    start,
-    bearing,
-    approachTargetOffsetM(loopDistanceKm, approachDistanceKm),
-  );
 }
 
 function coordToLatLng(coord: [number, number]): LatLng {
@@ -330,6 +265,10 @@ export const PREFER_APPROACH_OVERLAP_BELOW = 0.2;
 
 /** Hard cap for relaxed fallbacks when no low-overlap variant exists. */
 export const MAX_APPROACH_OVERLAP_RELAXED = 0.38;
+
+function toRadians(deg: number): number {
+  return (deg * Math.PI) / 180;
+}
 
 function pointToSegmentDistanceM(
   p: [number, number],

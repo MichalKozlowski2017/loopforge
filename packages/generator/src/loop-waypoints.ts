@@ -427,6 +427,7 @@ export function scoreLoopQualityWithShape(
     avoidAsphalt?: boolean;
     pavedShare?: number;
     approachOverlap?: number;
+    viaPointsMode?: boolean;
   },
 ): number {
   const base = scoreLoopQuality(
@@ -460,6 +461,10 @@ export function scoreLoopQualityWithShape(
     score += pavedShare * 16;
     score += Math.max(0, pavedShare - 0.28) ** 2 * 40;
     score += metrics.distanceError * 28;
+  }
+
+  if (options?.viaPointsMode) {
+    score += metrics.distanceError * 22;
   }
 
   if (approachOverlap > 0) {

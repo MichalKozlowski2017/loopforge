@@ -1,4 +1,4 @@
-import { generateRoute } from "@loopforge/generator";
+import { generateRoute, validateViaPointsForRoute } from "@loopforge/generator";
 import type {
   GenerateRouteRequest,
   RouteGenerationStreamEvent,
@@ -32,6 +32,36 @@ export async function POST(request: Request) {
     );
   }
 
+  const viaPoints = body.viaPoints?.filter(
+    (p) =>
+      Number.isFinite(p.lat) &&
+      Number.isFinite(p.lng) &&
+      !(Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001),
+  );
+  const routeInput: GenerateRouteRequest = {
+    ...body,
+    viaPoints: viaPoints?.length ? viaPoints : undefined,
+  };
+
+  if (routeInput.viaPoints?.length) {
+    const viaCheck = validateViaPointsForRoute(
+      {
+        start: routeInput.start,
+        direction: routeInput.direction,
+        distanceKm: routeInput.distanceKm,
+        approachEnabled: routeInput.approachEnabled,
+        approachDistanceKm: routeInput.approachDistanceKm,
+      },
+      routeInput.viaPoints,
+    );
+    if (!viaCheck.ok) {
+      return Response.json(
+        { error: viaCheck.message ?? "Nieprawidłowe punkty przejazdu." },
+        { status: 400 },
+      );
+    }
+  }
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const send = (event: RouteGenerationStreamEvent) => {
@@ -39,7 +69,7 @@ export async function POST(request: Request) {
       };
 
       try {
-        const generated = await generateRoute(body, {
+        const generated = await generateRoute(routeInput, {
           onProgress: (progress) => {
             send({ type: "progress", progress });
           },
@@ -47,17 +77,18 @@ export async function POST(request: Request) {
 
         const stored: StoredRoute = {
           ...generated,
-          bikeType: body.bikeType,
-          direction: body.direction,
-          profile: body.profile,
-          avoidAsphalt: body.avoidAsphalt,
-          approachEnabled: body.approachEnabled,
-          approachDistanceKm: body.approachEnabled
-            ? body.approachDistanceKm
+          bikeType: routeInput.bikeType,
+          direction: routeInput.direction,
+          profile: routeInput.profile,
+          avoidAsphalt: routeInput.avoidAsphalt,
+          approachEnabled: routeInput.approachEnabled,
+          approachDistanceKm: routeInput.approachEnabled
+            ? routeInput.approachDistanceKm
             : undefined,
-          start: body.start,
+          viaPoints: routeInput.viaPoints,
+          start: routeInput.start,
           loopEntry:
-            body.approachEnabled &&
+            routeInput.approachEnabled &&
             generated.geojson.properties.loopEntry &&
             typeof generated.geojson.properties.loopEntry === "object"
               ? (generated.geojson.properties.loopEntry as StoredRoute["loopEntry"])

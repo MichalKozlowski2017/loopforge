@@ -13,9 +13,17 @@ interface LocationSearchProps {
   lat: number;
   lng: number;
   onSelect: (location: { lat: number; lng: number; label: string }) => void;
+  inputId?: string;
+  compact?: boolean;
 }
 
-export function LocationSearch({ lat, lng, onSelect }: LocationSearchProps) {
+export function LocationSearch({
+  lat,
+  lng,
+  onSelect,
+  inputId = "location-search",
+  compact = false,
+}: LocationSearchProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<GeocodeResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -92,22 +100,24 @@ export function LocationSearch({ lat, lng, onSelect }: LocationSearchProps) {
 
   return (
     <div ref={containerRef} className="relative">
-      <label
-        htmlFor="location-search"
-        className="mb-2 block text-xs font-medium text-zinc-400"
-      >
-        Szukaj miejsca
-      </label>
+      {!compact ? (
+        <label
+          htmlFor={inputId}
+          className="mb-2 block text-xs font-medium text-zinc-400"
+        >
+          Szukaj miejsca
+        </label>
+      ) : null}
       <div className="relative">
         <input
-          id="location-search"
+          id={inputId}
           type="search"
           value={query}
           onChange={(event) => handleInputChange(event.target.value)}
           onFocus={() => {
             if (results.length > 0) setOpen(true);
           }}
-          placeholder="np. Warszawa, Kraków, Biskupice…"
+          placeholder={compact ? "Szukaj adresu…" : "np. Warszawa, Kraków, Biskupice…"}
           autoComplete="off"
           className="w-full rounded-lg border border-zinc-700 bg-zinc-900 py-2 pl-3 pr-9 text-sm placeholder:text-zinc-600"
         />

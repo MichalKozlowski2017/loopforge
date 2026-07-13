@@ -17,6 +17,7 @@ import { MapGenerationOverlay } from "@/components/MapGenerationOverlay";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
 import { useGeolocation } from "@/lib/use-geolocation";
 import { consumeGenerationStream } from "@/lib/parse-generation-stream";
+import { validateViaPointsForRoute } from "@loopforge/generator/via-validation";
 
 const MapView = dynamic(
   () => import("@/components/MapView").then((mod) => mod.MapView),
@@ -55,6 +56,7 @@ const DEFAULT_FORM: RouteFormValues = {
   avoidAsphalt: true,
   approachEnabled: false,
   approachDistanceKm: 10,
+  viaPoints: [],
   ...FALLBACK_START,
 };
 
@@ -111,6 +113,7 @@ export default function HomePage() {
           avoidAsphalt: data.avoidAsphalt ?? (data.bikeType === "mtb" || data.bikeType === "gravel"),
           approachEnabled: data.approachEnabled ?? false,
           approachDistanceKm: data.approachDistanceKm ?? 10,
+          viaPoints: data.viaPoints ?? [],
           lat: data.start.lat,
           lng: data.start.lng,
         });
@@ -160,27 +163,55 @@ export default function HomePage() {
     }, 1000);
 
     try {
+      const request = {
+        start: { lat: form.lat, lng: form.lng },
+        bikeType: form.bikeType,
+        distanceKm: form.distanceKm,
+        direction: form.direction,
+        profile: form.profile,
+        avoidAsphalt:
+          form.bikeType === "gravel" || form.bikeType === "mtb"
+            ? form.avoidAsphalt
+            : undefined,
+        approachEnabled: form.approachEnabled || undefined,
+        approachDistanceKm: form.approachEnabled
+          ? form.approachDistanceKm
+          : undefined,
+        viaPoints:
+          form.viaPoints.length > 0
+            ? form.viaPoints.filter(
+                (p) =>
+                  Number.isFinite(p.lat) &&
+                  Number.isFinite(p.lng) &&
+                  !(Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001),
+              )
+            : undefined,
+      };
+
+      if (request.viaPoints?.length) {
+        const viaCheck = validateViaPointsForRoute(
+          {
+            start: request.start,
+            direction: request.direction,
+            distanceKm: request.distanceKm,
+            approachEnabled: request.approachEnabled,
+            approachDistanceKm: request.approachDistanceKm,
+          },
+          request.viaPoints,
+        );
+        if (!viaCheck.ok) {
+          setError(viaCheck.message ?? "Nieprawidłowe punkty przejazdu.");
+          return;
+        }
+      }
+
       const response = await fetch("/api/routes/generate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Accept: "text/event-stream",
         },
-        body: JSON.stringify({
-          start: { lat: form.lat, lng: form.lng },
-          bikeType: form.bikeType,
-          distanceKm: form.distanceKm,
-          direction: form.direction,
-          profile: form.profile,
-          avoidAsphalt:
-            form.bikeType === "gravel" || form.bikeType === "mtb"
-              ? form.avoidAsphalt
-              : undefined,
-          approachEnabled: form.approachEnabled || undefined,
-          approachDistanceKm: form.approachEnabled
-            ? form.approachDistanceKm
-            : undefined,
-        }),
+        body: JSON.stringify(request),
         signal: AbortSignal.timeout(120_000),
       });
 
@@ -229,6 +260,16 @@ export default function HomePage() {
           pickStart={pickOnMap && !loading}
           onStartChange={handleStartChange}
           loopEntry={route?.loopEntry ?? extractLoopEntry(route) ?? null}
+          viaPoints={
+            route?.viaPoints?.length
+              ? route.viaPoints
+              : form.viaPoints.filter(
+                  (p) =>
+                    Number.isFinite(p.lat) &&
+                    Number.isFinite(p.lng) &&
+                    !(Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001),
+                )
+          }
         />
         {loading ? (
           <MapGenerationOverlay
