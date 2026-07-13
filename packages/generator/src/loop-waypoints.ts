@@ -354,7 +354,7 @@ export function shiftWaypointsAwayFromHome(
 
   const towardHome = bearingDeg(loopStart, home);
   const awayBearing = (towardHome + 90 + (variant % 2 === 0 ? 0 : 180)) % 360;
-  const shiftM = 650 + (variant % 4) * 300;
+  const shiftM = 320 + (variant % 4) * 150;
   const shiftedOrigin = destinationPoint(loopStart, awayBearing, shiftM);
 
   return waypoints.map((wp) => {

@@ -144,8 +144,8 @@ export function RouteForm({
             Dojazd do pętli
           </span>
           <span className="mt-0.5 block text-xs text-zinc-500">
-            Najszybsza trasa z punktu startu do miejsca pętli — dystans poniżej
-            dotyczy samej pętli, bez dojazdu.
+            Najszybsza trasa z domu do startu pętli. Dystans poniżej dotyczy
+            samej pętli — dojazd i powrót liczą się osobno.
           </span>
         </span>
       </label>
@@ -190,8 +190,10 @@ export function RouteForm({
             ))}
           </div>
           <p className="mt-2 text-xs text-zinc-500">
-            Punkt startu pętli leży w wybranym kierunku w tej odległości — BRouter
-            dobiera najszybszą trasę dojazdu.
+            Dojazd prowadzi w wybranym kierunku głównymi drogami. Pomarańczowy
+            marker to start pętli — tam, gdzie kończy się dojazd (zwykle przy
+            skrzyżowaniu, nie na końcu ślepego odcinka). Powrót do domu tą samą
+            drogą.
           </p>
         </div>
       ) : null}
@@ -286,8 +288,9 @@ export function RouteForm({
         </details>
 
         <p className="mt-2 text-[11px] text-zinc-500">
-          Zielony — start. Pomarańczowy — początek pętli (dojazd). Fioletowy z
-          numerem — przejazd przez.
+          Zielony — dom. Pomarańczowy — start pętli (koniec dojazdu). Fioletowy
+          z numerem — przejazd przez. Pętla na mapie jest otwarta — powrót do
+          domu tą samą drogą co dojazd.
         </p>
       </div>
 

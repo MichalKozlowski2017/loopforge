@@ -73,3 +73,42 @@ export function computeLoopEntryTarget(
     approachTargetOffsetM(loopDistanceKm, approachDistanceKm),
   );
 }
+
+export function bearingDeg(a: LatLng, b: LatLng): number {
+  const lat1 = toRadians(a.lat);
+  const lat2 = toRadians(b.lat);
+  const dLng = toRadians(b.lng - a.lng);
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x =
+    Math.cos(lat1) * Math.sin(lat2) -
+    Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return (toDegrees(Math.atan2(y, x)) + 360) % 360;
+}
+
+function haversineM(a: LatLng, b: LatLng): number {
+  const dLat = toRadians(b.lat - a.lat);
+  const dLng = toRadians(b.lng - a.lng);
+  const lat1 = toRadians(a.lat);
+  const lat2 = toRadians(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
+}
+
+/** Guide approach along the direction corridor instead of a single air-line snap. */
+export function buildApproachCorridorWaypoints(
+  home: LatLng,
+  entryTarget: LatLng,
+): LatLng[] {
+  const totalM = haversineM(home, entryTarget);
+  if (totalM < 3_200) return [];
+
+  const bearing = bearingDeg(home, entryTarget);
+  const fractions =
+    totalM > 9_000 ? [0.32, 0.58, 0.82] : totalM > 5_500 ? [0.4, 0.72] : [0.52];
+
+  return fractions.map((fraction) =>
+    destinationPoint(home, bearing, totalM * fraction),
+  );
+}

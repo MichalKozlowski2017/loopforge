@@ -39,12 +39,15 @@ import {
   approachOverlapShare,
   computeLoopEntryTarget,
   loopEntryOffsetM,
-  loopEntryFromApproach,
   mergeApproachAndLoop,
   MAX_APPROACH_OVERLAP_RELAXED,
   PREFER_APPROACH_OVERLAP_BELOW,
   type RoutedLeg,
 } from "./approach";
+import { refineApproachForLoopEntry } from "./approach-entry";
+import {
+  buildApproachCorridorWaypoints,
+} from "./loop-anchor";
 
 const DIRECTION_BEARING: Record<
   import("@loopforge/osm-types").Direction,
@@ -841,7 +844,25 @@ function generatePlaceholderRoute(
   };
 }
 
-async function fetchApproachLeg(
+function appendApproachCoordinates(
+  target: [number, number][],
+  incoming: [number, number][],
+): void {
+  if (incoming.length === 0) return;
+  if (target.length === 0) {
+    target.push(...incoming);
+    return;
+  }
+  const last = target[target.length - 1]!;
+  const first = incoming[0]!;
+  if (last[0] === first[0] && last[1] === first[1]) {
+    target.push(...incoming.slice(1));
+  } else {
+    target.push(...incoming);
+  }
+}
+
+async function fetchApproachLegSegment(
   from: LatLng,
   to: LatLng,
   bikeType: GenerateRouteRequest["bikeType"],
@@ -851,9 +872,7 @@ async function fetchApproachLeg(
   if (preference !== "brouter") {
     const pgReady = await isRoutingReady();
     if (pgReady) {
-      const routed = await fetchPgBetween(
-        { from, to, bikeType, skipGpx: true },
-      );
+      const routed = await fetchPgBetween({ from, to, bikeType, skipGpx: true });
       return {
         coordinates: routed.coordinates,
         distanceKm: routed.distanceKm,
@@ -888,9 +907,7 @@ async function fetchApproachLeg(
     };
   }
 
-  const coordinates = [
-    ...lineCoordinates(from, to),
-  ] as [number, number][];
+  const coordinates = [...lineCoordinates(from, to)] as [number, number][];
   const distanceKm = totalDistanceKm(coordinates);
   return {
     coordinates,
@@ -902,6 +919,41 @@ async function fetchApproachLeg(
         distanceM: distanceKm * 1000,
       },
     ],
+    mapGeojson: undefined,
+  };
+}
+
+async function fetchApproachLeg(
+  from: LatLng,
+  to: LatLng,
+  bikeType: GenerateRouteRequest["bikeType"],
+  corridorWaypoints: LatLng[] = [],
+): Promise<RoutedLeg> {
+  const chain = [from, ...corridorWaypoints, to];
+  if (chain.length === 2) {
+    return fetchApproachLegSegment(from, to, bikeType);
+  }
+
+  const coordinates: [number, number][] = [];
+  let elevationGainM = 0;
+  const segments: RoutedLeg["segments"] = [];
+
+  for (let i = 0; i < chain.length - 1; i++) {
+    const leg = await fetchApproachLegSegment(
+      chain[i]!,
+      chain[i + 1]!,
+      bikeType,
+    );
+    appendApproachCoordinates(coordinates, leg.coordinates);
+    elevationGainM += leg.elevationGainM;
+    segments.push(...leg.segments);
+  }
+
+  return {
+    coordinates,
+    distanceKm: totalDistanceKm(coordinates),
+    elevationGainM,
+    segments,
     mapGeojson: undefined,
   };
 }
@@ -929,17 +981,52 @@ async function generateRouteWithApproach(
     progress: 8,
   });
 
-  const approach = await fetchApproachLeg(
+  const corridorWaypoints = buildApproachCorridorWaypoints(
+    userStart,
+    entryTarget,
+  );
+  const approachRaw = await fetchApproachLeg(
     userStart,
     entryTarget,
     request.bikeType,
+    corridorWaypoints,
   );
-  const loopEntry = loopEntryFromApproach(approach);
+  const refined = refineApproachForLoopEntry(approachRaw, {
+    home: userStart,
+    entryTarget,
+  });
+  const approachTrimmed =
+    refined.approachCoordinates.length < approachRaw.coordinates.length;
+  const approach: RoutedLeg = {
+    ...approachRaw,
+    coordinates: refined.approachCoordinates,
+    distanceKm: refined.approachDistanceKm,
+    mapGeojson: approachTrimmed ? undefined : approachRaw.mapGeojson,
+  };
+  const loopEntry = refined.loopEntry;
+
+  if (request.viaPoints?.length) {
+    const viaCheck = validateViaPointsForRoute(
+      {
+        start: userStart,
+        direction: request.direction,
+        distanceKm: request.distanceKm,
+        loopAnchor: loopEntry,
+      },
+      request.viaPoints,
+    );
+    if (!viaCheck.ok) {
+      throw new Error(
+        viaCheck.message ??
+          "Punkty przejazdu nie pasują do startu pętli po dojeździe.",
+      );
+    }
+  }
 
   reportProgress(onProgress, {
     phase: "approach",
     message: "Dojazd gotowy",
-    detail: `${approach.distanceKm.toFixed(1)} km — start pętli na mapie`,
+    detail: `${approach.distanceKm.toFixed(1)} km — start pętli przy drodze`,
     progress: 14,
   });
 

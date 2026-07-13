@@ -9,6 +9,8 @@ export interface ViaPointRouteContext {
   distanceKm: number;
   approachEnabled?: boolean;
   approachDistanceKm?: number;
+  /** When known (e.g. after approach routing), use instead of geometric estimate. */
+  loopAnchor?: LatLng;
 }
 
 const DIRECTION_BEARING: Record<Direction, number> = {
@@ -68,6 +70,7 @@ function angularDiffDeg(a: number, b: number): number {
 
 /** Loop anchor used for via-point zone checks (orange marker when approach is on). */
 export function estimateLoopAnchor(context: ViaPointRouteContext): LatLng {
+  if (context.loopAnchor) return context.loopAnchor;
   if (context.approachEnabled) {
     return computeLoopEntryTarget(
       context.start,
