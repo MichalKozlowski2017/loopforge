@@ -323,7 +323,7 @@ export default function HomePage() {
                 <dt className="text-zinc-500">
                   {(route.approachEnabled ?? false) ||
                   route.metrics.approachDistanceKm != null
-                    ? "Razem"
+                    ? "Cały wyjazd"
                     : "Dystans"}
                 </dt>
                 <dd>{route.metrics.distanceKm.toFixed(1)} km</dd>
@@ -334,13 +334,19 @@ export default function HomePage() {
               route.metrics.approachDistanceKm != null ? (
                 <>
                   <div>
-                    <dt className="text-zinc-500">Pętla</dt>
+                    <dt className="text-zinc-500">Pętla (GPX)</dt>
                     <dd>{route.metrics.loopDistanceKm.toFixed(1)} km</dd>
                   </div>
                   <div>
                     <dt className="text-zinc-500">Dojazd</dt>
                     <dd>{route.metrics.approachDistanceKm.toFixed(1)} km</dd>
                   </div>
+                  {route.metrics.returnApproachKm != null ? (
+                    <div>
+                      <dt className="text-zinc-500">Powrót</dt>
+                      <dd>{route.metrics.returnApproachKm.toFixed(1)} km</dd>
+                    </div>
+                  ) : null}
                 </>
               ) : null}
               <div>

@@ -10,6 +10,10 @@ import { buildGpx } from "@loopforge/gpx";
 import { scoreRoute } from "@loopforge/scoring";
 import { surfaceBreakdownFromSegments } from "@loopforge/routing";
 import { prepareCoordinatesForNavigation } from "./prune-spurs";
+import {
+  buildReturnApproachToHome,
+  sliceLoopForHomewardReturn,
+} from "./approach-homeward";
 
 export {
   approachTargetOffsetM,
@@ -207,17 +211,32 @@ export function mergeApproachAndLoop(
   const loopNavCoordinates = prepareCoordinatesForNavigation(
     loop.geojson.geometry.coordinates,
   );
-  const openedLoop = openLoopForApproachMerge(loopNavCoordinates, entryCoord);
+  const openedLoop = sliceLoopForHomewardReturn(
+    loopNavCoordinates,
+    entryCoord,
+    userStart,
+    approach.coordinates,
+  );
+  const loopExit = openedLoop[openedLoop.length - 1] ?? entryCoord;
+  const returnApproach = buildReturnApproachToHome(
+    approach.coordinates,
+    loopExit,
+  );
+
   const mergedCoordinates: [number, number][] = [];
   appendCoordinates(mergedCoordinates, approach.coordinates);
   appendCoordinates(mergedCoordinates, openedLoop);
+  appendCoordinates(mergedCoordinates, returnApproach);
 
   const approachKm = approach.distanceKm;
-  const loopKm = loop.metrics.loopDistanceKm ?? loop.metrics.distanceKm;
+  const openLoopKm =
+    openedLoop.length > 1 ? totalDistanceKm(openedLoop) : 0;
+  const returnKm =
+    returnApproach.length > 1 ? totalDistanceKm(returnApproach) : approachKm;
   const totalKm =
     mergedCoordinates.length > 1
       ? totalDistanceKm(mergedCoordinates)
-      : approachKm + loopKm;
+      : approachKm + openLoopKm + returnKm;
 
   const score = scoreRoute(loopSegments, request.bikeType);
   const surfaceBreakdown =
@@ -225,7 +244,10 @@ export function mergeApproachAndLoop(
       ? surfaceBreakdownFromSegments(loopSegments)
       : loop.metrics.surfaceBreakdown;
 
-  const name = `Loopforge ${request.bikeType} ${Math.round(loopKm)}km + dojazd`;
+  const loopTarget = Math.round(
+    loop.metrics.loopDistanceKm ?? loop.metrics.distanceKm,
+  );
+  const name = `Loopforge ${request.bikeType} ${loopTarget}km + dojazd + powrót`;
 
   return {
     ...loop,
@@ -245,8 +267,9 @@ export function mergeApproachAndLoop(
     mapGeojson: mergeMapGeojson(approach.mapGeojson, loop.mapGeojson),
     metrics: {
       distanceKm: totalKm,
-      loopDistanceKm: loopKm,
+      loopDistanceKm: openLoopKm,
       approachDistanceKm: approachKm,
+      returnApproachKm: returnKm,
       elevationGainM: approach.elevationGainM + loop.metrics.elevationGainM,
       surfaceBreakdown,
       score,

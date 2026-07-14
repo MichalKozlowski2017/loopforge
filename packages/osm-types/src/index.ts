@@ -72,8 +72,10 @@ export interface RouteMetrics {
   distanceKm: number;
   /** Loop portion only — set when approach leg is included. */
   loopDistanceKm?: number;
-  /** Approach leg only — set when approach is enabled. */
+  /** Outbound approach leg (home → loop entry). */
   approachDistanceKm?: number;
+  /** Return approach leg (loop exit → home), usually mirrors outbound. */
+  returnApproachKm?: number;
   elevationGainM: number;
   surfaceBreakdown: SurfaceBreakdownItem[];
   score: number;

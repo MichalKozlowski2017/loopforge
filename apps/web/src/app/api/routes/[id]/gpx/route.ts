@@ -14,7 +14,11 @@ export async function GET(
     return NextResponse.json({ error: "Trasa nie znaleziona" }, { status: 404 });
   }
 
-  const name = `Loopforge ${route.bikeType} ${Math.round(route.metrics.distanceKm)}km`;
+  const hasApproach =
+    route.approachEnabled || route.metrics.approachDistanceKm != null;
+  const name = hasApproach
+    ? `Loopforge ${route.bikeType} ${Math.round(route.metrics.distanceKm)}km wyjazd`
+    : `Loopforge ${route.bikeType} ${Math.round(route.metrics.distanceKm)}km`;
   const coordinates = prepareCoordinatesForNavigation(
     route.geojson.geometry.coordinates,
   );

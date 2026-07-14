@@ -190,9 +190,8 @@ export function RouteForm({
             ))}
           </div>
           <p className="mt-2 text-xs text-zinc-500">
-            Dojazd liczony profilem szosowym (główne drogi). Pomarańczowy marker
-            to start pętli — tam, gdzie kończy się dojazd (zwykle przy
-            skrzyżowaniu). Powrót do domu tą samą drogą.
+            Dojazd liczony profilem szosowym (główne drogi). GPX zawiera dojazd,
+            pętlę kończącą się w stronę domu oraz powrót tą samą drogą.
           </p>
         </div>
       ) : null}
@@ -287,9 +286,9 @@ export function RouteForm({
         </details>
 
         <p className="mt-2 text-[11px] text-zinc-500">
-          Zielony — dom. Pomarańczowy — start pętli (koniec dojazdu). Fioletowy
-          z numerem — przejazd przez. Pętla na mapie jest otwarta — powrót do
-          domu tą samą drogą co dojazd.
+          Zielony — dom. Pomarańczowy — start pętli. Fioletowy z numerem —
+          przejazd przez. Przy dojeździe GPX kończy się z powrotem w domu (dojazd
+          + pętla + powrót).
         </p>
       </div>
 
@@ -328,6 +327,13 @@ export function RouteForm({
             </button>
           ))}
         </div>
+        {values.approachEnabled ? (
+          <p className="mt-2 text-xs text-zinc-500">
+            Szacowany cały wyjazd (dojazd + pętla + powrót): ok.{" "}
+            {values.approachDistanceKm * 2 + values.distanceKm} km — odcinek
+            pętli w terenie może wyjść krótszy niż cel.
+          </p>
+        ) : null}
       </div>
 
       <DirectionCompass
