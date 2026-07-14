@@ -63,10 +63,23 @@ const BIKE_PROFILE: Record<BikeType, string> = {
   general: "customprofiles/loopforge-trekking",
 };
 
-function profilesForRequest(bikeType: BikeType): string[] {
-  return bikeType === "mtb"
-    ? [MTB_CUSTOM_PROFILE, MTB_STOCK_PROFILE]
-    : [BIKE_PROFILE[bikeType]];
+const ROAD_PROFILE: Record<RideProfile, string[]> = {
+  fast: ["fastbike"],
+  flow: ["fastbike-lowtraffic", "fastbike"],
+  technical: ["fastbike-verylowtraffic", "fastbike-lowtraffic", "fastbike"],
+};
+
+function profilesForRequest(
+  bikeType: BikeType,
+  rideProfile?: RideProfile,
+): string[] {
+  if (bikeType === "mtb") {
+    return [MTB_CUSTOM_PROFILE, MTB_STOCK_PROFILE];
+  }
+  if (bikeType === "road") {
+    return ROAD_PROFILE[rideProfile ?? "fast"];
+  }
+  return [BIKE_PROFILE[bikeType]];
 }
 
 function brouterProfileOverrides(
@@ -86,6 +99,7 @@ function brouterProfileOverrides(
       overrides.prefer_unpaved_paths = "1";
       overrides.prefer_forests = "1";
       overrides.avoid_towns = "1";
+      overrides.prefer_rivers = "1";
     } else if (rideProfile === "fast") {
       overrides.prefer_unpaved_paths = "0";
       overrides.prefer_cycle_routes = "1";
@@ -391,7 +405,7 @@ async function fetchBrouterRoute(
   },
 ): Promise<BrouterRouteResult> {
   const lonlats = points.map((p) => `${p.lng},${p.lat}`).join("|");
-  const profiles = profilesForRequest(bikeType);
+  const profiles = profilesForRequest(bikeType, options?.rideProfile);
   let lastError: Error | null = null;
 
   for (let i = 0; i < profiles.length; i++) {
@@ -412,23 +426,23 @@ async function fetchBrouterRoute(
     if (!response.ok) {
       const text = await response.text();
       lastError = new Error(text.trim() || `BRouter HTTP ${response.status}`);
-      const canRetryMtb =
-        bikeType === "mtb" &&
-        response.status === 500 &&
-        i < profiles.length - 1;
-      if (canRetryMtb) continue;
+      if (response.status === 500 && i < profiles.length - 1) continue;
       throw lastError;
     }
 
     const geojson = (await response.json()) as BrouterGeoJson;
     const feature = geojson.features[0];
     if (!feature?.geometry?.coordinates?.length) {
-      throw new Error("BRouter returned an empty route");
+      lastError = new Error("BRouter returned an empty route");
+      if (i < profiles.length - 1) continue;
+      throw lastError;
     }
 
     const coordinates = filterCoordinates(feature.geometry.coordinates);
     if (coordinates.length < 2) {
-      throw new Error("BRouter returned invalid route coordinates");
+      lastError = new Error("BRouter returned invalid route coordinates");
+      if (i < profiles.length - 1) continue;
+      throw lastError;
     }
 
     const messages = feature.properties.messages as string[][] | undefined;

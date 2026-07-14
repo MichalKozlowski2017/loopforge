@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { StoredRoute } from "@loopforge/osm-types";
+import { getRideProfileLabel } from "@loopforge/osm-types";
 import { SurfaceBreakdown } from "@/components/SurfaceBreakdown";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
 import { downloadRouteGpx } from "@/lib/download-route-gpx";
@@ -58,7 +59,11 @@ export default function RouteDetailPage() {
             {route.bikeType} · {route.metrics.distanceKm.toFixed(1)} km
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
-            {route.direction} · {new Date(route.createdAt).toLocaleString("pl-PL")}
+            {route.direction}
+            {route.profile
+              ? ` · ${getRideProfileLabel(route.bikeType, route.profile) ?? route.profile}`
+              : ""}{" "}
+            · {new Date(route.createdAt).toLocaleString("pl-PL")}
           </p>
         </div>
         <dl className="grid grid-cols-2 gap-2 text-sm">

@@ -12,6 +12,14 @@ export type Direction =
 
 export type RideProfile = "flow" | "technical" | "fast";
 
+export {
+  RIDE_PROFILE_OPTIONS,
+  getRideProfileHint,
+  getRideProfileLabel,
+  getRideProfileOptions,
+  type RideProfileOption,
+} from "./ride-profiles";
+
 import type { SurfaceCategory } from "./surface-style";
 export type { SurfaceCategory, SurfaceStyle } from "./surface-style";
 export {

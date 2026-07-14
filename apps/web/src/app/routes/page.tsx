@@ -6,6 +6,7 @@ import {
   loadLocalRouteSummaries,
   type LocalRouteSummary,
 } from "@/lib/local-routes-store";
+import { getRideProfileLabel } from "@loopforge/osm-types";
 
 const BIKE_LABELS: Record<LocalRouteSummary["bikeType"], string> = {
   gravel: "Gravel",
@@ -71,6 +72,9 @@ export default function RoutesPage() {
                     <p className="mt-1 text-xs text-zinc-500">
                       {formatDate(route.createdAt)} · score{" "}
                       {(route.score * 100).toFixed(0)}%
+                      {route.profile
+                        ? ` · ${getRideProfileLabel(route.bikeType, route.profile) ?? route.profile}`
+                        : ""}
                       {route.placeholder ? " · placeholder" : ""}
                     </p>
                     {route.notes ? (

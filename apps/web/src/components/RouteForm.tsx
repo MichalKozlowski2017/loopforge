@@ -1,6 +1,7 @@
 "use client";
 
 import type { BikeType, Direction, RideProfile, RouteViaPoint } from "@loopforge/osm-types";
+import { getRideProfileOptions } from "@loopforge/osm-types";
 import { DirectionCompass } from "@/components/DirectionCompass";
 import { LocationSearch } from "@/components/LocationSearch";
 import { ViaPointsEditor } from "@/components/ViaPointsEditor";
@@ -39,12 +40,6 @@ const BIKE_TYPES: { value: BikeType; label: string }[] = [
 const DISTANCE_PRESETS = [20, 35, 50, 80, 120];
 const APPROACH_DISTANCE_PRESETS = [5, 8, 12, 15, 20];
 
-const PROFILES: { value: RideProfile; label: string; hint: string }[] = [
-  { value: "flow", label: "Flow", hint: "Płynna jazda" },
-  { value: "technical", label: "Techniczny", hint: "Więcej off-road" },
-  { value: "fast", label: "Szybki", hint: "Priorytet asfaltu" },
-];
-
 export function RouteForm({
   values,
   loading,
@@ -55,6 +50,9 @@ export function RouteForm({
   onUseMyLocation,
   onTogglePickOnMap,
 }: RouteFormProps) {
+  const profiles = getRideProfileOptions(values.bikeType);
+  const selectedProfile = profiles.find((profile) => profile.value === values.profile);
+
   return (
     <form
       className="space-y-4"
@@ -90,7 +88,7 @@ export function RouteForm({
           Podprofil
         </label>
         <div className="grid grid-cols-3 gap-2">
-          {PROFILES.map((profile) => (
+          {profiles.map((profile) => (
             <button
               key={profile.value}
               type="button"
@@ -106,6 +104,9 @@ export function RouteForm({
             </button>
           ))}
         </div>
+        {selectedProfile ? (
+          <p className="mt-2 text-xs text-zinc-500">{selectedProfile.hint}</p>
+        ) : null}
       </div>
 
       {values.bikeType === "gravel" || values.bikeType === "mtb" ? (
