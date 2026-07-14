@@ -27,7 +27,7 @@ export const RIDE_PROFILE_OPTIONS: Record<BikeType, RideProfileOption[]> = {
       label: "Eksploracyjny",
       hint: "Las, polne drogi, doliny — mniej miast",
     },
-    { value: "fast", label: "Express", hint: "Szybciej do celu, więcej utwardzonych odcinków" },
+    { value: "fast", label: "Express", hint: "Szybkie szutry i utwardzone drogi rowerowe — minimalny asfalt" },
   ],
   mtb: [
     { value: "flow", label: "Flow", hint: "Zbalansowany mix ścieżek i leśnych dróg" },

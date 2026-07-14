@@ -25,13 +25,16 @@ const GRAVEL_TECHNICAL: WeightTable = {
 };
 
 const GRAVEL_FAST: WeightTable = {
-  ...GRAVEL_FLOW,
-  "surface=gravel": 0.75,
-  "surface=compacted": 0.88,
-  "highway=cycleway": 1.0,
-  "highway=tertiary": 0.82,
-  "highway=residential": 0.72,
-  "highway=primary": 0.35,
+  "surface=compacted": 1.0,
+  "surface=fine_gravel": 1.0,
+  "surface=gravel": 0.96,
+  "highway=cycleway": 0.94,
+  "highway=track": 0.88,
+  "surface=unpaved": 0.55,
+  "surface=dirt": 0.35,
+  "highway=tertiary": 0.4,
+  "highway=residential": 0.32,
+  "highway=primary": 0.06,
 };
 
 const ROAD_FAST: WeightTable = {

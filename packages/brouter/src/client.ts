@@ -102,9 +102,17 @@ function brouterProfileOverrides(
       overrides.prefer_rivers = "1";
       overrides.consider_elevation = "1";
     } else if (rideProfile === "fast") {
-      overrides.prefer_unpaved_paths = "0";
-      overrides.prefer_cycle_routes = "1";
-      overrides.avoid_steep_inclines = "1";
+      if (bikeType === "gravel") {
+        // Express = fast compacted/gravel (e.g. Wisła towpaths), not paved shortcuts.
+        overrides.prefer_unpaved_paths = "1";
+        overrides.prefer_cycle_routes = "1";
+        overrides.prefer_rivers = "1";
+        overrides.avoid_steep_inclines = "1";
+      } else {
+        overrides.prefer_unpaved_paths = "0";
+        overrides.prefer_cycle_routes = "1";
+        overrides.avoid_steep_inclines = "1";
+      }
     } else {
       overrides.prefer_unpaved_paths = "1";
       overrides.prefer_cycle_routes = "1";
