@@ -14,7 +14,7 @@ export function SiteHeader() {
           height={32}
           className="h-8 w-8 shrink-0"
         />
-        <span className="text-sm font-semibold tracking-wide text-amber-400">
+        <span className="text-sm font-semibold tracking-wide text-white">
           Loopforge
         </span>
       </Link>

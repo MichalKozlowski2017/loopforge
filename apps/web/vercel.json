@@ -2,6 +2,20 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "cd ../.. && pnpm install",
   "buildCommand": "cd ../.. && pnpm --filter @loopforge/web build",
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "loopforge.eu" }],
+      "destination": "https://loopforge.pl/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "www.loopforge.eu" }],
+      "destination": "https://loopforge.pl/:path*",
+      "permanent": true
+    }
+  ],
   "functions": {
     "app/api/routes/generate/route.ts": {
       "maxDuration": 300,
