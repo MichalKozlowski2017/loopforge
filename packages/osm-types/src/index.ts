@@ -20,6 +20,12 @@ export {
   type RideProfileOption,
 } from "./ride-profiles";
 
+export {
+  getRideProfileLoopPrefs,
+  profileSurfaceMismatch,
+  type RideProfileLoopPrefs,
+} from "./profile-preferences";
+
 import type { SurfaceCategory } from "./surface-style";
 export type { SurfaceCategory, SurfaceStyle } from "./surface-style";
 export {

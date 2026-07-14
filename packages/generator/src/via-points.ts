@@ -1,4 +1,4 @@
-import type { Direction, LatLng } from "@loopforge/osm-types";
+import type { Direction, LatLng, RideProfileLoopPrefs } from "@loopforge/osm-types";
 import {
   MAX_VIA_POINTS,
   type ViaPointRouteContext,
@@ -116,6 +116,7 @@ export function buildLoopWaypointsWithVia(
   jitter: GenerationJitter | undefined,
   viaPoints: LatLng[],
   extras?: LoopWaypointExtras,
+  profilePrefs?: RideProfileLoopPrefs,
 ): LatLng[] {
   const vias = viaPoints.slice(0, MAX_VIA_POINTS);
   const viaBoost = vias.length > 0 ? 1.06 : 1;
@@ -129,6 +130,7 @@ export function buildLoopWaypointsWithVia(
     avoidAsphalt,
     jitter,
     extras,
+    profilePrefs,
   );
 
   if (vias.length === 0) return auto;

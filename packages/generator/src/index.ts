@@ -4,8 +4,9 @@ import type {
   LatLng,
   OsmTags,
   RouteGenerationProgress,
+  SurfaceCategory,
 } from "@loopforge/osm-types";
-import { getSurfaceStyle } from "@loopforge/osm-types";
+import { getRideProfileLoopPrefs, getSurfaceStyle } from "@loopforge/osm-types";
 import {
   fetchRouteThroughWaypoints as fetchBrouterRoute,
   fetchApproachRouteBetweenPoints as fetchBrouterApproach,
@@ -210,7 +211,7 @@ function buildGeneratedRoute(
   const navCoordinates = prepareCoordinatesForNavigation(coordinates);
   const actualKm =
     navCoordinates.length > 1 ? totalDistanceKm(navCoordinates) : distanceKm;
-  const score = scoreRoute(options.segments, bikeType);
+  const score = scoreRoute(options.segments, bikeType, request.profile);
   const id = crypto.randomUUID();
   const name = `Loopforge ${bikeType} ${Math.round(actualKm)}km`;
   const surfaceBreakdown =
@@ -269,6 +270,29 @@ function pavedShareFromSegments(
   return totalM > 0 ? pavedM / totalM : 0;
 }
 
+const OFFROAD_CATEGORIES = new Set<SurfaceCategory>([
+  "gravel",
+  "compacted",
+  "dirt",
+  "path",
+  "forest",
+]);
+
+function offroadShareFromSegments(
+  segments: { tags: OsmTags; distanceM: number }[],
+): number {
+  let offroadM = 0;
+  let totalM = 0;
+  for (const segment of segments) {
+    if (segment.distanceM <= 0) continue;
+    totalM += segment.distanceM;
+    if (OFFROAD_CATEGORIES.has(getSurfaceStyle(segment.tags).category)) {
+      offroadM += segment.distanceM;
+    }
+  }
+  return totalM > 0 ? offroadM / totalM : 0;
+}
+
 function applySpurRefinement(
   routed: RoutedLoopResult,
   targetDistanceKm: number,
@@ -278,6 +302,7 @@ function applySpurRefinement(
   avoidAsphalt = false,
   approachCoordinates?: [number, number][],
   viaPointsMode = false,
+  profilePrefs?: ReturnType<typeof getRideProfileLoopPrefs>,
 ): {
   refined: RoutedLoopResult;
   metrics: ReturnType<typeof loopQualityMetrics> & { approachOverlap: number };
@@ -324,8 +349,10 @@ function applySpurRefinement(
     {
       avoidAsphalt,
       pavedShare: pavedShareFromSegments(routed.segments),
+      offroadShare: offroadShareFromSegments(routed.segments),
       approachOverlap,
       viaPointsMode,
+      profilePrefs,
     },
   );
 
@@ -349,6 +376,10 @@ async function generateRouteWithEngine(
 }> {
   const variants = 5;
   const jitter = createGenerationJitter(variants);
+  const profilePrefs = getRideProfileLoopPrefs(
+    request.bikeType,
+    request.profile,
+  );
   const deadlineMs = Date.now() + 95_000;
   let best: RoutedLoopResult | null = null;
   let bestScore = Infinity;
@@ -389,7 +420,11 @@ async function generateRouteWithEngine(
         if (Date.now() > deadlineMs && best) break;
 
         const scale = scales[si];
-        const shape = loopShapeForVariant(request.distanceKm, variant);
+        const shape = loopShapeForVariant(
+          request.distanceKm,
+          variant,
+          profilePrefs,
+        );
         const shapeLabel = shape === "arc" ? "łuk" : "podłużna";
         attempt += 1;
         const routingProgress = Math.min(
@@ -421,6 +456,7 @@ async function generateRouteWithEngine(
           jitter,
           viaCoords,
           options?.homeStart ? { homeStart: options.homeStart } : undefined,
+          profilePrefs,
         );
         const routed = await fetchRoute({
           start: request.start,
@@ -445,6 +481,7 @@ async function generateRouteWithEngine(
           request.avoidAsphalt,
           options?.approachCoordinates,
           (request.viaPoints?.length ?? 0) > 0,
+          profilePrefs,
         );
 
         reportProgress(onProgress, {
@@ -645,7 +682,11 @@ async function generateRouteWithEngine(
     for (const variant of [0, 1, 2, 3]) {
       if (Date.now() > deadlineMs) break;
       try {
-        const shape = loopShapeForVariant(request.distanceKm, variant);
+        const shape = loopShapeForVariant(
+          request.distanceKm,
+          variant,
+          profilePrefs,
+        );
         const viaCoords =
           request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
         const waypoints = buildLoopWaypointsWithVia(
@@ -659,6 +700,7 @@ async function generateRouteWithEngine(
           jitter,
           viaCoords,
           options?.homeStart ? { homeStart: options.homeStart } : undefined,
+          profilePrefs,
         );
         const routed = await fetchRoute({
           start: request.start,
@@ -677,6 +719,7 @@ async function generateRouteWithEngine(
           request.avoidAsphalt,
           options?.approachCoordinates,
           (request.viaPoints?.length ?? 0) > 0,
+          profilePrefs,
         );
         const recoveryApproachOverlap = options?.approachCoordinates
           ? approachOverlapShare(

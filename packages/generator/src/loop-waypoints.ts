@@ -1,4 +1,5 @@
-import type { Direction, LatLng } from "@loopforge/osm-types";
+import type { Direction, LatLng, RideProfileLoopPrefs } from "@loopforge/osm-types";
+import { profileSurfaceMismatch } from "@loopforge/osm-types";
 import { PREFER_APPROACH_OVERLAP_BELOW } from "./approach";
 
 const DIRECTION_BEARING: Record<Direction, number> = {
@@ -121,13 +122,22 @@ export function createGenerationJitter(variantCount = 5): GenerationJitter {
   };
 }
 
-/** Shape order per variant — always try both; scoring picks the best routed result. */
+/** Shape order per variant — profile can bias arc vs longitudinal. */
 export function loopShapeForVariant(
   distanceKm: number,
   variant: number,
+  profilePrefs?: RideProfileLoopPrefs,
 ): LoopShape {
   const preferArc = distanceKm >= MIN_KM_FOR_ARC_LOOP;
   const even = variant % 2 === 0;
+
+  if (profilePrefs?.shapeBias === "arc" && preferArc) {
+    return even ? "arc" : "longitudinal";
+  }
+  if (profilePrefs?.shapeBias === "longitudinal") {
+    return even ? "longitudinal" : "arc";
+  }
+
   return preferArc
     ? even
       ? "arc"
@@ -154,27 +164,39 @@ export function buildArcLoopWaypoints(
   scaleMultiplier = 1,
   avoidAsphalt = false,
   jitter?: GenerationJitter,
+  profilePrefs?: RideProfileLoopPrefs,
 ): LatLng[] {
+  const prefs = profilePrefs;
   const baseBearing = DIRECTION_BEARING[direction];
   const idx = variant % VARIANT_POINT_COUNTS.length;
-  const pointCount = avoidAsphalt
+  const basePointCount = avoidAsphalt
     ? 3 + (idx % 2)
     : VARIANT_POINT_COUNTS[idx];
+  const pointCount = Math.max(
+    2,
+    Math.min(6, basePointCount + (prefs?.pointCountAdjust ?? 0)),
+  );
   const scale =
     VARIANT_SCALES[idx] * scaleMultiplier * (jitter?.scaleBias ?? 1);
   const rotation = VARIANT_ROTATIONS[idx] + (jitter?.bearingDeg ?? 0) * 0.35;
 
-  const arcHalfWidth = avoidAsphalt
+  const baseArcHalfWidth = avoidAsphalt
     ? 32 + (idx % 3) * 5
     : 48 + (idx % 3) * 7;
+  const arcHalfWidth = Math.max(
+    22,
+    baseArcHalfWidth + (prefs?.arcWidthExtraDeg ?? 0),
+  );
   const arcSpanDeg = arcHalfWidth * 2;
   const arcStart = baseBearing - arcHalfWidth + rotation * 0.12;
 
-  const roadDetourFactor = avoidAsphalt
+  const baseDetour = avoidAsphalt
     ? 1.72 + Math.min(0.65, distanceKm / 75)
     : 1.42;
+  const roadDetourFactor =
+    baseDetour * (prefs?.detourMultiplier ?? 1);
   const pathFactor = arcPathFactor(pointCount, arcSpanDeg);
-  const reachBoost = avoidAsphalt ? 1.04 : 1;
+  const reachBoost = (avoidAsphalt ? 1.04 : 1) * (prefs?.reachBoost ?? 1);
   const radiusM =
     ((distanceKm * 1000 * reachBoost) / (pathFactor * roadDetourFactor)) * scale;
 
@@ -281,7 +303,9 @@ export function buildLongitudinalLoopWaypoints(
   scaleMultiplier = 1,
   avoidAsphalt = false,
   jitter?: GenerationJitter,
+  profilePrefs?: RideProfileLoopPrefs,
 ): LatLng[] {
+  const prefs = profilePrefs;
   const idx = variant % VARIANT_SCALES.length;
   const scale =
     VARIANT_SCALES[idx] * scaleMultiplier * (jitter?.scaleBias ?? 1);
@@ -292,22 +316,32 @@ export function buildLongitudinalLoopWaypoints(
       360) %
     360;
 
-  const outCount = avoidAsphalt
+  const baseOutCount = avoidAsphalt
     ? distanceKm >= 35
       ? 3 + (idx % 2)
       : 2 + (idx % 2)
     : 2 + (idx % 2);
+  const outCount = Math.max(
+    2,
+    Math.min(5, baseOutCount + (prefs?.pointCountAdjust ?? 0)),
+  );
   const returnCount = avoidAsphalt ? 1 + (idx % 2) : 1 + (idx % 2);
   const outShare = avoidAsphalt
     ? 0.46 + (idx % 3) * 0.022
     : 0.42 + (idx % 3) * 0.04;
-  const lateralShare = avoidAsphalt
+  const baseLateral = avoidAsphalt
     ? 0.032 + (idx % 3) * 0.006
     : 0.07 + (idx % 4) * 0.015;
+  const lateralShare = Math.max(
+    0.018,
+    baseLateral + (prefs?.lateralShareExtra ?? 0),
+  );
 
-  const roadDetourFactor = avoidAsphalt
+  const baseDetour = avoidAsphalt
     ? 1.58 + Math.min(0.62, distanceKm / 75)
     : 1.38;
+  const roadDetourFactor =
+    baseDetour * (prefs?.detourMultiplier ?? 1);
   const pathFactor = longitudinalPathFactor(
     outCount,
     returnCount,
@@ -380,8 +414,9 @@ export function buildLoopWaypoints(
   avoidAsphalt = false,
   jitter?: GenerationJitter,
   extras?: LoopWaypointExtras,
+  profilePrefs?: RideProfileLoopPrefs,
 ): LatLng[] {
-  const resolved = shape ?? loopShapeForVariant(distanceKm, variant);
+  const resolved = shape ?? loopShapeForVariant(distanceKm, variant, profilePrefs);
   const waypoints =
     resolved === "arc"
       ? buildArcLoopWaypoints(
@@ -392,6 +427,7 @@ export function buildLoopWaypoints(
           scaleMultiplier,
           avoidAsphalt,
           jitter,
+          profilePrefs,
         )
       : buildLongitudinalLoopWaypoints(
           start,
@@ -401,6 +437,7 @@ export function buildLoopWaypoints(
           scaleMultiplier,
           avoidAsphalt,
           jitter,
+          profilePrefs,
         );
 
   if (extras?.homeStart) {
@@ -426,8 +463,10 @@ export function scoreLoopQualityWithShape(
   options?: {
     avoidAsphalt?: boolean;
     pavedShare?: number;
+    offroadShare?: number;
     approachOverlap?: number;
     viaPointsMode?: boolean;
+    profilePrefs?: RideProfileLoopPrefs;
   },
 ): number {
   const base = scoreLoopQuality(
@@ -456,6 +495,14 @@ export function scoreLoopQualityWithShape(
     metrics.directionCoverage >= 0.45;
 
   let score = base;
+
+  if (options?.profilePrefs && options.profilePrefs.surfaceMismatchWeight > 0) {
+    score += profileSurfaceMismatch(
+      pavedShare,
+      options.offroadShare ?? 0,
+      options.profilePrefs,
+    );
+  }
 
   if (options?.avoidAsphalt) {
     score += pavedShare * 16;

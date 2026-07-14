@@ -1,4 +1,5 @@
-import type { BikeType, OsmTags } from "@loopforge/osm-types";
+import type { BikeType, OsmTags, RideProfile } from "@loopforge/osm-types";
+import { getScoringWeights } from "./profile-weights";
 
 type WeightTable = Record<string, number>;
 
@@ -48,6 +49,10 @@ const PROFILES: Record<BikeType, WeightTable> = {
   general: GENERAL_WEIGHTS,
 };
 
+function resolveWeights(bikeType: BikeType, profile?: RideProfile): WeightTable {
+  return getScoringWeights(bikeType, profile) ?? PROFILES[bikeType];
+}
+
 function tagKey(tags: OsmTags): string[] {
   const keys: string[] = [];
   if (tags.highway) keys.push(`highway=${tags.highway}`);
@@ -55,8 +60,12 @@ function tagKey(tags: OsmTags): string[] {
   return keys;
 }
 
-export function scoreSegment(tags: OsmTags, bikeType: BikeType): number {
-  const weights = PROFILES[bikeType];
+export function scoreSegment(
+  tags: OsmTags,
+  bikeType: BikeType,
+  profile?: RideProfile,
+): number {
+  const weights = resolveWeights(bikeType, profile);
   const keys = tagKey(tags);
   let best = 0.3;
 
@@ -72,6 +81,7 @@ export function scoreSegment(tags: OsmTags, bikeType: BikeType): number {
 export function scoreRoute(
   segments: { tags: OsmTags; distanceM: number }[],
   bikeType: BikeType,
+  profile?: RideProfile,
 ): number {
   if (segments.length === 0) return 0;
 
@@ -79,13 +89,16 @@ export function scoreRoute(
   let total = 0;
 
   for (const segment of segments) {
-    weighted += scoreSegment(segment.tags, bikeType) * segment.distanceM;
+    weighted += scoreSegment(segment.tags, bikeType, profile) * segment.distanceM;
     total += segment.distanceM;
   }
 
   return total > 0 ? weighted / total : 0;
 }
 
-export function getWeights(bikeType: BikeType): WeightTable {
-  return { ...PROFILES[bikeType] };
+export function getWeights(
+  bikeType: BikeType,
+  profile?: RideProfile,
+): WeightTable {
+  return { ...resolveWeights(bikeType, profile) };
 }

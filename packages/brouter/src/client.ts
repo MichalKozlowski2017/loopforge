@@ -100,9 +100,11 @@ function brouterProfileOverrides(
       overrides.prefer_forests = "1";
       overrides.avoid_towns = "1";
       overrides.prefer_rivers = "1";
+      overrides.consider_elevation = "1";
     } else if (rideProfile === "fast") {
       overrides.prefer_unpaved_paths = "0";
       overrides.prefer_cycle_routes = "1";
+      overrides.avoid_steep_inclines = "1";
     } else {
       overrides.prefer_unpaved_paths = "1";
       overrides.prefer_cycle_routes = "1";
@@ -112,10 +114,13 @@ function brouterProfileOverrides(
   if (bikeType === "mtb") {
     const customMtb = (profileName ?? MTB_CUSTOM_PROFILE) === MTB_CUSTOM_PROFILE;
     if (rideProfile === "technical") {
-      overrides.path_preference = "28";
+      overrides.path_preference = "32";
     } else if (rideProfile === "fast") {
-      overrides.path_preference = "12";
-      overrides.smallpaved_factor = "-0.5";
+      overrides.path_preference = "10";
+      overrides.smallpaved_factor = "-0.8";
+    } else if (rideProfile === "flow") {
+      overrides.path_preference = "22";
+      overrides.smallpaved_factor = "-1.2";
     }
 
     if (avoidAsphalt) {
