@@ -283,8 +283,7 @@ export default function HomePage() {
 
       <aside className="order-2 w-full border-b border-zinc-800 p-4 lg:order-1 lg:w-96 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-6">
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Kuźnia pętli</h1>
-          <p className="mt-2 text-sm text-zinc-400">
+          <p className="text-sm text-zinc-400">
             Ustaw punkt startu (GPS, wyszukiwarka lub mapa), wybierz dystans i
             kierunek — reszta dzieje się automatycznie.
           </p>
