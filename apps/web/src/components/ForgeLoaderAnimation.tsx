@@ -1,7 +1,193 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+
 interface ForgeLoaderAnimationProps {
   seconds: number;
+  /**
+   * Real generation progress, 0–100. Drives what's forming on the anvil —
+   * the metal visibly becomes the route as the backend actually works,
+   * instead of looping through a fixed-time animation. Generation can take
+   * anywhere from ~20s to ~70s, so the shape crawls slowly and only ever
+   * advances as far as real progress allows.
+   */
+  progressPercent?: number;
+}
+
+type Point = readonly [number, number];
+
+/**
+ * Four loop outlines sharing the same 20-point layout, so any pair can be
+ * linearly interpolated point-by-point and still resolve into a clean
+ * closed spline. The metal starts as an undecided flat ingot, rounds into
+ * a draft loop once a shape is chosen, settles into a simple route once
+ * BRouter has something, then visibly gains extra bends and kinks as the
+ * route is scored and refined into its final, more detailed shape.
+ */
+const INGOT_POINTS: Point[] = [
+  [135, 123],
+  [133.29, 123.49],
+  [128.32, 123.94],
+  [120.57, 124.29],
+  [110.82, 124.52],
+  [100, 124.6],
+  [89.18, 124.52],
+  [79.43, 124.29],
+  [71.68, 123.94],
+  [66.71, 123.49],
+  [65, 123],
+  [66.71, 122.51],
+  [71.68, 122.06],
+  [79.43, 121.71],
+  [89.18, 121.48],
+  [100, 121.4],
+  [110.82, 121.48],
+  [120.57, 121.71],
+  [128.32, 122.06],
+  [133.29, 122.51],
+];
+
+const DRAFT_POINTS: Point[] = [
+  [135, 123],
+  [133.29, 126.09],
+  [128.32, 128.88],
+  [120.57, 131.09],
+  [110.82, 132.51],
+  [100, 133],
+  [89.18, 132.51],
+  [79.43, 131.09],
+  [71.68, 128.88],
+  [66.71, 126.09],
+  [65, 123],
+  [66.71, 119.91],
+  [71.68, 117.12],
+  [79.43, 114.91],
+  [89.18, 113.49],
+  [100, 113],
+  [110.82, 113.49],
+  [120.57, 114.91],
+  [128.32, 117.12],
+  [133.29, 119.91],
+];
+
+const ROUTE_POINTS: Point[] = [
+  [136.12, 123],
+  [136.77, 126.69],
+  [131.88, 130.14],
+  [122.24, 132.15],
+  [110.44, 131.04],
+  [100, 128.6],
+  [91.38, 129.31],
+  [83.36, 129.77],
+  [75.83, 128.41],
+  [68.84, 126.13],
+  [63.88, 123],
+  [63.23, 119.31],
+  [68.11, 115.84],
+  [77.6, 113.48],
+  [89.11, 112.65],
+  [100, 113.15],
+  [109.07, 114.38],
+  [116.8, 115.86],
+  [124.18, 117.57],
+  [131.16, 119.87],
+];
+
+const DETAILED_ROUTE_POINTS: Point[] = [
+  [137.28, 123],
+  [139.12, 129],
+  [132.97, 137.32],
+  [121.72, 143.69],
+  [107.41, 138.66],
+  [100, 136.07],
+  [89.72, 145.38],
+  [81.82, 140.29],
+  [71.3, 135.46],
+  [72.91, 127.16],
+  [72.59, 123],
+  [66.1, 119.33],
+  [66.26, 114.83],
+  [77.6, 112.72],
+  [88.63, 111.33],
+  [100, 112.56],
+  [107.6, 115.2],
+  [118.57, 114.48],
+  [120.08, 118.14],
+  [128.32, 119.93],
+];
+
+/** Progress percentages at which the metal fully reaches each shape. */
+const SHAPE_KEYFRAMES: { at: number; points: Point[] }[] = [
+  { at: 0, points: INGOT_POINTS },
+  { at: 22, points: DRAFT_POINTS },
+  { at: 55, points: ROUTE_POINTS },
+  { at: 92, points: DETAILED_ROUTE_POINTS },
+];
+
+function lerpPoints(a: Point[], b: Point[], t: number): Point[] {
+  return a.map(([ax, ay], i) => {
+    const [bx, by] = b[i];
+    return [ax + (bx - ax) * t, ay + (by - ay) * t] as Point;
+  });
+}
+
+/** Points forged so far at a given progress percentage (0–100). */
+function pointsAtProgress(progress: number): Point[] {
+  const p = Math.max(0, Math.min(100, progress));
+  if (p <= SHAPE_KEYFRAMES[0].at) return SHAPE_KEYFRAMES[0].points;
+  for (let i = 0; i < SHAPE_KEYFRAMES.length - 1; i++) {
+    const a = SHAPE_KEYFRAMES[i];
+    const b = SHAPE_KEYFRAMES[i + 1];
+    if (p <= b.at) {
+      const t = (p - a.at) / (b.at - a.at);
+      return lerpPoints(a.points, b.points, t);
+    }
+  }
+  return SHAPE_KEYFRAMES[SHAPE_KEYFRAMES.length - 1].points;
+}
+
+/** Closed Catmull-Rom spline through the points, as an SVG path `d` string. */
+function buildLoopPath(points: Point[]): string {
+  const n = points.length;
+  const fmt = (v: number) => v.toFixed(2);
+  let d = `M ${fmt(points[0][0])} ${fmt(points[0][1])} `;
+  for (let i = 0; i < n; i++) {
+    const [x0, y0] = points[(i - 1 + n) % n];
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[(i + 1) % n];
+    const [x3, y3] = points[(i + 2) % n];
+    const cp1x = x1 + (x2 - x0) / 6;
+    const cp1y = y1 + (y2 - y0) / 6;
+    const cp2x = x2 - (x3 - x1) / 6;
+    const cp2y = y2 - (y3 - y1) / 6;
+    d += `C ${fmt(cp1x)} ${fmt(cp1y)} ${fmt(cp2x)} ${fmt(cp2y)} ${fmt(x2)} ${fmt(y2)} `;
+  }
+  return d + "Z";
+}
+
+/**
+ * Smoothly chases a target percentage instead of jumping straight to it, so
+ * the anvil shape crawls forward continuously even between sparse progress
+ * updates from the server — but never advances past what's actually done.
+ */
+function useSmoothedProgress(target: number): number {
+  const [displayed, setDisplayed] = useState(0);
+  const targetRef = useRef(target);
+  targetRef.current = target;
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setDisplayed((prev) => {
+        const diff = targetRef.current - prev;
+        if (Math.abs(diff) < 0.05) return targetRef.current;
+        const step = Math.sign(diff) * Math.min(Math.abs(diff), Math.abs(diff) * 0.1 + 0.12);
+        return prev + step;
+      });
+    }, 150);
+    return () => clearInterval(id);
+  }, []);
+
+  return displayed;
 }
 
 /**
@@ -53,7 +239,13 @@ function SparkBurst({ delaySeconds = 0 }: SparkBurstProps) {
 }
 
 /** Animated anvil + twin alternating hammers for the generation overlay. */
-export function ForgeLoaderAnimation({ seconds }: ForgeLoaderAnimationProps) {
+export function ForgeLoaderAnimation({
+  seconds,
+  progressPercent = 0,
+}: ForgeLoaderAnimationProps) {
+  const smoothed = useSmoothedProgress(progressPercent);
+  const shapeD = `path("${buildLoopPath(pointsAtProgress(smoothed))}")`;
+
   return (
     <div className="relative h-36 w-36 sm:h-44 sm:w-44">
       <div className="absolute inset-0 rounded-full bg-amber-500/15 blur-2xl loopforge-forge-glow" />
@@ -82,7 +274,9 @@ export function ForgeLoaderAnimation({ seconds }: ForgeLoaderAnimationProps) {
           </radialGradient>
         </defs>
 
-        {/* Anvil + hot metal (jolts on every hit) */}
+        {/* Anvil + hot metal loop — a glowing shape being hammered from a
+            raw ingot into the actual route, echoing real generation
+            progress instead of a fixed-time animation. */}
         <g className="loopforge-anvil">
           <path
             d="M 52 138 L 148 138 L 132 158 L 68 158 Z"
@@ -90,22 +284,28 @@ export function ForgeLoaderAnimation({ seconds }: ForgeLoaderAnimationProps) {
           />
           <path d="M 68 138 L 132 138 L 124 128 L 76 128 Z" fill="#52525b" />
           <rect x="76" y="127.4" width="48" height="1.6" fill="#71717a" />
-          <rect
-            x="78"
-            y="118"
-            width="44"
-            height="10"
-            rx="2"
-            fill="url(#forgeMetal)"
-            className="loopforge-hot-metal"
+          <path
+            fill="none"
+            stroke="url(#forgeMetal)"
+            strokeWidth="9"
+            className="loopforge-hot-metal loopforge-metal-shape"
+            style={{ d: shapeD }}
+          />
+          <path
+            fill="none"
+            stroke="#fef3c7"
+            strokeWidth="1.4"
+            opacity="0.35"
+            className="loopforge-hot-metal loopforge-metal-shape"
+            style={{ d: shapeD }}
           />
         </g>
 
-        {/* Left hammer — strikes at (89, 118) */}
+        {/* Left hammer — strikes the ring's near-left arc */}
         <g className="loopforge-hammer">
           <HammerShape />
         </g>
-        {/* Right hammer — mirrored, strikes at (111, 118) half a cycle later */}
+        {/* Right hammer — mirrored, strikes the ring's near-right arc half a cycle later */}
         <g transform="translate(200 0) scale(-1 1)">
           <g className="loopforge-hammer" style={{ animationDelay: "-0.75s" }}>
             <HammerShape />
@@ -113,10 +313,10 @@ export function ForgeLoaderAnimation({ seconds }: ForgeLoaderAnimationProps) {
         </g>
 
         {/* Impact flashes */}
-        <g transform="translate(89 116)">
+        <g transform="translate(88 115)">
           <circle r="12" fill="url(#forgeFlash)" className="loopforge-impact-flash" />
         </g>
-        <g transform="translate(111 116)">
+        <g transform="translate(112 115)">
           <circle
             r="12"
             fill="url(#forgeFlash)"
@@ -126,10 +326,10 @@ export function ForgeLoaderAnimation({ seconds }: ForgeLoaderAnimationProps) {
         </g>
 
         {/* Spark bursts synced to each hit */}
-        <g transform="translate(89 116)">
+        <g transform="translate(88 115)">
           <SparkBurst />
         </g>
-        <g transform="translate(111 116) scale(-1 1)">
+        <g transform="translate(112 115) scale(-1 1)">
           <SparkBurst delaySeconds={-0.75} />
         </g>
       </svg>

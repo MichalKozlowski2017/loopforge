@@ -237,6 +237,15 @@ body {
   animation: loopforge-hot-metal 1.5s ease-in-out infinite;
 }
 
+/*
+ * The metal shape is recomputed ~7x/s as a point-interpolated spline
+ * (see ForgeLoaderAnimation's progress-driven crawl), so this only needs to
+ * smooth over each small step rather than a full shape swap.
+ */
+.loopforge-metal-shape {
+  transition: d 220ms linear;
+}
+
 .loopforge-hammer {
   animation: loopforge-hammer 1.5s linear infinite;
   transform-origin: 24px 98px;

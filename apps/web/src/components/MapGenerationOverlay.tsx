@@ -11,18 +11,18 @@ interface MapGenerationOverlayProps {
 
 const APPROACH_STEP = {
   phase: "approach" as const,
-  title: "Kucie dojazdu",
+  title: "Prolog przed pętlą",
 };
 
 function buildPhaseSteps(showApproach: boolean) {
   const steps = [
-    { phase: "planning" as const, title: "Szkic na kowadle" },
+    { phase: "planning" as const, title: "Szkic obwodu" },
     ...(showApproach ? [APPROACH_STEP] : []),
-    { phase: "variants" as const, title: "Hartowanie wariantów" },
-    { phase: "routing" as const, title: "Wytapianie trasy" },
-    { phase: "scoring" as const, title: "Próba ogniowa" },
-    { phase: "refining" as const, title: "Kucie na miarę" },
-    { phase: "finalizing" as const, title: "Polerowanie i GPX" },
+    { phase: "variants" as const, title: "Kucie wariantów" },
+    { phase: "routing" as const, title: "Wykuwanie nitki" },
+    { phase: "scoring" as const, title: "Test na obwodzie" },
+    { phase: "refining" as const, title: "Docinanie kilometrów" },
+    { phase: "finalizing" as const, title: "Satyna i GPX" },
   ];
   return steps;
 }
@@ -40,7 +40,7 @@ export function MapGenerationOverlay({
   const barPercent = progress?.progress ?? 4;
   const subtitle =
     progress?.detail ??
-    (progress ? "" : "Rozpalamy kuźnię — zaraz zaczniemy kuć trasę…");
+    (progress ? "" : "Rozpalamy kuźnię — zaraz zaczniemy kuć obwód…");
   const showSlowHint =
     seconds >= 15 || (progress?.phase === "routing" && progress.progress > 30);
 
@@ -52,7 +52,10 @@ export function MapGenerationOverlay({
       aria-busy="true"
     >
       <div className="flex w-full max-w-md flex-col items-center gap-6 py-4 sm:gap-8 sm:py-0">
-        <ForgeLoaderAnimation seconds={seconds} />
+        <ForgeLoaderAnimation
+          seconds={seconds}
+          progressPercent={progress?.progress ?? 0}
+        />
 
         <div className="w-full space-y-4">
           <div className="min-h-[4.75rem] space-y-1 text-center">
