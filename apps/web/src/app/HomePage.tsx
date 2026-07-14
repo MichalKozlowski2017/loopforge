@@ -324,7 +324,7 @@ export default function HomePage() {
         {route?.mapGeojson && !mapVeiled ? <SurfaceLegend /> : null}
       </section>
 
-      <aside className="order-2 w-full border-b border-zinc-800 p-4 lg:order-1 lg:h-full lg:min-h-0 lg:w-96 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-6">
+      <aside className="scrollbar-hidden order-2 w-full border-b border-zinc-800 p-4 lg:order-1 lg:h-full lg:min-h-0 lg:w-96 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-6">
         <div className="mb-6">
           <p className="text-sm text-zinc-400">
             Ustaw punkt startu (GPS, wyszukiwarka lub mapa), wybierz dystans i

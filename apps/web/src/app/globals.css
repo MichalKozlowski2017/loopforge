@@ -19,6 +19,16 @@ body {
   font-family: var(--font-sans), system-ui, sans-serif;
 }
 
+/* Scrollable regions without a visible scrollbar (Windows always shows auto scrollbars). */
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
 .maplibregl-ctrl-attrib {
   font-size: 10px;
 }
