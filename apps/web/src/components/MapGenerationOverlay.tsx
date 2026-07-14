@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import type { RouteGenerationProgress } from "@loopforge/osm-types";
 import { ForgeLoaderAnimation } from "@/components/ForgeLoaderAnimation";
 
@@ -7,6 +8,8 @@ interface MapGenerationOverlayProps {
   seconds: number;
   progress: RouteGenerationProgress | null;
   showApproach?: boolean;
+  exiting?: boolean;
+  onExitComplete?: () => void;
 }
 
 const APPROACH_STEP = {
@@ -31,7 +34,10 @@ export function MapGenerationOverlay({
   seconds,
   progress,
   showApproach = false,
+  exiting = false,
+  onExitComplete,
 }: MapGenerationOverlayProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
   const phaseSteps = buildPhaseSteps(showApproach);
   const activeIndex = progress
     ? phaseSteps.findIndex((step) => step.phase === progress.phase)
@@ -44,20 +50,58 @@ export function MapGenerationOverlay({
   const showSlowHint =
     seconds >= 15 || (progress?.phase === "routing" && progress.progress > 30);
 
+  useEffect(() => {
+    if (!exiting) return;
+    const panel = panelRef.current;
+
+    const finish = () => onExitComplete?.();
+
+    const timeoutId = window.setTimeout(finish, 760);
+
+    if (!panel) {
+      return () => window.clearTimeout(timeoutId);
+    }
+
+    const handleEnd = (event: AnimationEvent) => {
+      if (event.target !== panel) return;
+      window.clearTimeout(timeoutId);
+      finish();
+    };
+
+    panel.addEventListener("animationend", handleEnd);
+    return () => {
+      window.clearTimeout(timeoutId);
+      panel.removeEventListener("animationend", handleEnd);
+    };
+  }, [exiting, onExitComplete]);
+
   return (
     <div
-      className="fixed inset-0 z-60 flex items-center justify-center overflow-y-auto bg-zinc-950/85 p-4 backdrop-blur-md sm:p-6"
+      className={`fixed inset-0 z-60 flex items-center justify-center overflow-y-auto bg-zinc-950/85 p-4 sm:p-6 ${
+        exiting
+          ? "loopforge-overlay-backdrop-exit"
+          : "loopforge-overlay-backdrop"
+      }`}
       role="status"
       aria-live="polite"
-      aria-busy="true"
+      aria-busy={!exiting}
     >
-      <div className="flex w-full max-w-md flex-col items-center gap-6 py-4 sm:gap-8 sm:py-0">
-        <ForgeLoaderAnimation
-          seconds={seconds}
-          progressPercent={progress?.progress ?? 0}
-        />
+      <div
+        ref={panelRef}
+        className={`flex w-full max-w-md flex-col items-center gap-6 py-4 sm:gap-8 sm:py-0 ${
+          exiting
+            ? "loopforge-overlay-panel-exit"
+            : "loopforge-overlay-panel"
+        }`}
+      >
+        <div className="loopforge-overlay-item loopforge-overlay-item-1">
+          <ForgeLoaderAnimation
+            seconds={seconds}
+            progressPercent={progress?.progress ?? 0}
+          />
+        </div>
 
-        <div className="w-full space-y-4">
+        <div className="loopforge-overlay-item loopforge-overlay-item-2 w-full space-y-4">
           <div className="min-h-[4.75rem] space-y-1 text-center">
             <p className="line-clamp-2 text-lg font-medium leading-snug text-zinc-100">
               {progress?.message ?? "Kuźnia pracuje…"}

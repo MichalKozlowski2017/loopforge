@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import type { StyleSpecification } from "maplibre-gl";
 import type { RouteFeature, RouteMapGeoJson } from "@loopforge/osm-types";
 import { loadMapStyle } from "@/lib/map-style";
+import { flattenLoopDrawPath } from "@/lib/route-draw-path";
+import { RouteDrawReveal } from "@/components/RouteDrawReveal";
 
 export interface StartPoint {
   lat: number;
@@ -24,6 +26,11 @@ interface MapViewProps {
   mapGeojson?: RouteMapGeoJson | null;
   pickStart?: boolean;
   onStartChange?: (start: StartPoint) => void;
+  /** Hide the map under a dark veil and suppress route layers (during loading/reveal). */
+  mapVeiled?: boolean;
+  /** When true, the route is drawn over a dark mask before the map is unveiled. */
+  routeRevealActive?: boolean;
+  onRouteRevealComplete?: () => void;
 }
 
 const ROUTE_SOURCE = "route";
@@ -68,17 +75,44 @@ function normalizeMapGeojson(mapGeojson: RouteMapGeoJson): RouteMapGeoJson {
   };
 }
 
-function fitToCoordinates(
-  map: maplibregl.Map,
-  coords: [number, number][],
-): void {
+function viewportFitCoords(
+  route: RouteFeature | null,
+  mapGeojson: RouteMapGeoJson | null,
+  loopEntry: StartPoint | null,
+): [number, number][] {
+  return flattenLoopDrawPath(route, mapGeojson, loopEntry);
+}
+
+function fitRouteToView(map: maplibregl.Map, coords: [number, number][]): void {
   const valid = normalizeCoords(coords);
   if (valid.length === 0) return;
+
   const bounds = valid.reduce(
     (b, coord) => b.extend(coord),
     new maplibregl.LngLatBounds(valid[0], valid[0]),
   );
-  map.fitBounds(bounds, { padding: 48, maxZoom: 13 });
+
+  map.fitBounds(bounds, {
+    padding: { top: 24, bottom: 24, left: 24, right: 24 },
+    maxZoom: 15,
+    duration: 0,
+  });
+}
+
+function waitForMapSettled(map: maplibregl.Map): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      map.off("idle", finish);
+      window.clearTimeout(fallbackId);
+      resolve();
+    };
+
+    map.once("idle", finish);
+    const fallbackId = window.setTimeout(finish, 180);
+  });
 }
 
 export function MapView({
@@ -90,6 +124,9 @@ export function MapView({
   mapGeojson,
   pickStart = false,
   onStartChange,
+  mapVeiled = false,
+  routeRevealActive = false,
+  onRouteRevealComplete,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -103,13 +140,31 @@ export function MapView({
     leave?: () => void;
     move?: (event: maplibregl.MapLayerMouseEvent) => void;
   }>({});
-  const routeDataRef = useRef({ route, mapGeojson, pickStart });
+  const routeDataRef = useRef({
+    route,
+    mapGeojson,
+    loopEntry: loopEntry ?? null,
+    pickStart,
+    showRouteLayers: true,
+    mapVeiled: false,
+  });
+  const [showRouteLayers, setShowRouteLayers] = useState(true);
+  const [drawRevealActive, setDrawRevealActive] = useState(false);
+  const routeLayersRevealedRef = useRef(false);
+  const wasVeiledRef = useRef(false);
 
   const [mapReady, setMapReady] = useState(false);
   const [mapStyle, setMapStyle] = useState<StyleSpecification | null>(null);
 
   onStartChangeRef.current = onStartChange;
-  routeDataRef.current = { route, mapGeojson, pickStart };
+  routeDataRef.current = {
+    route,
+    mapGeojson,
+    loopEntry: loopEntry ?? null,
+    pickStart,
+    showRouteLayers,
+    mapVeiled,
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -143,14 +198,36 @@ export function MapView({
     const {
       route: routeData,
       mapGeojson: segmentData,
+      loopEntry: entryPoint,
       pickStart: picking,
+      showRouteLayers: layersRequested,
+      mapVeiled: veiled,
     } = routeDataRef.current;
+
+    const layersVisible =
+      layersRequested && (!veiled || routeLayersRevealedRef.current);
 
     clearRouteLayers(map);
 
     const normalizedRoute = routeData ? normalizeRoute(routeData) : null;
     const normalizedSegments =
       segmentData?.features.length ? normalizeMapGeojson(segmentData) : null;
+
+    const fitCoords = viewportFitCoords(
+      routeData ?? null,
+      segmentData ?? null,
+      entryPoint,
+    );
+
+    if (fitCoords.length >= 2) {
+      fitRouteToView(map, fitCoords);
+    }
+
+    if (!layersVisible) {
+      map.resize();
+      map.triggerRepaint();
+      return true;
+    }
 
     if (
       !normalizedRoute?.geometry.coordinates.length &&
@@ -169,6 +246,10 @@ export function MapView({
         id: ROUTE_LAYER,
         type: "line",
         source: ROUTE_SOURCE,
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+        },
         paint: {
           "line-color": "#0f766e",
           "line-width": 6,
@@ -187,6 +268,10 @@ export function MapView({
         id: SEGMENTS_LAYER,
         type: "line",
         source: SEGMENTS_SOURCE,
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+        },
         paint: {
           "line-color": ["get", "color"],
           "line-width": 5,
@@ -226,14 +311,6 @@ export function MapView({
       };
     }
 
-    const allCoords =
-      normalizedRoute?.geometry.coordinates ??
-      normalizedSegments?.features.flatMap(
-        (feature) => feature.geometry.coordinates,
-      ) ??
-      [];
-
-    fitToCoordinates(map, allCoords);
     map.resize();
     map.triggerRepaint();
     return true;
@@ -272,8 +349,18 @@ export function MapView({
     });
 
     const onLoad = () => {
+      const container = map.getContainer();
+      container.style.width = "100%";
+      container.style.height = "100%";
+      const canvas = map.getCanvas();
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+
       setMapReady(true);
-      scheduleRouteSync();
+      requestAnimationFrame(() => {
+        map.resize();
+        scheduleRouteSync();
+      });
     };
 
     map.on("load", onLoad);
@@ -301,7 +388,102 @@ export function MapView({
   useEffect(() => {
     if (!mapReady) return;
     scheduleRouteSync();
-  }, [mapReady, route, mapGeojson, scheduleRouteSync]);
+  }, [mapReady, route, mapGeojson, showRouteLayers, mapVeiled, scheduleRouteSync]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const map = mapRef.current;
+    if (!container || !map || !mapReady) return;
+
+    const observer = new ResizeObserver(() => {
+      map.resize();
+      const coords = viewportFitCoords(
+        routeDataRef.current.route ?? null,
+        routeDataRef.current.mapGeojson ?? null,
+        routeDataRef.current.loopEntry,
+      );
+      if (coords.length >= 2) {
+        fitRouteToView(map, coords);
+      }
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [mapReady, route, mapGeojson, loopEntry]);
+
+  const drawPath = useMemo(
+    () => flattenLoopDrawPath(route ?? null, mapGeojson ?? null, loopEntry),
+    [route, mapGeojson, loopEntry],
+  );
+
+  const handleDrawingComplete = useCallback(() => {
+    routeLayersRevealedRef.current = true;
+    routeDataRef.current.showRouteLayers = true;
+    setShowRouteLayers(true);
+    scheduleRouteSync();
+  }, [scheduleRouteSync]);
+
+  const handleRevealComplete = useCallback(() => {
+    setDrawRevealActive(false);
+    onRouteRevealComplete?.();
+  }, [onRouteRevealComplete]);
+
+  useEffect(() => {
+    if (mapVeiled && !wasVeiledRef.current) {
+      routeLayersRevealedRef.current = false;
+    }
+    wasVeiledRef.current = mapVeiled;
+
+    if (!mapVeiled) {
+      if (!routeRevealActive) {
+        routeDataRef.current.showRouteLayers = true;
+        setShowRouteLayers(true);
+      }
+      return;
+    }
+
+    if (!routeLayersRevealedRef.current) {
+      routeDataRef.current.showRouteLayers = false;
+      setShowRouteLayers(false);
+      if (mapReady) scheduleRouteSync();
+    }
+  }, [mapVeiled, mapReady, routeRevealActive, scheduleRouteSync]);
+
+  useEffect(() => {
+    if (!routeRevealActive) {
+      setDrawRevealActive(false);
+      return;
+    }
+
+    if (!mapReady || !route || drawPath.length < 2) return;
+
+    routeDataRef.current.showRouteLayers = false;
+    setShowRouteLayers(false);
+    scheduleRouteSync();
+
+    const map = mapRef.current;
+    if (!map) return;
+
+    let cancelled = false;
+
+    const begin = async () => {
+      fitRouteToView(map, drawPath);
+      await waitForMapSettled(map);
+      if (!cancelled) setDrawRevealActive(true);
+    };
+
+    void begin();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    routeRevealActive,
+    mapReady,
+    route,
+    drawPath,
+    scheduleRouteSync,
+  ]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -407,8 +589,26 @@ export function MapView({
   }, [start.lng, start.lat, route, mapGeojson, mapReady]);
 
   return (
-    <div className="relative h-full w-full">
-      <div ref={containerRef} className="h-full w-full rounded-xl" />
+    <div className="relative h-full min-h-[240px] w-full">
+      <div
+        ref={containerRef}
+        className="absolute inset-0 rounded-xl [&_.maplibregl-canvas]:!h-full [&_.maplibregl-canvas]:!w-full [&_.maplibregl-map]:!h-full [&_.maplibregl-map]:!w-full"
+      />
+      {mapVeiled && !drawRevealActive ? (
+        <div
+          className="pointer-events-none absolute inset-0 z-10 rounded-xl bg-zinc-950"
+          aria-hidden
+        />
+      ) : null}
+      {mapReady && mapRef.current && drawRevealActive ? (
+        <RouteDrawReveal
+          map={mapRef.current}
+          coordinates={drawPath}
+          active={drawRevealActive}
+          onDrawingComplete={handleDrawingComplete}
+          onComplete={handleRevealComplete}
+        />
+      ) : null}
       {pickStart ? (
         <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-emerald-500/50 bg-zinc-950/90 px-4 py-1.5 text-xs text-emerald-300 shadow-lg">
           Kliknij mapę, aby ustawić punkt startu

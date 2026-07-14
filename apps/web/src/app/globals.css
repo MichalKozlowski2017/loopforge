@@ -297,3 +297,148 @@ body {
 .loopforge-step-pulse {
   animation: loopforge-step-pulse 1.6s ease-in-out infinite;
 }
+
+/* Generation overlay — smooth enter / exit over the map. */
+@keyframes loopforge-overlay-backdrop-in {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(12px);
+  }
+}
+
+@keyframes loopforge-overlay-backdrop-out {
+  from {
+    opacity: 1;
+    backdrop-filter: blur(12px);
+  }
+  to {
+    opacity: 0;
+    backdrop-filter: blur(0);
+  }
+}
+
+@keyframes loopforge-overlay-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.94);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes loopforge-overlay-panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.97);
+    filter: blur(4px);
+  }
+}
+
+@keyframes loopforge-overlay-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes loopforge-map-reveal-glow {
+  0% {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  35% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.02);
+  }
+}
+
+.loopforge-overlay-backdrop {
+  animation: loopforge-overlay-backdrop-in 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.loopforge-overlay-backdrop-exit {
+  animation: loopforge-overlay-backdrop-out 680ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.loopforge-overlay-panel {
+  animation: loopforge-overlay-panel-in 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.loopforge-overlay-panel-exit {
+  animation: loopforge-overlay-panel-out 680ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.loopforge-overlay-item {
+  animation: loopforge-overlay-item-in 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.loopforge-overlay-item-1 {
+  animation-delay: 80ms;
+}
+
+.loopforge-overlay-item-2 {
+  animation-delay: 160ms;
+}
+
+.loopforge-overlay-item-3 {
+  animation-delay: 240ms;
+}
+
+.loopforge-map-reveal-glow {
+  animation: loopforge-map-reveal-glow 1.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  pointer-events: none;
+}
+
+.route-draw-spark {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.route-draw-spark-a {
+  animation: loopforge-spark-a 1.2s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
+}
+
+.route-draw-spark-b {
+  animation: loopforge-spark-b 1.2s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
+}
+
+.route-draw-spark-c {
+  animation: loopforge-spark-c 1.2s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
+}
+
+.route-draw-spark-d {
+  animation: loopforge-spark-d 1.2s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
+}
+
+/* Must come after maplibre-gl.css import — MapLibre needs explicit dimensions. */
+.maplibregl-map {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.maplibregl-canvas {
+  width: 100% !important;
+  height: 100% !important;
+}

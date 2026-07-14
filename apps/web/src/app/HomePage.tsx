@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   RouteGenerationProgress,
   StoredRoute,
@@ -67,12 +67,15 @@ export default function HomePage() {
   const [form, setForm] = useState<RouteFormValues>(DEFAULT_FORM);
   const [route, setRoute] = useState<StoredRoute | null>(null);
   const [loading, setLoading] = useState(false);
+  const [overlayExiting, setOverlayExiting] = useState(false);
+  const [routeRevealActive, setRouteRevealActive] = useState(false);
   const [loadingSeconds, setLoadingSeconds] = useState(0);
   const [generationProgress, setGenerationProgress] =
     useState<RouteGenerationProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [pickOnMap, setPickOnMap] = useState(false);
+  const mapSectionRef = useRef<HTMLElement>(null);
   const [locationMode, setLocationMode] = useState<
     "loading" | "ready" | "denied" | "unavailable" | "manual"
   >("loading");
@@ -143,20 +146,50 @@ export default function HomePage() {
   }
 
   useEffect(() => {
-    if (!loading) return;
+    const lockScroll = loading || overlayExiting || routeRevealActive;
+    if (!lockScroll) return;
+
+    const isMobile = window.matchMedia("(max-width: 1023px)").matches;
+    // On mobile keep the page scrollable during the route-draw reveal so we
+    // can snap to the map; lock only while the full-screen loader is up.
+    if (isMobile && routeRevealActive && !loading && !overlayExiting) return;
+
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [loading]);
+  }, [loading, overlayExiting, routeRevealActive]);
+
+  useEffect(() => {
+    if (!routeRevealActive) return;
+
+    const isMobile = window.matchMedia("(max-width: 1023px)").matches;
+    if (!isMobile) return;
+
+    window.scrollTo({ top: 0, behavior: "auto" });
+    mapSectionRef.current?.scrollIntoView({ behavior: "auto", block: "start" });
+  }, [routeRevealActive]);
+
+  const handleOverlayExitComplete = useCallback(() => {
+    setLoading(false);
+    setOverlayExiting(false);
+    setRouteRevealActive(true);
+  }, []);
+
+  const handleRouteRevealComplete = useCallback(() => {
+    setRouteRevealActive(false);
+  }, []);
 
   async function handleGenerate() {
     setLoading(true);
+    setOverlayExiting(false);
+    setRouteRevealActive(false);
     setLoadingSeconds(0);
     setGenerationProgress(null);
     setError(null);
     setPickOnMap(false);
+    setRoute(null);
 
     const tick = window.setInterval(() => {
       setLoadingSeconds((seconds) => seconds + 1);
@@ -230,7 +263,7 @@ export default function HomePage() {
       }
     } finally {
       window.clearInterval(tick);
-      setLoading(false);
+      setOverlayExiting(true);
     }
   }
 
@@ -249,17 +282,25 @@ export default function HomePage() {
     }
   }
 
+  const mapVeiled = loading || overlayExiting || routeRevealActive;
+
   return (
-    <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
-      <section className="relative order-1 h-[min(46vh,26rem)] min-h-[240px] shrink-0 p-3 lg:order-2 lg:min-h-0 lg:h-auto lg:flex-1 lg:p-4">
+    <main className="flex flex-col lg:min-h-0 lg:h-full lg:flex-1 lg:flex-row lg:overflow-hidden">
+      <section
+        ref={mapSectionRef}
+        className="relative order-1 h-[min(46vh,26rem)] min-h-[240px] shrink-0 scroll-mt-3 p-3 lg:order-2 lg:h-full lg:min-h-0 lg:min-w-0 lg:flex-1 lg:p-4"
+      >
         <MapView
           center={[form.lng, form.lat]}
           start={{ lat: form.lat, lng: form.lng }}
           route={route?.geojson ?? null}
           mapGeojson={route?.mapGeojson ?? null}
-          pickStart={pickOnMap && !loading}
+          pickStart={pickOnMap && !loading && !overlayExiting && !routeRevealActive}
           onStartChange={handleStartChange}
           loopEntry={route?.loopEntry ?? extractLoopEntry(route) ?? null}
+          mapVeiled={mapVeiled}
+          routeRevealActive={routeRevealActive}
+          onRouteRevealComplete={handleRouteRevealComplete}
           viaPoints={
             route?.viaPoints?.length
               ? route.viaPoints
@@ -271,17 +312,19 @@ export default function HomePage() {
                 )
           }
         />
-        {loading ? (
+        {loading || overlayExiting ? (
           <MapGenerationOverlay
             seconds={loadingSeconds}
             progress={generationProgress}
             showApproach={form.approachEnabled}
+            exiting={overlayExiting}
+            onExitComplete={handleOverlayExitComplete}
           />
         ) : null}
-        {route?.mapGeojson ? <SurfaceLegend /> : null}
+        {route?.mapGeojson && !mapVeiled ? <SurfaceLegend /> : null}
       </section>
 
-      <aside className="order-2 w-full border-b border-zinc-800 p-4 lg:order-1 lg:w-96 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-6">
+      <aside className="order-2 w-full border-b border-zinc-800 p-4 lg:order-1 lg:h-full lg:min-h-0 lg:w-96 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-6">
         <div className="mb-6">
           <p className="text-sm text-zinc-400">
             Ustaw punkt startu (GPS, wyszukiwarka lub mapa), wybierz dystans i

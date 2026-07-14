@@ -10,7 +10,9 @@ export default function Page() {
         </div>
       }
     >
-      <HomePage />
+      <div className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
+        <HomePage />
+      </div>
     </Suspense>
   );
 }
