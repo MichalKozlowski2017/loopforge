@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import type { RouteGenerationProgress } from "@loopforge/osm-types";
 import { ForgeLoaderAnimation } from "@/components/ForgeLoaderAnimation";
+import { ForgeEmberField } from "@/components/ForgeEmberField";
 
 interface MapGenerationOverlayProps {
   seconds: number;
@@ -86,6 +87,8 @@ export function MapGenerationOverlay({
       aria-live="polite"
       aria-busy={!exiting}
     >
+      <ForgeEmberField />
+
       <div
         ref={panelRef}
         className={`flex w-full max-w-md flex-col items-center gap-6 py-4 sm:gap-8 sm:py-0 ${

@@ -294,6 +294,66 @@ body {
   animation: loopforge-spark-d 1.5s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
 }
 
+/* Ambient atmosphere for the generation overlay (see ForgeEmberField):
+   soft pulsing/drifting blur blobs near the edges for subtle dynamism, plus
+   tiny welding-style sparks that pop and fall at random spots and moments. */
+@keyframes loopforge-ambient-glow {
+  0%,
+  100% {
+    transform: scale(var(--glow-scale-from, 0.85)) translate(0, 0);
+    opacity: var(--glow-opacity-from, 0.4);
+  }
+  50% {
+    transform: scale(var(--glow-scale-to, 1.4))
+      translate(var(--glow-shift-x, 5%), var(--glow-shift-y, -5%));
+    opacity: var(--glow-opacity-to, 0.9);
+  }
+}
+
+.loopforge-ambient-glow {
+  animation-name: loopforge-ambient-glow;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  will-change: transform, opacity;
+}
+
+/*
+ * Weld spark: a quick bright pop, then gravity pulls it down and it fades —
+ * all within the first ~22% of the (randomized, per-particle) cycle length,
+ * so it sits invisible for the remainder before popping again elsewhere in
+ * its own loop. Combined with randomized per-particle duration/delay across
+ * many particles, this reads as sporadic, scattered welding spatter.
+ */
+@keyframes loopforge-spark-fall {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.5);
+  }
+  4% {
+    opacity: 1;
+    transform: translate(calc(var(--spark-dx) * 0.15), calc(var(--spark-dy) * -0.18))
+      scale(1);
+  }
+  14% {
+    opacity: 0.9;
+    transform: translate(calc(var(--spark-dx) * 0.55), calc(var(--spark-dy) * 0.45))
+      scale(0.7);
+  }
+  22%,
+  100% {
+    opacity: 0;
+    transform: translate(var(--spark-dx), var(--spark-dy)) scale(0.35);
+  }
+}
+
+.loopforge-weld-spark {
+  opacity: 0;
+  animation-name: loopforge-spark-fall;
+  animation-timing-function: cubic-bezier(0.3, 0, 0.6, 1);
+  animation-iteration-count: infinite;
+  will-change: transform, opacity;
+}
+
 @keyframes loopforge-step-pulse {
   0%,
   100% {
