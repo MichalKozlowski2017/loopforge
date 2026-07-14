@@ -22,7 +22,7 @@ const STATUS_STYLES: Record<
   ok: {
     border: "border-zinc-700",
     text: "text-zinc-500",
-    badge: "bg-emerald-500/15 text-emerald-300",
+    badge: "bg-amber-500/15 text-amber-300",
   },
   warn: {
     border: "border-amber-600/50",
@@ -135,7 +135,7 @@ export function ViaPointsEditor({
         type="button"
         onClick={addPoint}
         disabled={viaPoints.length >= MAX_VIA_POINTS}
-        className="mt-3 w-full rounded-lg border border-dashed border-zinc-600 px-3 py-2 text-sm text-zinc-400 transition hover:border-emerald-500/50 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
+        className="mt-3 w-full rounded-lg border border-dashed border-zinc-600 px-3 py-2 text-sm text-zinc-400 transition hover:border-amber-500/50 hover:text-amber-300 disabled:cursor-not-allowed disabled:opacity-40"
       >
         + Dodaj punkt na trasie
       </button>

@@ -324,7 +324,7 @@ export default function HomePage() {
         {route?.mapGeojson && !mapVeiled ? <SurfaceLegend /> : null}
       </section>
 
-      <aside className="scrollbar-hidden order-2 w-full border-b border-zinc-800 p-4 lg:order-1 lg:h-full lg:min-h-0 lg:w-96 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-6">
+      <aside className="scrollbar-hidden order-2 w-full border-b border-amber-950/30 p-4 lg:order-1 lg:h-full lg:min-h-0 lg:w-96 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-6">
         <div className="mb-6">
           <p className="text-sm text-zinc-400">
             Ustaw punkt startu (GPS, wyszukiwarka lub mapa), wybierz dystans i
@@ -350,12 +350,12 @@ export default function HomePage() {
         ) : null}
 
         {route ? (
-          <section className="mt-6 space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+          <section className="mt-6 space-y-4 rounded-xl border border-amber-950/30 bg-zinc-900/60 p-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium text-zinc-200">Metryki</h2>
               <Link
                 href={`/routes/${route.id}`}
-                className="text-xs text-emerald-400 hover:underline"
+                className="text-xs text-amber-400 hover:underline"
               >
                 Szczegóły →
               </Link>
@@ -427,7 +427,7 @@ export default function HomePage() {
             <div className="flex gap-2">
               <a
                 href={`/api/routes/${route.id}/gpx`}
-                className="flex-1 rounded-lg border border-zinc-700 px-3 py-2 text-center text-sm hover:border-zinc-500"
+                className="flex-1 rounded-lg border border-zinc-700 px-3 py-2 text-center text-sm transition hover:border-amber-700/40 hover:text-amber-100"
               >
                 Pobierz GPX
               </a>
@@ -436,8 +436,8 @@ export default function HomePage() {
                 onClick={() => handleRate("up")}
                 className={`rounded-lg border px-3 py-2 text-sm ${
                   route.rating === "up"
-                    ? "border-emerald-500 text-emerald-300"
-                    : "border-zinc-700 hover:border-zinc-500"
+                    ? "border-amber-500 text-amber-300"
+                    : "border-zinc-700 hover:border-amber-700/40 hover:text-amber-100"
                 }`}
               >
                 👍
@@ -445,10 +445,10 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() => handleRate("down")}
-                className={`rounded-lg border px-3 py-2 text-sm ${
+                className={`rounded-lg border px-3 py-2 text-sm transition ${
                   route.rating === "down"
                     ? "border-red-500 text-red-300"
-                    : "border-zinc-700 hover:border-zinc-500"
+                    : "border-zinc-700 hover:border-amber-700/40 hover:text-amber-100"
                 }`}
               >
                 👎

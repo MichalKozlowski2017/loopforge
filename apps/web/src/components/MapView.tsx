@@ -669,7 +669,7 @@ export function MapView({
         />
       ) : null}
       {pickStart ? (
-        <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-emerald-500/50 bg-zinc-950/90 px-4 py-1.5 text-xs text-emerald-300 shadow-lg">
+        <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-amber-500/50 bg-zinc-950/90 px-4 py-1.5 text-xs text-amber-300 shadow-lg">
           Kliknij mapę, aby ustawić punkt startu
         </div>
       ) : null}

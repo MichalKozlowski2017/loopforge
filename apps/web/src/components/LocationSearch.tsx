@@ -146,7 +146,7 @@ export function LocationSearch({
       ) : null}
 
       {selectedLabel ? (
-        <p className="mt-1.5 truncate text-[11px] text-emerald-400/80">
+        <p className="mt-1.5 truncate text-[11px] text-amber-400/80">
           {selectedLabel}
         </p>
       ) : (

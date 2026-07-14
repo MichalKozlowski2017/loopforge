@@ -57,7 +57,7 @@ export function DirectionCompass({ value, onChange }: DirectionCompassProps) {
         <label className="text-sm font-medium text-zinc-300">
           Kierunek trasy
         </label>
-        <span className="text-sm text-emerald-400">{active.label}</span>
+        <span className="text-sm text-amber-400">{active.label}</span>
       </div>
       <p className="mb-3 text-xs text-zinc-500">
         Dłuższa część pętli w wybranym kierunku — kliknij na kompasie.
@@ -87,7 +87,7 @@ export function DirectionCompass({ value, onChange }: DirectionCompassProps) {
                   d={wedgePath(dir.bearing, 44)}
                   className={
                     selected
-                      ? "fill-emerald-500/35 stroke-emerald-500/60 cursor-pointer"
+                      ? "fill-orange-500/35 stroke-amber-500/60 cursor-pointer"
                       : "fill-zinc-800/80 stroke-zinc-700/50 cursor-pointer hover:fill-zinc-700/80"
                   }
                   strokeWidth={1}
@@ -99,7 +99,7 @@ export function DirectionCompass({ value, onChange }: DirectionCompassProps) {
                   textAnchor="middle"
                   dominantBaseline="middle"
                   className={`pointer-events-none select-none text-[10px] font-semibold ${
-                    selected ? "fill-emerald-300" : "fill-zinc-400"
+                    selected ? "fill-amber-300" : "fill-zinc-400"
                   }`}
                 >
                   {dir.short}
@@ -122,13 +122,13 @@ export function DirectionCompass({ value, onChange }: DirectionCompassProps) {
               y1={CY + 8}
               x2={CX}
               y2={CY - 38}
-              className="stroke-emerald-400"
+              className="stroke-amber-400"
               strokeWidth={3}
               strokeLinecap="round"
             />
             <polygon
               points={`${CX},${CY - 44} ${CX - 6},${CY - 30} ${CX + 6},${CY - 30}`}
-              className="fill-emerald-400"
+              className="fill-amber-400"
             />
           </g>
 

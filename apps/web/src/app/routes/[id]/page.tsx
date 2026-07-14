@@ -32,7 +32,7 @@ export default function RouteDetailPage() {
     return (
       <main className="flex flex-1 flex-col items-center justify-center p-6">
         <p className="text-red-300">{error}</p>
-        <Link href="/routes" className="mt-4 text-sm text-emerald-400 hover:underline">
+        <Link href="/routes" className="mt-4 text-sm text-amber-400 hover:underline">
           ← Historia
         </Link>
       </main>
@@ -49,8 +49,8 @@ export default function RouteDetailPage() {
 
   return (
     <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
-      <aside className="w-full space-y-4 border-b border-zinc-800 p-6 lg:w-96 lg:border-b-0 lg:border-r">
-        <Link href="/routes" className="text-sm text-emerald-400 hover:underline">
+      <aside className="w-full space-y-4 border-b border-amber-950/30 p-6 lg:w-96 lg:border-b-0 lg:border-r">
+        <Link href="/routes" className="text-sm text-amber-400 hover:underline">
           ← Historia
         </Link>
         <div>
@@ -73,20 +73,20 @@ export default function RouteDetailPage() {
         </dl>
         <SurfaceBreakdown breakdown={route.metrics.surfaceBreakdown} />
         {route.notes ? (
-          <p className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 text-sm text-zinc-300">
+          <p className="rounded-lg border border-amber-950/25 bg-zinc-900/60 p-3 text-sm text-zinc-300">
             {route.notes}
           </p>
         ) : null}
         <div className="flex gap-2">
           <Link
             href={`/?routeId=${route.id}`}
-            className="flex-1 rounded-lg border border-zinc-700 px-3 py-2 text-center text-sm hover:border-zinc-500"
+            className="flex-1 rounded-lg border border-zinc-700 px-3 py-2 text-center text-sm transition hover:border-amber-700/40 hover:text-amber-100"
           >
             Otwórz w generatorze
           </Link>
           <a
             href={`/api/routes/${route.id}/gpx`}
-            className="rounded-lg border border-zinc-700 px-3 py-2 text-sm hover:border-zinc-500"
+            className="rounded-lg border border-zinc-700 px-3 py-2 text-sm transition hover:border-amber-700/40 hover:text-amber-100"
           >
             GPX
           </a>

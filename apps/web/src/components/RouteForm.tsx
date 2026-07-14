@@ -75,8 +75,8 @@ export function RouteForm({
               onClick={() => onChange({ ...values, bikeType: type.value })}
               className={`rounded-lg border px-3 py-2 text-sm transition ${
                 values.bikeType === type.value
-                  ? "border-emerald-500 bg-emerald-500/10 text-emerald-300"
-                  : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-500"
+                  ? "border-amber-500 bg-amber-500/10 text-amber-300"
+                  : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-amber-700/40"
               }`}
             >
               {type.label}
@@ -98,8 +98,8 @@ export function RouteForm({
               onClick={() => onChange({ ...values, profile: profile.value })}
               className={`rounded-lg border px-2 py-2 text-sm transition ${
                 values.profile === profile.value
-                  ? "border-emerald-500 bg-emerald-500/10 text-emerald-300"
-                  : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-500"
+                  ? "border-amber-500 bg-amber-500/10 text-amber-300"
+                  : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-amber-700/40"
               }`}
             >
               {profile.label}
@@ -109,14 +109,14 @@ export function RouteForm({
       </div>
 
       {values.bikeType === "gravel" || values.bikeType === "mtb" ? (
-        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3 transition hover:border-zinc-500">
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3 transition hover:border-amber-800/45">
           <input
             type="checkbox"
             checked={values.avoidAsphalt}
             onChange={(event) =>
               onChange({ ...values, avoidAsphalt: event.target.checked })
             }
-            className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-emerald-600 focus:ring-emerald-500"
+            className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-amber-600 focus:ring-amber-500"
           />
           <span>
             <span className="block text-sm font-medium text-zinc-200">
@@ -130,14 +130,14 @@ export function RouteForm({
         </label>
       ) : null}
 
-      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3 transition hover:border-zinc-500">
+      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3 transition hover:border-amber-800/45">
         <input
           type="checkbox"
           checked={values.approachEnabled}
           onChange={(event) =>
             onChange({ ...values, approachEnabled: event.target.checked })
           }
-          className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-emerald-600 focus:ring-emerald-500"
+          className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-amber-600 focus:ring-amber-500"
         />
         <span>
           <span className="block text-sm font-medium text-zinc-200">
@@ -181,8 +181,8 @@ export function RouteForm({
                 onClick={() => onChange({ ...values, approachDistanceKm: km })}
                 className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
                   values.approachDistanceKm === km
-                    ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-300"
-                    : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
+                    ? "border-amber-500/70 bg-amber-500/10 text-amber-300"
+                    : "border-zinc-700 text-zinc-400 hover:border-amber-700/40 hover:text-amber-200"
                 }`}
               >
                 {km} km
@@ -216,8 +216,8 @@ export function RouteForm({
             disabled={locationStatus === "loading"}
             className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${
               locationStatus === "ready"
-                ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-300"
-                : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-500"
+                ? "border-amber-500/60 bg-amber-500/10 text-amber-300"
+                : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-amber-700/40"
             }`}
           >
             {locationStatus === "loading" ? "Szukam GPS…" : "Moja lokalizacja"}
@@ -227,8 +227,8 @@ export function RouteForm({
             onClick={onTogglePickOnMap}
             className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${
               pickOnMap
-                ? "border-emerald-500 bg-emerald-500/10 text-emerald-300"
-                : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-500"
+                ? "border-amber-500 bg-amber-500/10 text-amber-300"
+                : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-amber-700/40"
             }`}
           >
             {pickOnMap ? "Kliknij mapę…" : "Ustaw na mapie"}
@@ -319,8 +319,8 @@ export function RouteForm({
               onClick={() => onChange({ ...values, distanceKm: km })}
               className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
                 values.distanceKm === km
-                  ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-300"
-                  : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
+                  ? "border-amber-500/70 bg-amber-500/10 text-amber-300"
+                  : "border-zinc-700 text-zinc-400 hover:border-amber-700/40 hover:text-amber-200"
               }`}
             >
               {km} km
@@ -356,7 +356,7 @@ export function RouteForm({
       <button
         type="submit"
         disabled={loading}
-        className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+        className="w-full rounded-lg bg-linear-to-r from-amber-700 via-orange-600 to-amber-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-orange-950/25 transition hover:from-amber-600 hover:via-orange-500 hover:to-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {loading ? "Generuję…" : "Generuj pętlę"}
       </button>

@@ -48,7 +48,7 @@ function LegendHint() {
 export function SurfaceLegend() {
   return (
     <>
-      <details className="group absolute bottom-2 left-2 right-2 z-10 overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950/90 shadow-lg backdrop-blur lg:hidden">
+      <details className="group absolute bottom-2 left-2 right-2 z-10 overflow-hidden rounded-lg border border-amber-950/30 bg-zinc-950/90 shadow-lg backdrop-blur lg:hidden">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-xs font-medium text-zinc-200 [&::-webkit-details-marker]:hidden">
           <span>Legenda nawierzchni</span>
           <span className="text-[10px] font-normal text-zinc-500 group-open:hidden">
@@ -64,7 +64,7 @@ export function SurfaceLegend() {
         </div>
       </details>
 
-      <div className="absolute bottom-4 left-4 z-10 hidden max-h-[70vh] max-w-xs overflow-y-auto rounded-lg border border-zinc-700/80 bg-zinc-950/90 p-3 text-xs shadow-lg backdrop-blur lg:block">
+      <div className="absolute bottom-4 left-4 z-10 hidden max-h-[70vh] max-w-xs overflow-y-auto rounded-lg border border-amber-950/30 bg-zinc-950/90 p-3 text-xs shadow-lg backdrop-blur lg:block">
         <p className="mb-1 font-medium text-zinc-200">Nawierzchnia na mapie</p>
         <LegendHint />
         <LegendItems />

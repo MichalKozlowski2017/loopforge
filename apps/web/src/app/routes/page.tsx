@@ -60,11 +60,11 @@ export default function RoutesPage() {
       {loading ? (
         <p className="text-zinc-500">Ładowanie…</p>
       ) : routes.length === 0 ? (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-8 text-center">
+        <div className="rounded-xl border border-amber-950/25 bg-zinc-900/50 p-8 text-center">
           <p className="text-zinc-400">Brak tras. Wygeneruj pierwszą pętlę.</p>
           <Link
             href="/"
-            className="mt-4 inline-block text-sm text-emerald-400 hover:underline"
+            className="mt-4 inline-block text-sm text-amber-400 hover:underline"
           >
             → Generator
           </Link>
@@ -75,7 +75,7 @@ export default function RoutesPage() {
             <li key={route.id}>
               <Link
                 href={`/routes/${route.id}`}
-                className="block rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 transition hover:border-zinc-600"
+                className="block rounded-xl border border-amber-950/25 bg-zinc-900/50 p-4 transition hover:border-amber-700/35"
               >
                 <div className="flex items-start justify-between gap-4">
                   <div>

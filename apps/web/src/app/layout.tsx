@@ -17,6 +17,10 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Loopforge",
   description: "Kuźnia pętli rowerowych — generuj trasę, nie szukaj",
+  icons: {
+    icon: [{ url: "/branding/loopforge-icon.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/branding/loopforge-icon.svg", type: "image/svg+xml" }],
+  },
 };
 
 export default function RootLayout({
