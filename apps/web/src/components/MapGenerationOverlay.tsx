@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import type { RouteGenerationProgress } from "@loopforge/osm-types";
 import { ForgeLoaderAnimation } from "@/components/ForgeLoaderAnimation";
 import { ForgeEmberField } from "@/components/ForgeEmberField";
+import { ForgeFireBackground } from "@/components/ForgeFireBackground";
 
 interface MapGenerationOverlayProps {
   seconds: number;
@@ -78,7 +79,7 @@ export function MapGenerationOverlay({
 
   return (
     <div
-      className={`fixed inset-0 z-60 flex items-center justify-center overflow-y-auto bg-zinc-950/85 p-4 sm:p-6 ${
+      className={`fixed inset-0 z-60 flex items-center justify-center overflow-y-auto bg-zinc-950 p-4 sm:p-6 ${
         exiting
           ? "loopforge-overlay-backdrop-exit"
           : "loopforge-overlay-backdrop"
@@ -87,11 +88,14 @@ export function MapGenerationOverlay({
       aria-live="polite"
       aria-busy={!exiting}
     >
-      <ForgeEmberField />
+      <ForgeFireBackground />
+      <div className="pointer-events-none absolute inset-0 z-[1]">
+        <ForgeEmberField />
+      </div>
 
       <div
         ref={panelRef}
-        className={`flex w-full max-w-md flex-col items-center gap-6 py-4 sm:gap-8 sm:py-0 ${
+        className={`relative z-10 flex w-full max-w-md flex-col items-center gap-6 py-4 sm:gap-8 sm:py-0 ${
           exiting
             ? "loopforge-overlay-panel-exit"
             : "loopforge-overlay-panel"
