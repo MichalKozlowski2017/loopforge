@@ -2,23 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import type { BikeType, Direction, RideProfile } from "@loopforge/osm-types";
+import {
+  loadLocalRouteSummaries,
+  type LocalRouteSummary,
+} from "@/lib/local-routes-store";
 
-interface RouteSummary {
-  id: string;
-  bikeType: BikeType;
-  direction: Direction;
-  profile?: RideProfile;
-  distanceKm: number;
-  score: number;
-  elevationGainM: number;
-  rating?: "up" | "down";
-  notes?: string;
-  createdAt: string;
-  placeholder: boolean;
-}
-
-const BIKE_LABELS: Record<BikeType, string> = {
+const BIKE_LABELS: Record<LocalRouteSummary["bikeType"], string> = {
   gravel: "Gravel",
   road: "Szosa",
   mtb: "MTB",
@@ -35,16 +24,12 @@ function formatDate(iso: string): string {
 }
 
 export default function RoutesPage() {
-  const [routes, setRoutes] = useState<RouteSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [routes, setRoutes] = useState<LocalRouteSummary[]>([]);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    void fetch("/api/routes")
-      .then((response) => response.json())
-      .then((data: RouteSummary[]) => {
-        setRoutes(data);
-        setLoading(false);
-      });
+    setRoutes(loadLocalRouteSummaries());
+    setReady(true);
   }, []);
 
   return (
@@ -52,12 +37,12 @@ export default function RoutesPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold">Historia tras</h1>
         <p className="mt-1 text-sm text-zinc-400">
-          Wygenerowane pętle zapisane lokalnie w{" "}
-          <code className="text-zinc-300">data/routes.json</code>.
+          Twoje wygenerowane pętle — zapisane tylko w tej przeglądarce (do{" "}
+          {25} ostatnich). Inni użytkownicy ich nie widzą.
         </p>
       </div>
 
-      {loading ? (
+      {!ready ? (
         <p className="text-zinc-500">Ładowanie…</p>
       ) : routes.length === 0 ? (
         <div className="rounded-xl border border-amber-950/25 bg-zinc-900/50 p-8 text-center">

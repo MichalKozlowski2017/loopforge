@@ -17,6 +17,12 @@ import { MapGenerationOverlay } from "@/components/MapGenerationOverlay";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
 import { useGeolocation } from "@/lib/use-geolocation";
 import { consumeGenerationStream } from "@/lib/parse-generation-stream";
+import { downloadRouteGpx } from "@/lib/download-route-gpx";
+import {
+  getLocalRouteById,
+  saveLocalRoute,
+  updateLocalRouteRating,
+} from "@/lib/local-routes-store";
 import { validateViaPointsForRoute } from "@loopforge/generator/via-validation";
 
 const MapView = dynamic(
@@ -101,28 +107,28 @@ export default function HomePage() {
   useEffect(() => {
     if (!routeIdFromUrl) return;
 
-    void fetch(`/api/routes/${routeIdFromUrl}`)
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data: StoredRoute | null) => {
-        if (!data) return;
-        setRoute(data);
-        setNotes(data.notes ?? "");
-        setForm({
-          bikeType: data.bikeType,
-          distanceKm: Math.round(
-            data.metrics.loopDistanceKm ?? data.metrics.distanceKm,
-          ),
-          direction: data.direction,
-          profile: data.profile ?? "flow",
-          avoidAsphalt: data.avoidAsphalt ?? (data.bikeType === "mtb" || data.bikeType === "gravel"),
-          approachEnabled: data.approachEnabled ?? false,
-          approachDistanceKm: data.approachDistanceKm ?? 10,
-          viaPoints: data.viaPoints ?? [],
-          lat: data.start.lat,
-          lng: data.start.lng,
-        });
-        setLocationMode("manual");
-      });
+    const data = getLocalRouteById(routeIdFromUrl);
+    if (!data) return;
+
+    setRoute(data);
+    setNotes(data.notes ?? "");
+    setForm({
+      bikeType: data.bikeType,
+      distanceKm: Math.round(
+        data.metrics.loopDistanceKm ?? data.metrics.distanceKm,
+      ),
+      direction: data.direction,
+      profile: data.profile ?? "flow",
+      avoidAsphalt:
+        data.avoidAsphalt ??
+        (data.bikeType === "mtb" || data.bikeType === "gravel"),
+      approachEnabled: data.approachEnabled ?? false,
+      approachDistanceKm: data.approachDistanceKm ?? 10,
+      viaPoints: data.viaPoints ?? [],
+      lat: data.start.lat,
+      lng: data.start.lng,
+    });
+    setLocationMode("manual");
   }, [routeIdFromUrl]);
 
   function handleStartChange(start: { lat: number; lng: number }) {
@@ -248,6 +254,7 @@ export default function HomePage() {
       const generated = await consumeGenerationStream(response, (progress) => {
         setGenerationProgress(progress);
       });
+      saveLocalRoute(generated);
       setRoute(generated);
       setNotes("");
     } catch (err) {
@@ -264,19 +271,11 @@ export default function HomePage() {
     }
   }
 
-  async function handleRate(rating: "up" | "down") {
+  function handleRate(rating: "up" | "down") {
     if (!route) return;
 
-    const response = await fetch(`/api/routes/${route.id}/rate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rating, notes }),
-    });
-
-    if (response.ok) {
-      const updated = (await response.json()) as StoredRoute;
-      setRoute(updated);
-    }
+    const updated = updateLocalRouteRating(route.id, rating, notes);
+    if (updated) setRoute(updated);
   }
 
   const mapVeiled = loading || overlayExiting || routeRevealActive;
@@ -425,12 +424,13 @@ export default function HomePage() {
             </div>
 
             <div className="flex gap-2">
-              <a
-                href={`/api/routes/${route.id}/gpx`}
+              <button
+                type="button"
+                onClick={() => downloadRouteGpx(route)}
                 className="flex-1 rounded-lg border border-zinc-700 px-3 py-2 text-center text-sm transition hover:border-amber-700/40 hover:text-amber-100"
               >
                 Pobierz GPX
-              </a>
+              </button>
               <button
                 type="button"
                 onClick={() => handleRate("up")}

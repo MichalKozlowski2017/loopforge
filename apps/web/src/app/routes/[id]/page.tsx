@@ -7,6 +7,8 @@ import { useEffect, useState } from "react";
 import type { StoredRoute } from "@loopforge/osm-types";
 import { SurfaceBreakdown } from "@/components/SurfaceBreakdown";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
+import { downloadRouteGpx } from "@/lib/download-route-gpx";
+import { getLocalRouteById } from "@/lib/local-routes-store";
 
 const MapView = dynamic(
   () => import("@/components/MapView").then((mod) => mod.MapView),
@@ -16,33 +18,31 @@ const MapView = dynamic(
 export default function RouteDetailPage() {
   const params = useParams<{ id: string }>();
   const [route, setRoute] = useState<StoredRoute | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    void fetch(`/api/routes/${params.id}`)
-      .then((response) => {
-        if (!response.ok) throw new Error("Nie znaleziono trasy");
-        return response.json();
-      })
-      .then((data: StoredRoute) => setRoute(data))
-      .catch((err: Error) => setError(err.message));
+    setRoute(getLocalRouteById(params.id));
+    setReady(true);
   }, [params.id]);
 
-  if (error) {
+  if (!ready) {
     return (
-      <main className="flex flex-1 flex-col items-center justify-center p-6">
-        <p className="text-red-300">{error}</p>
-        <Link href="/routes" className="mt-4 text-sm text-amber-400 hover:underline">
-          ← Historia
-        </Link>
+      <main className="flex flex-1 items-center justify-center text-zinc-500">
+        Ładowanie…
       </main>
     );
   }
 
   if (!route) {
     return (
-      <main className="flex flex-1 items-center justify-center text-zinc-500">
-        Ładowanie…
+      <main className="flex flex-1 flex-col items-center justify-center p-6">
+        <p className="text-zinc-400">
+          Trasa nie znaleziona w tej przeglądarce. Wygeneruj ją ponownie lub
+          otwórz link na urządzeniu, na którym ją utworzyłeś.
+        </p>
+        <Link href="/routes" className="mt-4 text-sm text-amber-400 hover:underline">
+          ← Historia
+        </Link>
       </main>
     );
   }
@@ -84,12 +84,13 @@ export default function RouteDetailPage() {
           >
             Otwórz w generatorze
           </Link>
-          <a
-            href={`/api/routes/${route.id}/gpx`}
+          <button
+            type="button"
+            onClick={() => downloadRouteGpx(route)}
             className="rounded-lg border border-zinc-700 px-3 py-2 text-sm transition hover:border-amber-700/40 hover:text-amber-100"
           >
             GPX
-          </a>
+          </button>
         </div>
       </aside>
       <section className="relative min-h-[50vh] flex-1 p-4 lg:min-h-0">

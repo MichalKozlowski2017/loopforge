@@ -4,7 +4,6 @@ import type {
   RouteGenerationStreamEvent,
   StoredRoute,
 } from "@loopforge/osm-types";
-import { saveRoute } from "@/lib/routes-store";
 
 function sseChunk(event: RouteGenerationStreamEvent): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
@@ -95,7 +94,6 @@ export async function POST(request: Request) {
               : undefined,
         };
 
-        await saveRoute(stored);
         send({ type: "complete", route: stored });
       } catch (error) {
         console.error(error);

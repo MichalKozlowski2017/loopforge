@@ -1,16 +1,8 @@
 import { NextResponse } from "next/server";
-import { getRouteById } from "@/lib/routes-store";
 
-export async function GET(
-  _request: Request,
-  context: { params: Promise<{ id: string }> },
-) {
-  const { id } = await context.params;
-  const route = await getRouteById(id);
+const HISTORY_DISABLED_MESSAGE =
+  "Historia tras jest przechowywana lokalnie w tej przeglądarce.";
 
-  if (!route) {
-    return NextResponse.json({ error: "Trasa nie znaleziona" }, { status: 404 });
-  }
-
-  return NextResponse.json(route);
+export async function GET() {
+  return NextResponse.json({ error: HISTORY_DISABLED_MESSAGE }, { status: 403 });
 }
