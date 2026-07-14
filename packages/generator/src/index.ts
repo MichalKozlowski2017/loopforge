@@ -365,15 +365,15 @@ async function generateRouteWithEngine(
 
   reportProgress(onProgress, {
     phase: "planning",
-    message: "Planuję kształt pętli",
+    message: "Szkicuję szablon pętli",
     detail: `${request.distanceKm} km w kierunku ${DIRECTION_LABEL_PL[request.direction]}`,
     progress: 6,
   });
 
   reportProgress(onProgress, {
     phase: "variants",
-    message: "Losuję warianty",
-    detail: "Każde generowanie daje inną trasę",
+    message: "Hartuję warianty",
+    detail: "Każde uderzenie młota daje inną trasę",
     progress: 12,
   });
 
@@ -398,9 +398,9 @@ async function generateRouteWithEngine(
 
         reportProgress(onProgress, {
           phase: "routing",
-          message: "BRouter liczy trasę",
-          detail: `Wariant ${variant + 1}/${variants}, kształt ${shapeLabel}${
-            si > 0 ? ", ponowna skala" : ""
+          message: "Wytapianie trasy",
+          detail: `Kowadło ${variant + 1}/${variants}, kształt ${shapeLabel}${
+            si > 0 ? ", ponowne wykuwanie" : ""
           }`,
           progress: routingProgress,
           variantIndex: variant + 1,
@@ -448,7 +448,7 @@ async function generateRouteWithEngine(
 
         reportProgress(onProgress, {
           phase: "scoring",
-          message: "Porównuję warianty",
+          message: "Próba ogniowa",
           detail: `${refined.distanceKm.toFixed(1)} km — nawierzchnia, kierunek, jakość pętli`,
           progress: Math.min(88, routingProgress + 3),
           variantIndex: variant + 1,
@@ -469,7 +469,7 @@ async function generateRouteWithEngine(
         ) {
           reportProgress(onProgress, {
             phase: "refining",
-            message: "Dopasowuję dystans",
+            message: "Kuję na miarę",
             detail: `Cel ~${request.distanceKm} km, teraz ${refined.distanceKm.toFixed(1)} km`,
             progress: Math.min(90, routingProgress + 5),
           });
@@ -712,8 +712,8 @@ async function generateRouteWithEngine(
 
   reportProgress(onProgress, {
     phase: "finalizing",
-    message: "Spinam GPX",
-    detail: "Przycinanie dead-endów i eksport",
+    message: "Poleruję i pakuję GPX",
+    detail: "Ostatnie szlify przed mapą",
     progress: 94,
   });
 
@@ -799,7 +799,7 @@ function generatePlaceholderRoute(
 } {
   reportProgress(options?.onProgress, {
     phase: "routing",
-    message: "Brak backendu routingu",
+    message: "Kuźnia offline — szkic zastępczy",
     detail: "Buduję geometryczną trasę zastępczą",
     progress: 40,
   });
@@ -813,7 +813,7 @@ function generatePlaceholderRoute(
 
   reportProgress(options?.onProgress, {
     phase: "finalizing",
-    message: "Spinam GPX",
+    message: "Poleruję i pakuję GPX",
     detail: "Ostatnie szlify przed mapą",
     progress: 94,
   });
@@ -1014,7 +1014,7 @@ async function generateRouteWithApproach(
 
   reportProgress(onProgress, {
     phase: "approach",
-    message: "Liczenie dojazdu do pętli",
+    message: "Kuję dojazd do pętli",
     detail: `~${approachTargetKm} km w kierunku ${DIRECTION_LABEL_PL[request.direction]}`,
     progress: 8,
   });
@@ -1063,7 +1063,7 @@ async function generateRouteWithApproach(
 
   reportProgress(onProgress, {
     phase: "approach",
-    message: "Dojazd gotowy",
+    message: "Dojazd przetopiony",
     detail: `${approach.distanceKm.toFixed(1)} km — start pętli przy drodze`,
     progress: 14,
   });

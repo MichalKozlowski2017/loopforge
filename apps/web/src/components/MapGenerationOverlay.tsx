@@ -1,6 +1,7 @@
 "use client";
 
 import type { RouteGenerationProgress } from "@loopforge/osm-types";
+import { ForgeLoaderAnimation } from "@/components/ForgeLoaderAnimation";
 
 interface MapGenerationOverlayProps {
   seconds: number;
@@ -10,18 +11,18 @@ interface MapGenerationOverlayProps {
 
 const APPROACH_STEP = {
   phase: "approach" as const,
-  title: "Dojazd do pętli",
+  title: "Kucie dojazdu",
 };
 
 function buildPhaseSteps(showApproach: boolean) {
   const steps = [
-    { phase: "planning" as const, title: "Planuję kształt pętli" },
+    { phase: "planning" as const, title: "Szkic na kowadle" },
     ...(showApproach ? [APPROACH_STEP] : []),
-    { phase: "variants" as const, title: "Losuję warianty" },
-    { phase: "routing" as const, title: "BRouter liczy trasy" },
-    { phase: "scoring" as const, title: "Porównuję warianty" },
-    { phase: "refining" as const, title: "Dopasowuję dystans" },
-    { phase: "finalizing" as const, title: "Spinam GPX" },
+    { phase: "variants" as const, title: "Hartowanie wariantów" },
+    { phase: "routing" as const, title: "Wytapianie trasy" },
+    { phase: "scoring" as const, title: "Próba ogniowa" },
+    { phase: "refining" as const, title: "Kucie na miarę" },
+    { phase: "finalizing" as const, title: "Polerowanie i GPX" },
   ];
   return steps;
 }
@@ -37,7 +38,9 @@ export function MapGenerationOverlay({
     : 0;
   const safeActiveIndex = activeIndex >= 0 ? activeIndex : 0;
   const barPercent = progress?.progress ?? 4;
-  const subtitle = progress?.detail ?? progress?.message ?? "Startuję…";
+  const subtitle =
+    progress?.detail ??
+    (progress ? "" : "Rozpalamy kuźnię — zaraz zaczniemy kuć trasę…");
   const showSlowHint =
     seconds >= 15 || (progress?.phase === "routing" && progress.progress > 30);
 
@@ -49,62 +52,7 @@ export function MapGenerationOverlay({
       aria-busy="true"
     >
       <div className="flex w-full max-w-md flex-col items-center gap-6 py-4 sm:gap-8 sm:py-0">
-        <div className="relative h-36 w-36 sm:h-44 sm:w-44">
-          <div className="absolute inset-0 rounded-full bg-emerald-500/10 blur-2xl loopforge-glow" />
-          <svg
-            viewBox="0 0 200 200"
-            className="relative h-full w-full"
-            aria-hidden
-          >
-            <circle
-              cx="100"
-              cy="100"
-              r="78"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              className="text-zinc-700/80"
-            />
-            <path
-              d="M 100 28
-                 C 148 32, 168 72, 162 100
-                 C 156 132, 128 158, 100 172
-                 C 68 158, 42 128, 38 100
-                 C 34 68, 58 32, 100 28 Z"
-              fill="none"
-              stroke="url(#loopforgeStroke)"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              pathLength={1}
-              className="loopforge-route-draw"
-            />
-            <circle
-              cx="100"
-              cy="28"
-              r="5"
-              className="fill-emerald-400 loopforge-start-pulse"
-            />
-            <defs>
-              <linearGradient
-                id="loopforgeStroke"
-                x1="0%"
-                y1="0%"
-                x2="100%"
-                y2="100%"
-              >
-                <stop offset="0%" stopColor="#34d399" />
-                <stop offset="55%" stopColor="#10b981" />
-                <stop offset="100%" stopColor="#059669" />
-              </linearGradient>
-            </defs>
-          </svg>
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <span className="font-mono text-2xl font-semibold tabular-nums text-emerald-300">
-              {seconds}s
-            </span>
-          </div>
-        </div>
+        <ForgeLoaderAnimation seconds={seconds} />
 
         <div className="w-full space-y-4">
           <div className="min-h-[4.75rem] space-y-1 text-center">
@@ -118,7 +66,7 @@ export function MapGenerationOverlay({
 
           <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
             <div
-              className="h-full rounded-full bg-linear-to-r from-emerald-600 to-emerald-400 transition-[width] duration-500 ease-out"
+              className="h-full rounded-full bg-linear-to-r from-amber-700 via-orange-500 to-amber-400 transition-[width] duration-500 ease-out"
               style={{ width: `${barPercent}%` }}
             />
           </div>
@@ -132,7 +80,7 @@ export function MapGenerationOverlay({
                   key={step.phase}
                   className={`flex min-h-[2.5rem] items-start gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
                     active
-                      ? "bg-emerald-950/50 text-emerald-100"
+                      ? "bg-amber-950/40 text-amber-100"
                       : done
                         ? "text-zinc-500"
                         : "text-zinc-600"
@@ -141,9 +89,9 @@ export function MapGenerationOverlay({
                   <span
                     className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs ${
                       done
-                        ? "bg-emerald-600/30 text-emerald-400"
+                        ? "bg-amber-600/30 text-amber-400"
                         : active
-                          ? "bg-emerald-500/20 text-emerald-300 loopforge-step-pulse"
+                          ? "bg-amber-500/25 text-amber-300 loopforge-step-pulse"
                           : "bg-zinc-800 text-zinc-600"
                     }`}
                     aria-hidden
@@ -165,8 +113,8 @@ export function MapGenerationOverlay({
               showSlowHint ? "" : "invisible"
             }`}
           >
-            Pierwsze uruchomienie po przerwie może potrwać do minuty — BRouter
-            buduje trasę od zera.
+            Pierwsze odpalenie po przerwie może potrwać do minuty — kuźnia
+            nagrzewa się od zera.
           </p>
         </div>
       </div>

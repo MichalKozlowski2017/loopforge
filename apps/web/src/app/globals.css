@@ -40,64 +40,249 @@ body {
   border-bottom-color: #18181b;
 }
 
-@keyframes loopforge-route-draw {
-  0% {
-    stroke-dashoffset: 1;
+@keyframes loopforge-forge-glow {
+  0%,
+  100% {
     opacity: 0.35;
+    transform: scale(0.9);
   }
-  40% {
-    opacity: 1;
-  }
-  100% {
-    stroke-dashoffset: 0;
-    opacity: 1;
+  50% {
+    opacity: 0.75;
+    transform: scale(1.08);
   }
 }
 
-@keyframes loopforge-glow {
+@keyframes loopforge-ember-pulse {
   0%,
   100% {
-    opacity: 0.45;
-    transform: scale(0.92);
+    opacity: 0.4;
+    transform: translateX(-50%) scale(0.85);
   }
   50% {
-    opacity: 0.85;
-    transform: scale(1.05);
+    opacity: 0.9;
+    transform: translateX(-50%) scale(1.1);
   }
 }
 
-@keyframes loopforge-start-pulse {
+/* Hot metal flares up on each hammer hit (0% and 50% of the 1.5s cycle). */
+@keyframes loopforge-hot-metal {
   0%,
+  50%,
   100% {
-    opacity: 0.7;
-  }
-  50% {
     opacity: 1;
+    filter: brightness(1.35);
   }
+  25%,
+  75% {
+    opacity: 0.8;
+    filter: brightness(1);
+  }
+}
+
+/*
+ * Hammer strike cycle (1.5s): impact at 0%, recoil bounce, slow lift with a
+ * wind-up hold, then a fast ease-in slam back to 0deg at 100%.
+ */
+@keyframes loopforge-hammer {
+  0% {
+    transform: rotate(0deg);
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.4, 1);
+  }
+  3.5% {
+    transform: rotate(-9deg);
+    animation-timing-function: cubic-bezier(0.5, 0, 0.5, 1);
+  }
+  6.5% {
+    transform: rotate(-3deg);
+    animation-timing-function: cubic-bezier(0.5, 0, 0.5, 1);
+  }
+  10% {
+    transform: rotate(-6deg);
+    animation-timing-function: cubic-bezier(0.35, 0, 0.3, 1);
+  }
+  48% {
+    transform: rotate(-54deg);
+    animation-timing-function: cubic-bezier(0.3, 0, 0.6, 1);
+  }
+  72% {
+    transform: rotate(-60deg);
+  }
+  91% {
+    transform: rotate(-60deg);
+    animation-timing-function: cubic-bezier(0.7, 0, 1, 0.6);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+/* Anvil jolts twice per cycle — once per hammer. */
+@keyframes loopforge-anvil-jolt {
+  0%,
+  6%,
+  50%,
+  56%,
+  100% {
+    transform: translateY(0);
+  }
+  1.5% {
+    transform: translateY(1.4px);
+  }
+  51.5% {
+    transform: translateY(1.4px);
+  }
+}
+
+@keyframes loopforge-impact-flash {
+  0% {
+    opacity: 1;
+    transform: scale(0.55);
+  }
+  11% {
+    opacity: 0;
+    transform: scale(2);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2);
+  }
+}
+
+/* Sparks fly out of the impact point in arcs, with a hint of gravity. */
+@keyframes loopforge-spark-a {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1.1);
+  }
+  16% {
+    opacity: 1;
+    transform: translate(-20px, -30px) scale(0.85);
+  }
+  28% {
+    opacity: 0;
+    transform: translate(-28px, -20px) scale(0.3);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-28px, -20px) scale(0.3);
+  }
+}
+
+@keyframes loopforge-spark-b {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1.1);
+  }
+  17% {
+    opacity: 1;
+    transform: translate(-5px, -40px) scale(0.8);
+  }
+  30% {
+    opacity: 0;
+    transform: translate(-8px, -30px) scale(0.3);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-8px, -30px) scale(0.3);
+  }
+}
+
+@keyframes loopforge-spark-c {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1.1);
+  }
+  14% {
+    opacity: 1;
+    transform: translate(-32px, -15px) scale(0.75);
+  }
+  24% {
+    opacity: 0;
+    transform: translate(-40px, -3px) scale(0.3);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-40px, -3px) scale(0.3);
+  }
+}
+
+@keyframes loopforge-spark-d {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1.1);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(11px, -34px) scale(0.8);
+  }
+  26% {
+    opacity: 0;
+    transform: translate(15px, -24px) scale(0.3);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(15px, -24px) scale(0.3);
+  }
+}
+
+.loopforge-forge-glow {
+  animation: loopforge-forge-glow 2s ease-in-out infinite;
+}
+
+.loopforge-ember-pulse {
+  animation: loopforge-ember-pulse 1.8s ease-in-out infinite;
+}
+
+.loopforge-hot-metal {
+  animation: loopforge-hot-metal 1.5s ease-in-out infinite;
+}
+
+.loopforge-hammer {
+  animation: loopforge-hammer 1.5s linear infinite;
+  transform-origin: 24px 98px;
+  transform-box: view-box;
+  will-change: transform;
+}
+
+.loopforge-anvil {
+  animation: loopforge-anvil-jolt 1.5s ease-out infinite;
+  will-change: transform;
+}
+
+.loopforge-impact-flash {
+  animation: loopforge-impact-flash 1.5s ease-out infinite;
+  will-change: transform, opacity;
+}
+
+.loopforge-spark {
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.loopforge-spark-a {
+  animation: loopforge-spark-a 1.5s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
+}
+
+.loopforge-spark-b {
+  animation: loopforge-spark-b 1.5s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
+}
+
+.loopforge-spark-c {
+  animation: loopforge-spark-c 1.5s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
+}
+
+.loopforge-spark-d {
+  animation: loopforge-spark-d 1.5s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
 }
 
 @keyframes loopforge-step-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgb(52 211 153 / 0.35);
+    box-shadow: 0 0 0 0 rgb(251 191 36 / 0.35);
   }
   50% {
-    box-shadow: 0 0 0 6px rgb(52 211 153 / 0);
+    box-shadow: 0 0 0 6px rgb(251 191 36 / 0);
   }
-}
-
-.loopforge-route-draw {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: loopforge-route-draw 2.4s ease-in-out infinite;
-}
-
-.loopforge-glow {
-  animation: loopforge-glow 2.4s ease-in-out infinite;
-}
-
-.loopforge-start-pulse {
-  animation: loopforge-start-pulse 1.2s ease-in-out infinite;
 }
 
 .loopforge-step-pulse {
