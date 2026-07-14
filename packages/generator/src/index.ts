@@ -43,6 +43,7 @@ import {
   mergeApproachAndLoop,
   MAX_APPROACH_OVERLAP_RELAXED,
   PREFER_APPROACH_OVERLAP_BELOW,
+  pruneApproachLeg,
   type RoutedLeg,
 } from "./approach";
 import { refineApproachForLoopEntry } from "./approach-entry";
@@ -1029,17 +1030,25 @@ async function generateRouteWithApproach(
     request.bikeType,
     corridorWaypoints,
   );
-  const refined = refineApproachForLoopEntry(approachRaw, {
+  const approachSanitized = pruneApproachLeg(approachRaw);
+  const refined = refineApproachForLoopEntry(approachSanitized, {
     home: userStart,
     entryTarget,
   });
   const approachTrimmed =
-    refined.approachCoordinates.length < approachRaw.coordinates.length;
+    refined.approachCoordinates.length <
+    approachSanitized.coordinates.length;
+  const approachMapGeojson = approachTrimmed
+    ? pruneMapGeoJson(
+        approachSanitized.mapGeojson ?? null,
+        refined.approachCoordinates,
+      )
+    : approachSanitized.mapGeojson;
   const approach: RoutedLeg = {
-    ...approachRaw,
+    ...approachSanitized,
     coordinates: refined.approachCoordinates,
     distanceKm: refined.approachDistanceKm,
-    mapGeojson: approachTrimmed ? undefined : approachRaw.mapGeojson,
+    mapGeojson: approachMapGeojson ?? undefined,
   };
   const loopEntry = refined.loopEntry;
 

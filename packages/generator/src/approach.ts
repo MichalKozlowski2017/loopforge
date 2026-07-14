@@ -9,7 +9,11 @@ import type {
 import { buildGpx } from "@loopforge/gpx";
 import { scoreRoute } from "@loopforge/scoring";
 import { surfaceBreakdownFromSegments } from "@loopforge/routing";
-import { prepareCoordinatesForNavigation } from "./prune-spurs";
+import {
+  prepareCoordinatesForNavigation,
+  pruneApproachDeadEndSpurs,
+  pruneMapGeoJson,
+} from "./prune-spurs";
 import {
   buildReturnApproachToHome,
   sliceLoopForHomewardReturn,
@@ -24,6 +28,7 @@ export {
 const APPROACH_COLOR = "#64748b";
 const APPROACH_LABEL = "Dojazd";
 const EARTH_RADIUS_M = 6_371_000;
+const MIN_APPROACH_PRUNE_REMOVED_M = 8;
 
 export interface RoutedLeg {
   coordinates: [number, number][];
@@ -31,6 +36,31 @@ export interface RoutedLeg {
   elevationGainM: number;
   segments: { tags: OsmTags; distanceM: number }[];
   mapGeojson?: RouteMapGeoJson | null;
+}
+
+/** Remove BRouter dead-end spurs from the approach leg and sync map segments. */
+export function pruneApproachLeg(leg: RoutedLeg): RoutedLeg {
+  if (leg.coordinates.length < 4) return leg;
+
+  const pruned = pruneApproachDeadEndSpurs(leg.coordinates);
+  if (
+    pruned.removedM < MIN_APPROACH_PRUNE_REMOVED_M ||
+    pruned.coordinates.length < 2
+  ) {
+    return leg;
+  }
+
+  const coordinates = pruned.coordinates as [number, number][];
+  const mapGeojson = leg.mapGeojson
+    ? pruneMapGeoJson(leg.mapGeojson, coordinates)
+    : leg.mapGeojson;
+
+  return {
+    ...leg,
+    coordinates,
+    distanceKm: totalDistanceKm(coordinates),
+    mapGeojson: mapGeojson ?? undefined,
+  };
 }
 
 function coordToLatLng(coord: [number, number]): LatLng {
@@ -85,6 +115,7 @@ function styleApproachMapGeojson(
     ...feature,
     properties: {
       ...feature.properties,
+      leg: "approach",
       label: APPROACH_LABEL,
       color: APPROACH_COLOR,
       category: "asphalt",
@@ -256,6 +287,8 @@ export function mergeApproachAndLoop(
       properties: {
         ...loop.geojson.properties,
         approachEnabled: true,
+        approachDistanceKm: approachKm,
+        returnApproachDistanceKm: returnKm,
         loopEntry,
         score,
       },

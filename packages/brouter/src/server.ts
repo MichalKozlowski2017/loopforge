@@ -16,6 +16,19 @@ async function isServerHealthy(baseUrl: string): Promise<boolean> {
   }
 }
 
+/** Smoke-test that routing actually completes (not just HTTP 200 on engineMode=3). */
+async function canRouteSample(baseUrl: string): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `${baseUrl}/brouter?lonlats=21.0,52.2|21.01,52.21&profile=fastbike&format=geojson`,
+      { signal: AbortSignal.timeout(6000) },
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 function startServerProcess(config: BrouterConfig): Promise<void> {
   if (starting) return starting;
 
@@ -72,9 +85,27 @@ function isLocalBaseUrl(baseUrl: string): boolean {
 }
 
 export async function ensureBrouterServer(config: BrouterConfig): Promise<void> {
-  if (await isServerHealthy(config.baseUrl)) return;
+  if (await canRouteSample(config.baseUrl)) return;
+
+  if (await isServerHealthy(config.baseUrl)) {
+    await restartBrouterServer(config);
+    if (await canRouteSample(config.baseUrl)) return;
+  }
+
   if (!isLocalBaseUrl(config.baseUrl)) {
     throw new Error(`BRouter unreachable at ${config.baseUrl}`);
+  }
+  await startServerProcess(config);
+  if (!(await canRouteSample(config.baseUrl))) {
+    throw new Error("BRouter started but routing smoke-test failed");
+  }
+}
+
+export async function restartBrouterServer(config: BrouterConfig): Promise<void> {
+  stopBrouterServer();
+  starting = null;
+  if (!isLocalBaseUrl(config.baseUrl)) {
+    throw new Error(`Cannot restart remote BRouter at ${config.baseUrl}`);
   }
   await startServerProcess(config);
 }

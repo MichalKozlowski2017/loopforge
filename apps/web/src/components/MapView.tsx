@@ -5,7 +5,12 @@ import maplibregl from "maplibre-gl";
 import type { StyleSpecification } from "maplibre-gl";
 import type { RouteFeature, RouteMapGeoJson } from "@loopforge/osm-types";
 import { loadMapStyle } from "@/lib/map-style";
-import { flattenLoopDrawPath } from "@/lib/route-draw-path";
+import {
+  ROUTE_FIT_MAX_ZOOM,
+  ROUTE_FIT_PADDING,
+  flattenLoopDrawPath,
+  type LngLat,
+} from "@/lib/route-draw-path";
 import { RouteDrawReveal } from "@/components/RouteDrawReveal";
 
 export interface StartPoint {
@@ -24,6 +29,9 @@ interface MapViewProps {
   viaPoints?: ViaMapPoint[];
   route?: RouteFeature | null;
   mapGeojson?: RouteMapGeoJson | null;
+  approachEnabled?: boolean;
+  approachDistanceKm?: number | null;
+  returnApproachDistanceKm?: number | null;
   pickStart?: boolean;
   onStartChange?: (start: StartPoint) => void;
   /** Hide the map under a dark veil and suppress route layers (during loading/reveal). */
@@ -79,8 +87,19 @@ function viewportFitCoords(
   route: RouteFeature | null,
   mapGeojson: RouteMapGeoJson | null,
   loopEntry: StartPoint | null,
+  approachEnabled?: boolean | null,
+  distanceHints?: {
+    approachDistanceKm?: number | null;
+    returnApproachDistanceKm?: number | null;
+  },
 ): [number, number][] {
-  return flattenLoopDrawPath(route, mapGeojson, loopEntry);
+  return flattenLoopDrawPath(
+    route,
+    mapGeojson,
+    loopEntry,
+    approachEnabled,
+    distanceHints,
+  );
 }
 
 function fitRouteToView(map: maplibregl.Map, coords: [number, number][]): void {
@@ -93,8 +112,8 @@ function fitRouteToView(map: maplibregl.Map, coords: [number, number][]): void {
   );
 
   map.fitBounds(bounds, {
-    padding: { top: 24, bottom: 24, left: 24, right: 24 },
-    maxZoom: 15,
+    padding: ROUTE_FIT_PADDING,
+    maxZoom: ROUTE_FIT_MAX_ZOOM,
     duration: 0,
   });
 }
@@ -122,6 +141,9 @@ export function MapView({
   viaPoints = [],
   route,
   mapGeojson,
+  approachEnabled = false,
+  approachDistanceKm = null,
+  returnApproachDistanceKm = null,
   pickStart = false,
   onStartChange,
   mapVeiled = false,
@@ -144,12 +166,19 @@ export function MapView({
     route,
     mapGeojson,
     loopEntry: loopEntry ?? null,
+    approachEnabled,
+    distanceHints: {
+      approachDistanceKm,
+      returnApproachDistanceKm,
+    },
     pickStart,
     showRouteLayers: true,
     mapVeiled: false,
   });
   const [showRouteLayers, setShowRouteLayers] = useState(true);
   const [drawRevealActive, setDrawRevealActive] = useState(false);
+  const [lockedRevealPath, setLockedRevealPath] = useState<LngLat[]>([]);
+  const lockedRevealPathRef = useRef<LngLat[]>([]);
   const routeLayersRevealedRef = useRef(false);
   const wasVeiledRef = useRef(false);
 
@@ -157,10 +186,19 @@ export function MapView({
   const [mapStyle, setMapStyle] = useState<StyleSpecification | null>(null);
 
   onStartChangeRef.current = onStartChange;
+  const distanceHints = useMemo(
+    () => ({
+      approachDistanceKm,
+      returnApproachDistanceKm,
+    }),
+    [approachDistanceKm, returnApproachDistanceKm],
+  );
   routeDataRef.current = {
     route,
     mapGeojson,
     loopEntry: loopEntry ?? null,
+    approachEnabled,
+    distanceHints,
     pickStart,
     showRouteLayers,
     mapVeiled,
@@ -199,6 +237,8 @@ export function MapView({
       route: routeData,
       mapGeojson: segmentData,
       loopEntry: entryPoint,
+      approachEnabled: approachOn,
+      distanceHints: fitDistanceHints,
       pickStart: picking,
       showRouteLayers: layersRequested,
       mapVeiled: veiled,
@@ -217,6 +257,8 @@ export function MapView({
       routeData ?? null,
       segmentData ?? null,
       entryPoint,
+      approachOn,
+      fitDistanceHints,
     );
 
     if (fitCoords.length >= 2) {
@@ -401,6 +443,8 @@ export function MapView({
         routeDataRef.current.route ?? null,
         routeDataRef.current.mapGeojson ?? null,
         routeDataRef.current.loopEntry,
+        routeDataRef.current.approachEnabled,
+        routeDataRef.current.distanceHints,
       );
       if (coords.length >= 2) {
         fitRouteToView(map, coords);
@@ -409,11 +453,18 @@ export function MapView({
 
     observer.observe(container);
     return () => observer.disconnect();
-  }, [mapReady, route, mapGeojson, loopEntry]);
+  }, [mapReady, route, mapGeojson, loopEntry, approachEnabled]);
 
   const drawPath = useMemo(
-    () => flattenLoopDrawPath(route ?? null, mapGeojson ?? null, loopEntry),
-    [route, mapGeojson, loopEntry],
+    () =>
+      flattenLoopDrawPath(
+        route ?? null,
+        mapGeojson ?? null,
+        loopEntry,
+        approachEnabled,
+        distanceHints,
+      ),
+    [route, mapGeojson, loopEntry, approachEnabled, distanceHints],
   );
 
   const handleDrawingComplete = useCallback(() => {
@@ -452,11 +503,19 @@ export function MapView({
   useEffect(() => {
     if (!routeRevealActive) {
       setDrawRevealActive(false);
+      lockedRevealPathRef.current = [];
+      setLockedRevealPath([]);
       return;
     }
 
     if (!mapReady || !route || drawPath.length < 2) return;
 
+    if (lockedRevealPathRef.current.length < 2) {
+      lockedRevealPathRef.current = drawPath;
+      setLockedRevealPath(drawPath);
+    }
+
+    const revealPath = lockedRevealPathRef.current;
     routeDataRef.current.showRouteLayers = false;
     setShowRouteLayers(false);
     scheduleRouteSync();
@@ -467,7 +526,7 @@ export function MapView({
     let cancelled = false;
 
     const begin = async () => {
-      fitRouteToView(map, drawPath);
+      fitRouteToView(map, revealPath);
       await waitForMapSettled(map);
       if (!cancelled) setDrawRevealActive(true);
     };
@@ -600,10 +659,10 @@ export function MapView({
           aria-hidden
         />
       ) : null}
-      {mapReady && mapRef.current && drawRevealActive ? (
+      {mapReady && mapRef.current && drawRevealActive && lockedRevealPath.length >= 2 ? (
         <RouteDrawReveal
           map={mapRef.current}
-          coordinates={drawPath}
+          coordinates={lockedRevealPath}
           active={drawRevealActive}
           onDrawingComplete={handleDrawingComplete}
           onComplete={handleRevealComplete}

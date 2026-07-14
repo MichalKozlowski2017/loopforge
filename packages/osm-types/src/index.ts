@@ -101,6 +101,8 @@ export interface RouteSegmentFeature {
     color: string;
     dash: number[];
     highway?: string;
+    /** Present on styled approach legs in mapGeojson (home ↔ loop entry). */
+    leg?: "approach";
   };
   geometry: LineStringGeometry;
 }

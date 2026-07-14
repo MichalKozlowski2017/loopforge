@@ -410,26 +410,32 @@ body {
   pointer-events: none;
 }
 
-.route-draw-spark {
-  opacity: 0;
+@keyframes loopforge-weld-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  18% {
+    opacity: 0.72;
+  }
+  34% {
+    opacity: 1;
+  }
+  52% {
+    opacity: 0.6;
+  }
+  68% {
+    opacity: 0.96;
+  }
+  84% {
+    opacity: 0.75;
+  }
+}
+
+.route-draw-tip-flicker {
+  animation: loopforge-weld-flicker 160ms steps(5, end) infinite;
   transform-box: fill-box;
   transform-origin: center;
-}
-
-.route-draw-spark-a {
-  animation: loopforge-spark-a 1.2s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
-}
-
-.route-draw-spark-b {
-  animation: loopforge-spark-b 1.2s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
-}
-
-.route-draw-spark-c {
-  animation: loopforge-spark-c 1.2s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
-}
-
-.route-draw-spark-d {
-  animation: loopforge-spark-d 1.2s cubic-bezier(0.2, 0.7, 0.5, 1) infinite;
 }
 
 /* Must come after maplibre-gl.css import — MapLibre needs explicit dimensions. */

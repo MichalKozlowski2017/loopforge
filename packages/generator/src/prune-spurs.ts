@@ -153,6 +153,55 @@ function bearingDelta(a: number, b: number): number {
   return Math.abs(((a - b + 540) % 360) - 180);
 }
 
+function vertexTurnDeg(coordinates: Coord[], index: number): number {
+  if (index <= 0 || index >= coordinates.length - 1) return 0;
+  const inBearing = bearingDeg(
+    toLatLng(coordinates[index - 1]!),
+    toLatLng(coordinates[index]!),
+  );
+  const outBearing = bearingDeg(
+    toLatLng(coordinates[index]!),
+    toLatLng(coordinates[index + 1]!),
+  );
+  return bearingDelta(inBearing, outBearing);
+}
+
+/**
+ * Short branch off the main corridor on an open route (approach leg): sharp turn,
+ * out-and-back to the same junction without enough detour for the loop spur heuristics.
+ */
+export function findOpenPathBranchStubRanges(coordinates: Coord[]): SpurRange[] {
+  if (coordinates.length < 5) return [];
+
+  const ranges: SpurRange[] = [];
+  const maxStubM = 420;
+  const minStubM = 8;
+  const rejoinM = 44;
+  const minTurnDeg = 22;
+  const endReserve = 12;
+
+  for (let j = 1; j < coordinates.length - 2; j++) {
+    if (j >= coordinates.length - endReserve) continue;
+    if (vertexTurnDeg(coordinates, j) < minTurnDeg) continue;
+
+    const junction = toLatLng(coordinates[j]!);
+
+    for (let k = j + 2; k < coordinates.length; k++) {
+      const stubM = pathLengthM(coordinates, j, k);
+      if (stubM > maxStubM) break;
+
+      const distFromJunction = haversineM(junction, toLatLng(coordinates[k]!));
+      if (distFromJunction > rejoinM) continue;
+      if (stubM < minStubM) continue;
+
+      ranges.push({ start: j + 1, end: k - 1 });
+      break;
+    }
+  }
+
+  return mergeSpurRanges(ranges);
+}
+
 /** Sharp hairpin at a dead-end tip (route turns ~180° within a short stub). */
 export function findHairpinSpurRanges(coordinates: Coord[]): SpurRange[] {
   if (coordinates.length < 10) return [];
@@ -298,6 +347,55 @@ export interface PruneSpursResult {
   coordinates: Coord[];
   removedRanges: SpurRange[];
   removedM: number;
+}
+
+const APPROACH_MIN_REMAINING_RATIO = 0.55;
+
+/** Iteratively remove dead-end spurs from an open approach leg. */
+export function pruneApproachDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
+  let current = coordinates;
+  const allRanges: SpurRange[] = [];
+  const beforeM = totalPathLengthM(coordinates);
+
+  for (let pass = 0; pass < 8; pass++) {
+    const ranges = mergeSpurRanges([
+      ...findDeadEndSpurRanges(current),
+      ...findMicroSpurRanges(current),
+      ...findHairpinSpurRanges(current),
+      ...findReverseSegmentSpurRanges(current),
+      ...findOpenPathBranchStubRanges(current),
+    ]);
+
+    if (ranges.length === 0) break;
+
+    allRanges.push(
+      ...ranges.map((range) => ({
+        start: range.start,
+        end: range.end,
+      })),
+    );
+
+    current = removeSpurRanges(current, ranges);
+    if (current.length < 2) {
+      current = coordinates;
+      break;
+    }
+  }
+
+  const afterM = totalPathLengthM(current);
+  if (afterM < beforeM * APPROACH_MIN_REMAINING_RATIO) {
+    return {
+      coordinates,
+      removedRanges: [],
+      removedM: 0,
+    };
+  }
+
+  return {
+    coordinates: current,
+    removedRanges: mergeSpurRanges(allRanges),
+    removedM: Math.max(0, beforeM - afterM),
+  };
 }
 
 /** Iteratively remove dead-end spurs from a routed loop. */

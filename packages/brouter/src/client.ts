@@ -9,7 +9,7 @@ import type {
 import { getSurfaceStyle } from "@loopforge/osm-types";
 import type { BrouterConfig } from "./config";
 import { buildColoredGeoJsonFromRoute } from "./colored-geojson";
-import { ensureBrouterServer } from "./server";
+import { ensureBrouterServer, restartBrouterServer } from "./server";
 
 const DIRECTION_BEARING: Record<Direction, number> = {
   N: 0,
@@ -25,9 +25,36 @@ const DIRECTION_BEARING: Record<Direction, number> = {
 const MTB_CUSTOM_PROFILE = "customprofiles/loopforge-mtb";
 const MTB_STOCK_PROFILE = "mtb";
 
-/** Paved, direct routing for the approach leg — independent of loop bike type. */
-export const APPROACH_BROUTER_PROFILE = "customprofiles/loopforge-approach";
-const APPROACH_FALLBACK_PROFILE = "fastbike";
+/** Paved, direct routing for the approach leg — uses stock fastbike (custom fastbike clones fail in customprofiles). */
+export const APPROACH_BROUTER_PROFILE = "fastbike";
+const APPROACH_FALLBACK_PROFILE = "trekking";
+const BROUTER_FETCH_TIMEOUT_MS = 45_000;
+
+function isLocalBrouter(config: BrouterConfig): boolean {
+  return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/i.test(
+    config.baseUrl,
+  );
+}
+
+async function fetchBrouterWithRetry(
+  config: BrouterConfig,
+  url: string,
+): Promise<Response> {
+  try {
+    return await fetch(url, {
+      signal: AbortSignal.timeout(BROUTER_FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const isTimeout =
+      error instanceof Error &&
+      (error.name === "TimeoutError" || error.name === "AbortError");
+    if (!isTimeout || !isLocalBrouter(config)) throw error;
+    await restartBrouterServer(config);
+    return fetch(url, {
+      signal: AbortSignal.timeout(BROUTER_FETCH_TIMEOUT_MS),
+    });
+  }
+}
 
 const BIKE_PROFILE: Record<BikeType, string> = {
   gravel: "customprofiles/loopforge-gravel",
@@ -132,11 +159,9 @@ function buildApproachBrouterQuery(
     profile: profileName,
     format: "geojson",
   });
-  if (profileName === APPROACH_BROUTER_PROFILE) {
-    query.set("profile:correctMisplacedViaPoints", "1");
-    query.set("profile:correctMisplacedViaPointsDistance", "1200");
-    query.set("profile:allow_ferries", "0");
-  }
+  query.set("profile:correctMisplacedViaPoints", "1");
+  query.set("profile:correctMisplacedViaPointsDistance", "1200");
+  query.set("profile:allow_ferries", "0");
   return query;
 }
 
@@ -154,9 +179,10 @@ async function fetchApproachBrouterRoute(
     const profileName = profiles[i]!;
     const query = buildApproachBrouterQuery(lonlats, profileName);
 
-    const response = await fetch(`${config.baseUrl}/brouter?${query.toString()}`, {
-      signal: AbortSignal.timeout(45_000),
-    });
+    const response = await fetchBrouterWithRetry(
+      config,
+      `${config.baseUrl}/brouter?${query.toString()}`,
+    );
 
     if (!response.ok) {
       const text = await response.text();
@@ -378,9 +404,10 @@ async function fetchBrouterRoute(
       options?.avoidAsphalt,
     );
 
-    const response = await fetch(`${config.baseUrl}/brouter?${query.toString()}`, {
-      signal: AbortSignal.timeout(45_000),
-    });
+    const response = await fetchBrouterWithRetry(
+      config,
+      `${config.baseUrl}/brouter?${query.toString()}`,
+    );
 
     if (!response.ok) {
       const text = await response.text();
@@ -537,9 +564,10 @@ async function fetchRoundTripAttempt(
     format: "geojson",
   });
 
-  const response = await fetch(`${config.baseUrl}/brouter?${query.toString()}`, {
-    signal: AbortSignal.timeout(45_000),
-  });
+  const response = await fetchBrouterWithRetry(
+    config,
+    `${config.baseUrl}/brouter?${query.toString()}`,
+  );
 
   if (!response.ok) {
     const text = await response.text();

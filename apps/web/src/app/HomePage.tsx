@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   RouteGenerationProgress,
   StoredRoute,
@@ -76,6 +76,7 @@ export default function HomePage() {
   const [notes, setNotes] = useState("");
   const [pickOnMap, setPickOnMap] = useState(false);
   const mapSectionRef = useRef<HTMLElement>(null);
+  const loopEntry = useMemo(() => extractLoopEntry(route), [route]);
   const [locationMode, setLocationMode] = useState<
     "loading" | "ready" | "denied" | "unavailable" | "manual"
   >("loading");
@@ -150,8 +151,7 @@ export default function HomePage() {
     if (!lockScroll) return;
 
     const isMobile = window.matchMedia("(max-width: 1023px)").matches;
-    // On mobile keep the page scrollable during the route-draw reveal so we
-    // can snap to the map; lock only while the full-screen loader is up.
+    // On mobile allow scrolling during route-draw reveal (map already snapped on generate).
     if (isMobile && routeRevealActive && !loading && !overlayExiting) return;
 
     const previousOverflow = document.body.style.overflow;
@@ -161,15 +161,11 @@ export default function HomePage() {
     };
   }, [loading, overlayExiting, routeRevealActive]);
 
-  useEffect(() => {
-    if (!routeRevealActive) return;
-
-    const isMobile = window.matchMedia("(max-width: 1023px)").matches;
-    if (!isMobile) return;
-
+  function scrollMobileToMap() {
+    if (!window.matchMedia("(max-width: 1023px)").matches) return;
     window.scrollTo({ top: 0, behavior: "auto" });
     mapSectionRef.current?.scrollIntoView({ behavior: "auto", block: "start" });
-  }, [routeRevealActive]);
+  }
 
   const handleOverlayExitComplete = useCallback(() => {
     setLoading(false);
@@ -182,6 +178,7 @@ export default function HomePage() {
   }, []);
 
   async function handleGenerate() {
+    scrollMobileToMap();
     setLoading(true);
     setOverlayExiting(false);
     setRouteRevealActive(false);
@@ -297,7 +294,10 @@ export default function HomePage() {
           mapGeojson={route?.mapGeojson ?? null}
           pickStart={pickOnMap && !loading && !overlayExiting && !routeRevealActive}
           onStartChange={handleStartChange}
-          loopEntry={route?.loopEntry ?? extractLoopEntry(route) ?? null}
+          loopEntry={loopEntry}
+          approachEnabled={Boolean(route?.approachEnabled ?? form.approachEnabled)}
+          approachDistanceKm={route?.metrics.approachDistanceKm ?? null}
+          returnApproachDistanceKm={route?.metrics.returnApproachKm ?? null}
           mapVeiled={mapVeiled}
           routeRevealActive={routeRevealActive}
           onRouteRevealComplete={handleRouteRevealComplete}

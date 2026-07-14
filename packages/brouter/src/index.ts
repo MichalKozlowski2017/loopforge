@@ -16,4 +16,4 @@ export {
   type RoundTripParams,
   type WaypointRouteParams,
 } from "./client";
-export { ensureBrouterServer, stopBrouterServer } from "./server";
+export { ensureBrouterServer, restartBrouterServer, stopBrouterServer } from "./server";
