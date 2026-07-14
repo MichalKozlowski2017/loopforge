@@ -124,7 +124,7 @@ export function RouteForm({
               Unikaj asfaltu i chodników
             </span>
             <span className="mt-0.5 block text-xs text-zinc-500">
-              Priorytet szuteru, leśnych dróg i ścieżek. Omijamy asfalt i
+              Priorytet szutru, leśnych dróg i ścieżek. Omijamy asfalt i
               chodniki, gdy jest sensowna alternatywa.
             </span>
           </span>

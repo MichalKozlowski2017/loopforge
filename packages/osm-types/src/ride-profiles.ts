@@ -21,7 +21,7 @@ export const RIDE_PROFILE_OPTIONS: Record<BikeType, RideProfileOption[]> = {
     },
   ],
   gravel: [
-    { value: "flow", label: "Balans", hint: "Mix szuteru i sensownego asfaltu łączącego" },
+    { value: "flow", label: "Balans", hint: "Mix szutru i sensownego asfaltu łączącego" },
     {
       value: "technical",
       label: "Eksploracyjny",
@@ -36,7 +36,7 @@ export const RIDE_PROFILE_OPTIONS: Record<BikeType, RideProfileOption[]> = {
   ],
   general: [
     { value: "flow", label: "Turystyczny", hint: "Spokojna pętla, trasy rowerowe i drogi lokalne" },
-    { value: "technical", label: "Terenowy", hint: "Więcej szuteru, lasów i dróg polnych" },
+    { value: "technical", label: "Terenowy", hint: "Więcej szutru, lasów i dróg polnych" },
     { value: "fast", label: "Asfalt", hint: "Priorytet utwardzonych dróg i szybkich połączeń" },
   ],
 };
