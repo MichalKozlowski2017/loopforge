@@ -56,13 +56,13 @@ interface SpurDetectConfig {
 }
 
 const DEFAULT_SPUR_CONFIG: SpurDetectConfig = {
-  matchM: 50,
-  minSpurM: 30,
-  minGap: 8,
-  maxSpanRatio: 0.55,
-  minDetourRatio: 1.35,
-  midBulgeRatio: 0.3,
-  maxMidBulgeM: 70,
+  matchM: 65,
+  minSpurM: 22,
+  minGap: 6,
+  maxSpanRatio: 0.62,
+  minDetourRatio: 1.18,
+  midBulgeRatio: 0.26,
+  maxMidBulgeM: 95,
 };
 
 const MICRO_SPUR_CONFIG: SpurDetectConfig = {
@@ -404,12 +404,13 @@ export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
   const allRanges: SpurRange[] = [];
   const beforeM = totalPathLengthM(coordinates);
 
-  for (let pass = 0; pass < 8; pass++) {
+  for (let pass = 0; pass < 10; pass++) {
     const ranges = mergeSpurRanges([
       ...findDeadEndSpurRanges(current),
       ...findMicroSpurRanges(current),
       ...findHairpinSpurRanges(current),
       ...findReverseSegmentSpurRanges(current),
+      ...findOpenPathBranchStubRanges(current),
     ]);
 
     if (ranges.length === 0) break;
@@ -429,7 +430,7 @@ export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
   }
 
   const afterM = totalPathLengthM(current);
-  if (afterM < beforeM * 0.65) {
+  if (afterM < beforeM * 0.58) {
     return {
       coordinates,
       removedRanges: [],

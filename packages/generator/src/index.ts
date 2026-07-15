@@ -209,6 +209,9 @@ function buildGeneratedRoute(
 ): GeneratedRoute {
   const { start, bikeType, direction, distanceKm } = request;
   const navCoordinates = prepareCoordinatesForNavigation(coordinates);
+  const syncedMapGeojson = options.mapGeojson
+    ? pruneMapGeoJson(options.mapGeojson, navCoordinates)
+    : null;
   const actualKm =
     navCoordinates.length > 1 ? totalDistanceKm(navCoordinates) : distanceKm;
   const score = scoreRoute(options.segments, bikeType, request.profile);
@@ -238,7 +241,7 @@ function buildGeneratedRoute(
         coordinates: navCoordinates,
       },
     },
-    mapGeojson: options.mapGeojson,
+    mapGeojson: syncedMapGeojson ?? options.mapGeojson,
     metrics: {
       distanceKm: actualKm,
       loopDistanceKm: actualKm,
@@ -251,9 +254,9 @@ function buildGeneratedRoute(
   };
 }
 
-const MIN_PRUNE_REMOVED_M = 8;
-const MAX_SPUR_SHARE = 0.05;
-const MAX_BACKTRACK = 0.06;
+const MIN_PRUNE_REMOVED_M = 5;
+const MAX_SPUR_SHARE = 0.035;
+const MAX_BACKTRACK = 0.04;
 
 function pavedShareFromSegments(
   segments: { tags: OsmTags; distanceM: number }[],
@@ -311,7 +314,9 @@ function applySpurRefinement(
 } {
   const pruned = pruneDeadEndSpurs(routed.coordinates);
   const usePruned =
-    pruned.removedM >= MIN_PRUNE_REMOVED_M && pruned.coordinates.length >= 4;
+    pruned.removedRanges.length > 0 &&
+    pruned.removedM >= MIN_PRUNE_REMOVED_M &&
+    pruned.coordinates.length >= 4;
   const coordinates = usePruned ? pruned.coordinates : routed.coordinates;
   const mapGeojson = pruneMapGeoJson(
     routed.mapGeojson ?? null,
@@ -357,6 +362,30 @@ function applySpurRefinement(
   );
 
   return { refined, metrics, quality, pruned: usePruned };
+}
+
+function finalizeLoopWithoutSpurs(best: RoutedLoopResult): RoutedLoopResult {
+  const pruned = pruneDeadEndSpurs(best.coordinates);
+  if (
+    pruned.removedRanges.length === 0 ||
+    pruned.removedM < MIN_PRUNE_REMOVED_M ||
+    pruned.coordinates.length < 4
+  ) {
+    return best;
+  }
+
+  const coordinates = pruned.coordinates;
+  const mapGeojson =
+    pruneMapGeoJson(best.mapGeojson ?? null, coordinates) ??
+    best.mapGeojson ??
+    undefined;
+
+  return {
+    ...best,
+    coordinates,
+    mapGeojson,
+    distanceKm: routeLengthM(coordinates) / 1000,
+  };
 }
 
 async function generateRouteWithEngine(
@@ -823,14 +852,31 @@ async function generateRouteWithEngine(
     );
   }
 
+  const finalized = finalizeLoopWithoutSpurs(best);
+  const finalLoopMetrics = loopQualityMetrics(
+    finalized.coordinates,
+    request.distanceKm,
+    finalized.distanceKm,
+    request.start,
+    request.direction,
+  );
+  if (
+    finalLoopMetrics.spurShare > MAX_SPUR_SHARE * 1.6 ||
+    finalLoopMetrics.backtrack > MAX_BACKTRACK * 1.5
+  ) {
+    throw new Error(
+      "Trasa miałaby zbyt dużo cofania — spróbuj innego kierunku, krótszego dystansu lub podprofilu Balans.",
+    );
+  }
+
   return {
-    route: buildGeneratedRoute(request, best.coordinates, {
+    route: buildGeneratedRoute(request, finalized.coordinates, {
       placeholder: false,
-      elevationGainM: best.elevationGainM,
-      segments: best.segments,
-      mapGeojson: best.mapGeojson ?? undefined,
+      elevationGainM: finalized.elevationGainM,
+      segments: finalized.segments,
+      mapGeojson: finalized.mapGeojson ?? undefined,
     }),
-    loopSegments: best.segments,
+    loopSegments: finalized.segments,
   };
 }
 

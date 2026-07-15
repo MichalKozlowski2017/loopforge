@@ -697,9 +697,9 @@ export function scoreLoopQuality(
   const directionPenalty = Math.max(0, 0.55 - directionCoverage) * 24;
 
   return (
-    overlap * 2 +
-    backtrack * 8 +
-    spurShare * 12 +
+    overlap * 2.5 +
+    backtrack * 14 +
+    spurShare * 22 +
     distanceError * 10 +
     directionPenalty
   );
@@ -722,9 +722,9 @@ export function isGoodLoopQuality(
     );
 
   return (
-    overlap < 0.1 &&
-    backtrack < 0.05 &&
-    spurShare < 0.06 &&
+    overlap < 0.08 &&
+    backtrack < 0.035 &&
+    spurShare < 0.035 &&
     distanceError < 0.18 &&
     directionCoverage >= 0.48
   );
