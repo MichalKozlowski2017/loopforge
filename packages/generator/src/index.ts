@@ -336,6 +336,76 @@ function offroadShareFromSegments(
   return totalM > 0 ? offroadM / totalM : 0;
 }
 
+function isBrouterIslandError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /target island|island detected|not reachable|cannot find a route|routing failed|endpoint not found/i.test(
+    msg,
+  );
+}
+
+function shrinkWaypointsTowardStart(
+  start: LatLng,
+  waypoints: LatLng[],
+  factor: number,
+): LatLng[] {
+  return waypoints.map((wp) => ({
+    lat: start.lat + (wp.lat - start.lat) * factor,
+    lng: start.lng + (wp.lng - start.lng) * factor,
+  }));
+}
+
+function thinWaypoints(waypoints: LatLng[], step: number): LatLng[] {
+  if (waypoints.length <= 3 || step <= 1) return waypoints;
+  const thinned: LatLng[] = [];
+  for (let i = 0; i < waypoints.length; i++) {
+    if (i === waypoints.length - 1 || i % step === 0) {
+      thinned.push(waypoints[i]!);
+    }
+  }
+  return thinned.length >= 2 ? thinned : waypoints;
+}
+
+async function fetchLoopRouteResilient(
+  fetchRoute: (params: {
+    start: LatLng;
+    bikeType: GenerateRouteRequest["bikeType"];
+    waypoints: LatLng[];
+    rideProfile?: GenerateRouteRequest["profile"];
+    avoidAsphalt?: boolean;
+    urbanRouting?: boolean;
+    skipGpx: boolean;
+  }) => Promise<RoutedLoopResult>,
+  params: {
+    start: LatLng;
+    bikeType: GenerateRouteRequest["bikeType"];
+    waypoints: LatLng[];
+    rideProfile?: GenerateRouteRequest["profile"];
+    avoidAsphalt?: boolean;
+    urbanRouting?: boolean;
+    skipGpx: boolean;
+  },
+): Promise<RoutedLoopResult> {
+  const attempts = [
+    params.waypoints,
+    shrinkWaypointsTowardStart(params.start, params.waypoints, 0.88),
+    thinWaypoints(
+      shrinkWaypointsTowardStart(params.start, params.waypoints, 0.82),
+      2,
+    ),
+  ];
+
+  let lastError: unknown;
+  for (const waypoints of attempts) {
+    try {
+      return await fetchRoute({ ...params, waypoints });
+    } catch (error) {
+      lastError = error;
+      if (!isBrouterIslandError(error)) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 function applySpurRefinement(
   routed: RoutedLoopResult,
   targetDistanceKm: number,
@@ -467,7 +537,7 @@ async function generateRouteWithEngine(
   let attempt = 0;
   const maxAttemptsEstimate = variants * MAX_SCALE_PASSES;
   const minLoopKm =
-    request.distanceKm * minLoopShareOfTarget(request.distanceKm);
+    request.distanceKm * minLoopShareOfTarget(request.distanceKm, baseUrban);
   const { onProgress } = options ?? {};
 
   reportProgress(onProgress, {
@@ -543,7 +613,7 @@ async function generateRouteWithEngine(
           options?.homeStart ? { homeStart: options.homeStart } : undefined,
           loopPrefs,
         );
-        const routed = await fetchRoute({
+        const routed = await fetchLoopRouteResilient(fetchRoute, {
           start: request.start,
           bikeType: request.bikeType,
           waypoints,
@@ -837,7 +907,7 @@ async function generateRouteWithEngine(
           options?.homeStart ? { homeStart: options.homeStart } : undefined,
           recoveryPrefs,
         );
-        const routed = await fetchRoute({
+        const routed = await fetchLoopRouteResilient(fetchRoute, {
           start: request.start,
           bikeType: request.bikeType,
           waypoints,
@@ -876,14 +946,27 @@ async function generateRouteWithEngine(
           usedRelaxedFallback = true;
           break;
         }
-      } catch {
-        // try next recovery variant
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[loopforge] recovery variant failed:", error);
+        }
       }
     }
   }
 
   if (!best && bestLowOverlap) {
     best = bestLowOverlap;
+    usedRelaxedFallback = true;
+  }
+
+  if (
+    !best &&
+    bestFallback &&
+    !hasSuspiciousTeleportEdge(bestFallback.coordinates) &&
+    bestFallback.coordinates.length >= 4 &&
+    bestFallback.distanceKm >= request.distanceKm * 0.6
+  ) {
+    best = bestFallback;
     usedRelaxedFallback = true;
   }
 
@@ -963,6 +1046,13 @@ async function generateRouteWithEngine(
   }
 
   const finalized = finalizeLoopWithoutSpurs(best);
+  const preFinalizeMetrics = loopQualityMetrics(
+    best.coordinates,
+    request.distanceKm,
+    best.distanceKm,
+    request.start,
+    request.direction,
+  );
   const finalLoopMetrics = loopQualityMetrics(
     finalized.coordinates,
     request.distanceKm,
@@ -970,24 +1060,33 @@ async function generateRouteWithEngine(
     request.start,
     request.direction,
   );
-  if (
+  const finalizedTooSpurHeavy =
     finalLoopMetrics.spurShare > MAX_SPUR_SHARE * 1.6 ||
-    finalLoopMetrics.backtrack > MAX_BACKTRACK * 1.5
-  ) {
-    throw new Error(
-      "Trasa miałaby zbyt dużo cofania — spróbuj innego kierunku, krótszego dystansu lub podprofilu Balans.",
-    );
+    finalLoopMetrics.backtrack > MAX_BACKTRACK * 1.5;
+  const bestAcceptable =
+    preFinalizeMetrics.spurShare <= MAX_SPUR_SHARE * 2.2 &&
+    preFinalizeMetrics.backtrack <= MAX_BACKTRACK * 2.2;
+
+  let output = finalized;
+  if (finalizedTooSpurHeavy) {
+    if (bestAcceptable) {
+      output = best;
+    } else {
+      throw new Error(
+        "Trasa miałaby zbyt dużo cofania — spróbuj innego kierunku, krótszego dystansu lub podprofilu Balans.",
+      );
+    }
   }
 
   return {
-    route: buildGeneratedRoute(request, finalized.coordinates, {
+    route: buildGeneratedRoute(request, output.coordinates, {
       placeholder: false,
-      elevationGainM: finalized.elevationGainM,
-      segments: finalized.segments,
-      mapGeojson: finalized.mapGeojson ?? undefined,
-      brouterMessages: finalized.brouterMessages,
+      elevationGainM: output.elevationGainM,
+      segments: output.segments,
+      mapGeojson: output.mapGeojson ?? undefined,
+      brouterMessages: output.brouterMessages,
     }),
-    loopSegments: finalized.segments,
+    loopSegments: output.segments,
   };
 }
 

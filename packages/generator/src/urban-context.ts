@@ -21,8 +21,10 @@ export function maxAcceptableDistanceError(targetKm: number, relaxed: boolean): 
 }
 
 /** Minimum routed loop length as a fraction of the requested distance. */
-export function minLoopShareOfTarget(targetKm: number): number {
-  return targetKm >= 40 ? 0.85 : targetKm >= 30 ? 0.82 : 0.78;
+export function minLoopShareOfTarget(targetKm: number, urban = false): number {
+  if (targetKm >= 40) return urban ? 0.8 : 0.85;
+  if (targetKm >= 30) return urban ? 0.78 : 0.82;
+  return 0.78;
 }
 
 export function urbanWaypointAdjustments(

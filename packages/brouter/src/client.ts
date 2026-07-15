@@ -79,7 +79,21 @@ function profilesForRequest(
   if (bikeType === "road") {
     return ROAD_PROFILE[rideProfile ?? "fast"];
   }
-  return [BIKE_PROFILE[bikeType]];
+  if (bikeType === "gravel") {
+    return [
+      BIKE_PROFILE.gravel,
+      "trekking",
+      "fastbike-lowtraffic",
+      "fastbike",
+    ];
+  }
+  return [BIKE_PROFILE.general, "trekking", "fastbike-lowtraffic"];
+}
+
+function isRetryableRoutingError(message: string): boolean {
+  return /target island|island detected|not reachable|cannot find a route|routing failed|endpoint not found/i.test(
+    message,
+  );
 }
 
 function brouterProfileOverrides(
@@ -231,7 +245,11 @@ async function fetchApproachBrouterRoute(
     if (!response.ok) {
       const text = await response.text();
       lastError = new Error(text.trim() || `BRouter HTTP ${response.status}`);
-      if (response.status === 500 && i < profiles.length - 1) continue;
+      const retryable =
+        isRetryableRoutingError(text) ||
+        response.status === 500 ||
+        response.status === 400;
+      if (retryable && i < profiles.length - 1) continue;
       throw lastError;
     }
 
@@ -465,7 +483,11 @@ async function fetchBrouterRoute(
     if (!response.ok) {
       const text = await response.text();
       lastError = new Error(text.trim() || `BRouter HTTP ${response.status}`);
-      if (response.status === 500 && i < profiles.length - 1) continue;
+      const retryable =
+        isRetryableRoutingError(text) ||
+        response.status === 500 ||
+        response.status === 400;
+      if (retryable && i < profiles.length - 1) continue;
       throw lastError;
     }
 
