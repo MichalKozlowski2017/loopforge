@@ -38,6 +38,14 @@ import {
   routeLengthM,
 } from "./prune-spurs";
 import {
+  maxAcceptableDistanceError,
+  mergeLoopPrefs,
+  minLoopShareOfTarget,
+  shouldEscalateUrbanTuning,
+  urbanWaypointAdjustments,
+  useUrbanRouting,
+} from "./urban-context";
+import {
   approachOverlapShare,
   computeLoopEntryTarget,
   loopEntryOffsetM,
@@ -257,6 +265,8 @@ function buildGeneratedRoute(
 const MIN_PRUNE_REMOVED_M = 5;
 const MAX_SPUR_SHARE = 0.035;
 const MAX_BACKTRACK = 0.04;
+const MAX_SCALE_PASSES = 4;
+const SCALE_TARGET_DISTANCE_ERROR = 0.12;
 
 function pavedShareFromSegments(
   segments: { tags: OsmTags; distanceM: number }[],
@@ -396,6 +406,7 @@ async function generateRouteWithEngine(
     waypoints: LatLng[];
     rideProfile?: GenerateRouteRequest["profile"];
     avoidAsphalt?: boolean;
+    urbanRouting?: boolean;
     skipGpx: boolean;
   }) => Promise<RoutedLoopResult>,
   options?: GenerateRouteOptions,
@@ -409,7 +420,9 @@ async function generateRouteWithEngine(
     request.bikeType,
     request.profile,
   );
-  const deadlineMs = Date.now() + 95_000;
+  const baseUrban = useUrbanRouting(request.start, request.distanceKm);
+  const deadlineMs =
+    Date.now() + (baseUrban ? 110_000 : 95_000);
   let best: RoutedLoopResult | null = null;
   let bestScore = Infinity;
   let bestRejected: RoutedLoopResult | null = null;
@@ -421,13 +434,17 @@ async function generateRouteWithEngine(
   let bestApproachOverlap = Infinity;
   let usedRelaxedFallback = false;
   let attempt = 0;
-  const maxAttemptsEstimate = variants * 2;
+  const maxAttemptsEstimate = variants * MAX_SCALE_PASSES;
+  const minLoopKm =
+    request.distanceKm * minLoopShareOfTarget(request.distanceKm);
   const { onProgress } = options ?? {};
 
   reportProgress(onProgress, {
     phase: "planning",
     message: "Szkicuję obwód pętli",
-    detail: `${request.distanceKm} km w kierunku ${DIRECTION_LABEL_PL[request.direction]}`,
+    detail: baseUrban
+      ? `${request.distanceKm} km — tryb miejski (gęsta siatka dróg)`
+      : `${request.distanceKm} km w kierunku ${DIRECTION_LABEL_PL[request.direction]}`,
     progress: 6,
   });
 
@@ -444,15 +461,23 @@ async function generateRouteWithEngine(
     try {
       const scales: number[] = [1.0];
       let variantDone = false;
+      let variantUrbanEscalated = baseUrban;
 
       for (let si = 0; si < scales.length; si++) {
         if (Date.now() > deadlineMs && best) break;
 
-        const scale = scales[si];
+        const scale = scales[si]!;
+        const loopPrefs = mergeLoopPrefs(
+          profilePrefs,
+          urbanWaypointAdjustments(
+            request.distanceKm,
+            variantUrbanEscalated,
+          ),
+        );
         const shape = loopShapeForVariant(
           request.distanceKm,
           variant,
-          profilePrefs,
+          loopPrefs,
         );
         const shapeLabel = shape === "arc" ? "łuk" : "podłużna";
         attempt += 1;
@@ -485,7 +510,7 @@ async function generateRouteWithEngine(
           jitter,
           viaCoords,
           options?.homeStart ? { homeStart: options.homeStart } : undefined,
-          profilePrefs,
+          loopPrefs,
         );
         const routed = await fetchRoute({
           start: request.start,
@@ -493,6 +518,7 @@ async function generateRouteWithEngine(
           waypoints,
           rideProfile: request.profile,
           avoidAsphalt: request.avoidAsphalt,
+          urbanRouting: baseUrban || variantUrbanEscalated,
           skipGpx: true,
         });
 
@@ -510,8 +536,12 @@ async function generateRouteWithEngine(
           request.avoidAsphalt,
           options?.approachCoordinates,
           (request.viaPoints?.length ?? 0) > 0,
-          profilePrefs,
+          loopPrefs,
         );
+
+        if (shouldEscalateUrbanTuning(request.distanceKm, refined.distanceKm)) {
+          variantUrbanEscalated = true;
+        }
 
         reportProgress(onProgress, {
           phase: "scoring",
@@ -527,35 +557,50 @@ async function generateRouteWithEngine(
           bestFallback = refined;
         }
 
-        // One follow-up scale if distance is off (not four scales every time).
+        // Extend scale when loop is too short (common in dense urban grids).
         if (
-          si === 0 &&
-          scales.length === 1 &&
-          metrics.distanceError > 0.05 &&
-          Date.now() < deadlineMs - 8_000
+          refined.distanceKm < request.distanceKm * 0.98 &&
+          metrics.distanceError > SCALE_TARGET_DISTANCE_ERROR &&
+          scales.length < MAX_SCALE_PASSES &&
+          Date.now() < deadlineMs - 6_000
         ) {
-          reportProgress(onProgress, {
-            phase: "refining",
-            message: "Docinam kilometry",
-            detail: `Cel ~${request.distanceKm} km, teraz ${refined.distanceKm.toFixed(1)} km`,
-            progress: Math.min(90, routingProgress + 5),
-          });
-
           const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
           const hasVias = (request.viaPoints?.length ?? 0) > 0;
-          const adjusted =
+          const stretch =
             ratio > 1
               ? 1 +
                 (ratio - 1) *
-                  (hasVias ? 0.92 : request.avoidAsphalt ? 0.38 : 0.98)
-              : ratio * 0.98;
-          const maxScale = hasVias
-            ? Math.min(1.45, 1.12 + request.distanceKm / 350)
-            : request.avoidAsphalt
-              ? Math.min(1.28, 1.08 + request.distanceKm / 400)
-              : 1.35;
-          scales.push(Math.min(maxScale, Math.max(0.72, adjusted)));
+                  (hasVias ? 0.92 : request.avoidAsphalt ? 0.48 : 0.96)
+              : 0.98;
+          const maxScale = baseUrban || variantUrbanEscalated
+            ? Math.min(1.78, 1.18 + request.distanceKm / 260)
+            : hasVias
+              ? Math.min(1.45, 1.12 + request.distanceKm / 350)
+              : request.avoidAsphalt
+                ? Math.min(1.28, 1.08 + request.distanceKm / 400)
+                : 1.55;
+          const nextScale = Math.min(
+            maxScale,
+            Math.max(scale + 0.06, scale * stretch),
+          );
+          if (nextScale > scale + 0.03) {
+            reportProgress(onProgress, {
+              phase: "refining",
+              message: "Docinam kilometry",
+              detail: `Cel ~${request.distanceKm} km, teraz ${refined.distanceKm.toFixed(1)} km — poszerzam obwód`,
+              progress: Math.min(90, routingProgress + 5),
+            });
+            scales.push(nextScale);
+          }
         }
+
+        const maxDistanceError = maxAcceptableDistanceError(
+          request.distanceKm,
+          false,
+        );
+        const tooShort =
+          refined.distanceKm < minLoopKm ||
+          metrics.distanceError > maxDistanceError;
 
         const tooSpurHeavy =
           metrics.spurShare > MAX_SPUR_SHARE || metrics.backtrack > MAX_BACKTRACK;
@@ -575,7 +620,7 @@ async function generateRouteWithEngine(
           (request.viaPoints?.length ?? 0) > 0 &&
           metrics.distanceError > 0.22;
 
-        if (tooSpurHeavy || wrongDirection || tooShortWithVias) {
+        if (tooSpurHeavy || wrongDirection || tooShortWithVias || tooShort) {
           if (quality < bestRejectedScore) {
             bestRejectedScore = quality;
             bestRejected = refined;
@@ -620,7 +665,12 @@ async function generateRouteWithEngine(
             refined.distanceKm,
             request.start,
             request.direction,
-          )
+          ) &&
+          metrics.distanceError <= maxAcceptableDistanceError(
+            request.distanceKm,
+            false,
+          ) &&
+          refined.distanceKm >= minLoopKm
         ) {
           variantDone = true;
           break;
@@ -628,8 +678,10 @@ async function generateRouteWithEngine(
 
         if (
           metrics.directionCoverage >= 0.55 &&
-          metrics.distanceError < 0.16 &&
-          metrics.spurShare < 0.06
+          metrics.distanceError <
+            maxAcceptableDistanceError(request.distanceKm, false) &&
+          metrics.spurShare < 0.06 &&
+          refined.distanceKm >= minLoopKm
         ) {
           variantDone = true;
           break;
@@ -646,7 +698,15 @@ async function generateRouteWithEngine(
           best.distanceKm,
           request.start,
           request.direction,
-        )
+        ) &&
+        best.distanceKm >= minLoopKm &&
+        loopQualityMetrics(
+          best.coordinates,
+          request.distanceKm,
+          best.distanceKm,
+          request.start,
+          request.direction,
+        ).distanceError <= maxAcceptableDistanceError(request.distanceKm, false)
       ) {
         break;
       }
@@ -670,10 +730,14 @@ async function generateRouteWithEngine(
         )
       : 0;
     const hasVias = (request.viaPoints?.length ?? 0) > 0;
-    const rejectedDistanceLimit = hasVias ? 0.32 : 0.45;
+    const rejectedDistanceLimit = maxAcceptableDistanceError(
+      request.distanceKm,
+      true,
+    );
     if (
       rejectedMetrics.directionCoverage >= 0.38 &&
       rejectedMetrics.distanceError < rejectedDistanceLimit &&
+      bestRejected.distanceKm >= minLoopKm &&
       rejectedApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED
     ) {
       best = bestRejected;
@@ -695,11 +759,14 @@ async function generateRouteWithEngine(
           options.approachCoordinates,
         )
       : 0;
-    const hasVias = (request.viaPoints?.length ?? 0) > 0;
-    const fallbackDistanceLimit = hasVias ? 0.35 : 0.52;
+    const fallbackDistanceLimit = maxAcceptableDistanceError(
+      request.distanceKm,
+      true,
+    );
     if (
       fallbackMetrics.directionCoverage >= 0.32 &&
       fallbackMetrics.distanceError < fallbackDistanceLimit &&
+      bestFallback.distanceKm >= minLoopKm &&
       fallbackApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED
     ) {
       best = bestFallback;
@@ -711,10 +778,14 @@ async function generateRouteWithEngine(
     for (const variant of [0, 1, 2, 3]) {
       if (Date.now() > deadlineMs) break;
       try {
+        const recoveryPrefs = mergeLoopPrefs(
+          profilePrefs,
+          urbanWaypointAdjustments(request.distanceKm, true),
+        );
         const shape = loopShapeForVariant(
           request.distanceKm,
           variant,
-          profilePrefs,
+          recoveryPrefs,
         );
         const viaCoords =
           request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
@@ -723,13 +794,13 @@ async function generateRouteWithEngine(
           request.distanceKm,
           request.direction,
           variant,
-          1.0,
+          1.15,
           shape,
           request.avoidAsphalt ?? false,
           jitter,
           viaCoords,
           options?.homeStart ? { homeStart: options.homeStart } : undefined,
-          profilePrefs,
+          recoveryPrefs,
         );
         const routed = await fetchRoute({
           start: request.start,
@@ -737,6 +808,7 @@ async function generateRouteWithEngine(
           waypoints,
           rideProfile: request.profile,
           avoidAsphalt: request.avoidAsphalt,
+          urbanRouting: true,
           skipGpx: true,
         });
         const { refined, metrics } = applySpurRefinement(
@@ -748,7 +820,7 @@ async function generateRouteWithEngine(
           request.avoidAsphalt,
           options?.approachCoordinates,
           (request.viaPoints?.length ?? 0) > 0,
-          profilePrefs,
+          recoveryPrefs,
         );
         const recoveryApproachOverlap = options?.approachCoordinates
           ? approachOverlapShare(
@@ -758,7 +830,9 @@ async function generateRouteWithEngine(
           : 0;
         if (
           metrics.directionCoverage >= 0.3 &&
-          metrics.distanceError < 0.55 &&
+          metrics.distanceError <
+            maxAcceptableDistanceError(request.distanceKm, true) &&
+          refined.distanceKm >= minLoopKm &&
           refined.coordinates.length >= 4 &&
           recoveryApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED
         ) {
@@ -778,8 +852,11 @@ async function generateRouteWithEngine(
   }
 
   if (!best) {
+    const urbanHint = baseUrban
+      ? " W aglomeracji spróbuj krótszego dystansu albo startu za miastem."
+      : "";
     throw new Error(
-      "Nie udało się wygenerować trasy — spróbuj innego kierunku, krótszego dystansu lub wyłącz „unikaj asfaltu”.",
+      `Nie udało się wygenerować trasy — spróbuj innego kierunku, krótszego dystansu lub wyłącz „unikaj asfaltu”.${urbanHint}`,
     );
   }
 
@@ -791,24 +868,16 @@ async function generateRouteWithEngine(
   });
 
   const hasViaPoints = (request.viaPoints?.length ?? 0) > 0;
-  const maxDistanceError = hasViaPoints
-    ? 0.3
-    : request.avoidAsphalt
-      ? Math.min(0.48, 0.3 + request.distanceKm / 500)
-      : 0.38;
   const approachMode = options?.approachCoordinates != null;
   const minDirectionCoverage = usedRelaxedFallback
     ? 0.3
     : approachMode
       ? 0.36
       : 0.42;
-  const distanceErrorLimit = usedRelaxedFallback
-    ? hasViaPoints
-      ? Math.min(0.38, maxDistanceError + 0.08)
-      : Math.min(0.58, maxDistanceError + 0.14)
-    : approachMode
-      ? Math.min(0.52, maxDistanceError + 0.1)
-      : maxDistanceError;
+  const distanceErrorLimit = maxAcceptableDistanceError(
+    request.distanceKm,
+    usedRelaxedFallback,
+  );
 
   let finalMetrics = loopQualityMetrics(
     best.coordinates,
@@ -843,12 +912,16 @@ async function generateRouteWithEngine(
 
   if (
     finalMetrics.directionCoverage < minDirectionCoverage ||
-    finalMetrics.distanceError > distanceErrorLimit
+    finalMetrics.distanceError > distanceErrorLimit ||
+    best.distanceKm < minLoopKm
   ) {
+    const urbanHint = baseUrban
+      ? " W mieście 50 km bywa trudne — spróbuj 35 km albo start za granicą aglomeracji."
+      : "";
     throw new Error(
       hasViaPoints && finalMetrics.distanceError > distanceErrorLimit
         ? `Trasa z punktami przejazdu wyszła za krótka (${best.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km) — dodaj punkty bliżej obwodu pętli lub zmniejsz dystans.`
-        : "Nie udało się dopasować trasy do dystansu i kierunku — spróbuj innego kierunku lub dystansu",
+        : `Nie udało się dopasować trasy do dystansu i kierunku (${best.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km).${urbanHint}`,
     );
   }
 

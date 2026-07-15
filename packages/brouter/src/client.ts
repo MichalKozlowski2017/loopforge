@@ -87,10 +87,11 @@ function brouterProfileOverrides(
   rideProfile?: RideProfile,
   avoidAsphalt?: boolean,
   profileName?: string,
+  urbanRouting?: boolean,
 ): Record<string, string> {
   const overrides: Record<string, string> = {
     correctMisplacedViaPoints: "1",
-    correctMisplacedViaPointsDistance: "1200",
+    correctMisplacedViaPointsDistance: urbanRouting ? "3200" : "1200",
     allow_ferries: "0",
   };
 
@@ -161,6 +162,7 @@ function buildBrouterQuery(
   profileName: string,
   rideProfile?: RideProfile,
   avoidAsphalt?: boolean,
+  urbanRouting?: boolean,
 ): URLSearchParams {
   const query = new URLSearchParams({
     lonlats,
@@ -169,7 +171,13 @@ function buildBrouterQuery(
   });
 
   for (const [key, value] of Object.entries(
-    brouterProfileOverrides(bikeType, rideProfile, avoidAsphalt, profileName),
+    brouterProfileOverrides(
+      bikeType,
+      rideProfile,
+      avoidAsphalt,
+      profileName,
+      urbanRouting,
+    ),
   )) {
     query.set(`profile:${key}`, value);
   }
@@ -278,6 +286,8 @@ export interface WaypointRouteParams {
   waypoints: LatLng[];
   rideProfile?: RideProfile;
   avoidAsphalt?: boolean;
+  /** Looser via-point correction for dense urban road grids. */
+  urbanRouting?: boolean;
   /** Skip extra GPX request — use buildGpx() on the client/generator side. */
   skipGpx?: boolean;
 }
@@ -415,6 +425,7 @@ async function fetchBrouterRoute(
     skipGpx?: boolean;
     rideProfile?: RideProfile;
     avoidAsphalt?: boolean;
+    urbanRouting?: boolean;
   },
 ): Promise<BrouterRouteResult> {
   const lonlats = points.map((p) => `${p.lng},${p.lat}`).join("|");
@@ -429,6 +440,7 @@ async function fetchBrouterRoute(
       profile,
       options?.rideProfile,
       options?.avoidAsphalt,
+      options?.urbanRouting,
     );
 
     const response = await fetchBrouterWithRetry(
@@ -567,7 +579,12 @@ export async function fetchRouteThroughWaypoints(
     params.bikeType,
     loop,
     `Loopforge ${params.bikeType}`,
-    { skipGpx: params.skipGpx, rideProfile: params.rideProfile, avoidAsphalt: params.avoidAsphalt },
+    {
+      skipGpx: params.skipGpx,
+      rideProfile: params.rideProfile,
+      avoidAsphalt: params.avoidAsphalt,
+      urbanRouting: params.urbanRouting,
+    },
   );
 }
 
