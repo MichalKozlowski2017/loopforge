@@ -12,7 +12,7 @@ function escapeXml(value: string): string {
 const EARTH_RADIUS_M = 6_371_000;
 
 /** Default max spacing for bike-computer GPX (Wahoo / Garmin). */
-export const GPX_NAV_MAX_EDGE_M = 20;
+export const GPX_NAV_MAX_EDGE_M = 5;
 
 function haversineM(a: [number, number], b: [number, number]): number {
   const dLat = ((b[1] - a[1]) * Math.PI) / 180;
@@ -58,7 +58,8 @@ export function downsampleTrackForNavigation(
 /**
  * Insert intermediate points so consecutive GPX vertices stay within maxEdgeM.
  * Follows the existing polyline (does not invent shortcuts) — fills long OSM
- * straights where BRouter returns sparse nodes (~100–800 m).
+ * straights where BRouter returns sparse nodes. Default spacing matches ~1 Hz
+ * GPS recording density (~5 m at typical cycling speed).
  */
 export function densifyTrackForNavigation(
   coordinates: [number, number][],
@@ -98,7 +99,7 @@ export interface BuildGpxOptions {
    * Set false only when you need exact BRouter node geometry.
    */
   densify?: boolean;
-  /** Max consecutive GPX edge length when densifying (default 20 m). */
+  /** Max consecutive GPX edge length when densifying (default 5 m). */
   densifyMaxEdgeM?: number;
 }
 

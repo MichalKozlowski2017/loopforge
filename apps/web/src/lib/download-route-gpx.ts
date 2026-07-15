@@ -2,7 +2,7 @@ import { buildGpx } from "@loopforge/gpx";
 import type { StoredRoute } from "@loopforge/osm-types";
 
 /**
- * Export densified BRouter geometry for bike computers (~20 m max edge).
+ * Export densified BRouter geometry for bike computers (~5 m max edge).
  * Never thin — sparse chords cause Wahoo off-course / rerouting.
  */
 export function buildRouteGpxContent(route: StoredRoute): string {
