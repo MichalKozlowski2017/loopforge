@@ -11,6 +11,9 @@ function escapeXml(value: string): string {
 
 const EARTH_RADIUS_M = 6_371_000;
 
+/** Default max spacing for bike-computer GPX (Wahoo / Garmin). */
+export const GPX_NAV_MAX_EDGE_M = 20;
+
 function haversineM(a: [number, number], b: [number, number]): number {
   const dLat = ((b[1] - a[1]) * Math.PI) / 180;
   const dLng = ((b[0] - a[0]) * Math.PI) / 180;
@@ -24,9 +27,7 @@ function haversineM(a: [number, number], b: [number, number]): number {
 
 /**
  * Optional sparse sampling — NOT for Wahoo/Garmin course files.
- * Devices snap navigation to the GPX polyline; ~200 m chords cut forest/path
- * corners and trigger constant off-course + rerouting.
- * Prefer full BRouter geometry for downloads.
+ * Prefer densifyTrackForNavigation for bike-computer exports.
  */
 export function downsampleTrackForNavigation(
   coordinates: [number, number][],
@@ -54,6 +55,36 @@ export function downsampleTrackForNavigation(
   return result.length >= 2 ? result : coordinates;
 }
 
+/**
+ * Insert intermediate points so consecutive GPX vertices stay within maxEdgeM.
+ * Follows the existing polyline (does not invent shortcuts) — fills long OSM
+ * straights where BRouter returns sparse nodes (~100–800 m).
+ */
+export function densifyTrackForNavigation(
+  coordinates: [number, number][],
+  maxEdgeM = GPX_NAV_MAX_EDGE_M,
+): [number, number][] {
+  if (coordinates.length < 2 || maxEdgeM <= 0) return coordinates;
+
+  const result: [number, number][] = [coordinates[0]!];
+
+  for (let i = 1; i < coordinates.length; i++) {
+    const a = coordinates[i - 1]!;
+    const b = coordinates[i]!;
+    const len = haversineM(a, b);
+    if (len > maxEdgeM) {
+      const steps = Math.ceil(len / maxEdgeM);
+      for (let s = 1; s < steps; s++) {
+        const t = s / steps;
+        result.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+      }
+    }
+    result.push(b);
+  }
+
+  return result;
+}
+
 export interface BuildGpxOptions {
   /**
    * Sparse track — only for rare non-navigation use. Off by default.
@@ -62,6 +93,13 @@ export interface BuildGpxOptions {
   navigation?: boolean;
   /** Point spacing when `navigation` is true (default 200 m). */
   navigationIntervalM?: number;
+  /**
+   * Densify long BRouter chords so devices stay on-course (default true).
+   * Set false only when you need exact BRouter node geometry.
+   */
+  densify?: boolean;
+  /** Max consecutive GPX edge length when densifying (default 20 m). */
+  densifyMaxEdgeM?: number;
 }
 
 export function buildGpx(
@@ -70,12 +108,19 @@ export function buildGpx(
   start?: LatLng,
   options?: BuildGpxOptions,
 ): string {
-  const track = options?.navigation
-    ? downsampleTrackForNavigation(
-        coordinates,
-        options.navigationIntervalM ?? 200,
-      )
-    : coordinates;
+  let track = coordinates;
+
+  if (options?.navigation) {
+    track = downsampleTrackForNavigation(
+      track,
+      options.navigationIntervalM ?? 200,
+    );
+  } else if (options?.densify !== false) {
+    track = densifyTrackForNavigation(
+      track,
+      options?.densifyMaxEdgeM ?? GPX_NAV_MAX_EDGE_M,
+    );
+  }
 
   const points = track
     .map(

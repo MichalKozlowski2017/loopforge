@@ -2,9 +2,8 @@ import { buildGpx } from "@loopforge/gpx";
 import type { StoredRoute } from "@loopforge/osm-types";
 
 /**
- * Export the full routed polyline for bike computers.
- * Do not thin to ~200 m — Wahoo/Garmin treat sparse chords as the course line
- * and go off-course whenever the real path curves away from the chord.
+ * Export densified BRouter geometry for bike computers (~20 m max edge).
+ * Never thin — sparse chords cause Wahoo off-course / rerouting.
  */
 export function buildRouteGpxContent(route: StoredRoute): string {
   const hasApproach =
