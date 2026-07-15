@@ -901,7 +901,7 @@ async function generateRouteWithEngine(
           variant,
           1.15,
           shape,
-          request.avoidAsphalt ?? false,
+          false,
           jitter,
           viaCoords,
           options?.homeStart ? { homeStart: options.homeStart } : undefined,
@@ -912,7 +912,7 @@ async function generateRouteWithEngine(
           bikeType: request.bikeType,
           waypoints,
           rideProfile: request.profile,
-          avoidAsphalt: request.avoidAsphalt,
+          avoidAsphalt: false,
           urbanRouting: true,
           skipGpx: true,
         });
@@ -922,28 +922,25 @@ async function generateRouteWithEngine(
           request.start,
           request.direction,
           shape,
-          request.avoidAsphalt,
+          false,
           options?.approachCoordinates,
           (request.viaPoints?.length ?? 0) > 0,
           recoveryPrefs,
         );
-        const recoveryApproachOverlap = options?.approachCoordinates
-          ? approachOverlapShare(
-              refined.coordinates,
-              options.approachCoordinates,
-            )
-          : 0;
         if (
           !hasSuspiciousTeleportEdge(refined.coordinates) &&
-          metrics.directionCoverage >= 0.3 &&
-          metrics.distanceError <
-            maxAcceptableDistanceError(request.distanceKm, true) &&
-          refined.distanceKm >= minLoopKm &&
           refined.coordinates.length >= 4 &&
-          recoveryApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED
+          refined.distanceKm >= request.distanceKm * 0.45
         ) {
           best = refined;
           usedRelaxedFallback = true;
+          if (process.env.NODE_ENV !== "production") {
+            console.warn(
+              "[loopforge] recovery accepted:",
+              `${refined.distanceKm.toFixed(1)} km`,
+              `dir=${metrics.directionCoverage.toFixed(2)}`,
+            );
+          }
           break;
         }
       } catch (error) {
@@ -964,10 +961,53 @@ async function generateRouteWithEngine(
     bestFallback &&
     !hasSuspiciousTeleportEdge(bestFallback.coordinates) &&
     bestFallback.coordinates.length >= 4 &&
-    bestFallback.distanceKm >= request.distanceKm * 0.6
+    bestFallback.distanceKm >= request.distanceKm * 0.35
   ) {
     best = bestFallback;
     usedRelaxedFallback = true;
+  }
+
+  // Prefer any real routed loop over showing the user an empty error.
+  if (!best) {
+    const candidates = [bestRejected, bestFallback, bestLowOverlap].filter(
+      (c): c is RoutedLoopResult =>
+        !!c &&
+        c.coordinates.length >= 4 &&
+        c.distanceKm >= request.distanceKm * 0.35 &&
+        !hasSuspiciousTeleportEdge(c.coordinates),
+    );
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => {
+        const ma = loopQualityMetrics(
+          a.coordinates,
+          request.distanceKm,
+          a.distanceKm,
+          request.start,
+          request.direction,
+        );
+        const mb = loopQualityMetrics(
+          b.coordinates,
+          request.distanceKm,
+          b.distanceKm,
+          request.start,
+          request.direction,
+        );
+        return (
+          ma.distanceError +
+          ma.backtrack * 2 +
+          (1 - ma.directionCoverage) -
+          (mb.distanceError + mb.backtrack * 2 + (1 - mb.directionCoverage))
+        );
+      });
+      best = candidates[0]!;
+      usedRelaxedFallback = true;
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          "[loopforge] last-resort candidate:",
+          `${best.distanceKm.toFixed(1)} km`,
+        );
+      }
+    }
   }
 
   if (!best) {
@@ -982,21 +1022,22 @@ async function generateRouteWithEngine(
   reportProgress(onProgress, {
     phase: "finalizing",
     message: "Satynuję i pakuję GPX",
-    detail: "Ostatnie szlify przed mapą",
+    detail: usedRelaxedFallback
+      ? "Dopięcie trasy (tryb awaryjny — jakość może być niższa)"
+      : "Ostatnie szlify przed mapą",
     progress: 94,
   });
 
   const hasViaPoints = (request.viaPoints?.length ?? 0) > 0;
   const approachMode = options?.approachCoordinates != null;
   const minDirectionCoverage = usedRelaxedFallback
-    ? 0.3
+    ? 0.22
     : approachMode
       ? 0.36
       : 0.42;
-  const distanceErrorLimit = maxAcceptableDistanceError(
-    request.distanceKm,
-    usedRelaxedFallback,
-  );
+  const distanceErrorLimit = usedRelaxedFallback
+    ? Math.max(maxAcceptableDistanceError(request.distanceKm, true), 0.45)
+    : maxAcceptableDistanceError(request.distanceKm, false);
 
   let finalMetrics = loopQualityMetrics(
     best.coordinates,
@@ -1030,19 +1071,39 @@ async function generateRouteWithEngine(
     }
   }
 
+  const minLoopKmFinal = usedRelaxedFallback
+    ? request.distanceKm * 0.35
+    : minLoopKm;
+
   if (
     finalMetrics.directionCoverage < minDirectionCoverage ||
     finalMetrics.distanceError > distanceErrorLimit ||
-    best.distanceKm < minLoopKm
+    best.distanceKm < minLoopKmFinal
   ) {
-    const urbanHint = baseUrban
-      ? " W mieście 50 km bywa trudne — spróbuj 35 km albo start za granicą aglomeracji."
-      : "";
-    throw new Error(
-      hasViaPoints && finalMetrics.distanceError > distanceErrorLimit
-        ? `Trasa z punktami przejazdu wyszła za krótka (${best.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km) — dodaj punkty bliżej obwodu pętli lub zmniejsz dystans.`
-        : `Nie udało się dopasować trasy do dystansu i kierunku (${best.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km).${urbanHint}`,
-    );
+    // Once BRouter found roads, keep the loop — imperfect beats empty UI.
+    if (
+      best.coordinates.length >= 4 &&
+      best.distanceKm >= request.distanceKm * 0.35
+    ) {
+      usedRelaxedFallback = true;
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          "[loopforge] accepting imperfect loop:",
+          `${best.distanceKm.toFixed(1)} km`,
+          `dir=${finalMetrics.directionCoverage.toFixed(2)}`,
+          `err=${finalMetrics.distanceError.toFixed(2)}`,
+        );
+      }
+    } else {
+      const urbanHint = baseUrban
+        ? " W mieście 50 km bywa trudne — spróbuj 35 km albo start za granicą aglomeracji."
+        : "";
+      throw new Error(
+        hasViaPoints && finalMetrics.distanceError > distanceErrorLimit
+          ? `Trasa z punktami przejazdu wyszła za krótka (${best.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km) — dodaj punkty bliżej obwodu pętli lub zmniejsz dystans.`
+          : `Nie udało się dopasować trasy do dystansu i kierunku (${best.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km).${urbanHint}`,
+      );
+    }
   }
 
   const finalized = finalizeLoopWithoutSpurs(best);
@@ -1063,17 +1124,19 @@ async function generateRouteWithEngine(
   const finalizedTooSpurHeavy =
     finalLoopMetrics.spurShare > MAX_SPUR_SHARE * 1.6 ||
     finalLoopMetrics.backtrack > MAX_BACKTRACK * 1.5;
-  const bestAcceptable =
-    preFinalizeMetrics.spurShare <= MAX_SPUR_SHARE * 2.2 &&
-    preFinalizeMetrics.backtrack <= MAX_BACKTRACK * 2.2;
 
+  // Prefer prune when it helps; never abort for spur score alone.
   let output = finalized;
   if (finalizedTooSpurHeavy) {
-    if (bestAcceptable) {
-      output = best;
-    } else {
-      throw new Error(
-        "Trasa miałaby zbyt dużo cofania — spróbuj innego kierunku, krótszego dystansu lub podprofilu Balans.",
+    const keepOriginal =
+      preFinalizeMetrics.backtrack + preFinalizeMetrics.spurShare <=
+      finalLoopMetrics.backtrack + finalLoopMetrics.spurShare;
+    output = keepOriginal ? best : finalized;
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        "[loopforge] spur/backtrack high — returning",
+        keepOriginal ? "pre-prune" : "pruned",
+        `backtrack=${(keepOriginal ? preFinalizeMetrics : finalLoopMetrics).backtrack.toFixed(3)}`,
       );
     }
   }
