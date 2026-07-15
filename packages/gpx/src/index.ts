@@ -22,7 +22,12 @@ function haversineM(a: [number, number], b: [number, number]): number {
   return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
 }
 
-/** Reduce GPX point density so bike computers follow the corridor, not every OSM kink. */
+/**
+ * Optional sparse sampling — NOT for Wahoo/Garmin course files.
+ * Devices snap navigation to the GPX polyline; ~200 m chords cut forest/path
+ * corners and trigger constant off-course + rerouting.
+ * Prefer full BRouter geometry for downloads.
+ */
 export function downsampleTrackForNavigation(
   coordinates: [number, number][],
   intervalM = 200,
@@ -50,7 +55,10 @@ export function downsampleTrackForNavigation(
 }
 
 export interface BuildGpxOptions {
-  /** Sparse track (~200 m) for devices that hyper-follow every OSM vertex. */
+  /**
+   * Sparse track — only for rare non-navigation use. Off by default.
+   * Do not enable for bike-computer GPX downloads.
+   */
   navigation?: boolean;
   /** Point spacing when `navigation` is true (default 200 m). */
   navigationIntervalM?: number;
