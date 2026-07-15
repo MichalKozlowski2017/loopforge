@@ -38,6 +38,7 @@ import {
   pruneMapGeoJson,
   routeLengthM,
   hasBrokenRouteGeometry,
+  hasSuspiciousTeleportEdge,
 } from "./prune-spurs";
 import {
   maxAcceptableDistanceError,
@@ -238,7 +239,7 @@ function buildGeneratedRoute(
 ): GeneratedRoute {
   const { start, bikeType, direction, distanceKm } = request;
   const navCoordinates = prepareCoordinatesForNavigation(coordinates);
-  if (hasBrokenRouteGeometry(navCoordinates)) {
+  if (hasSuspiciousTeleportEdge(navCoordinates)) {
     throw new Error(
       "Trasa ma przerwy w nawigacji (skróty przez mapę) — spróbuj innego kierunku lub krótszego dystansu.",
     );
@@ -358,7 +359,7 @@ function applySpurRefinement(
     pruned.coordinates.length >= 4;
   let coordinates = usePruned ? pruned.coordinates : routed.coordinates;
 
-  if (usePruned && hasBrokenRouteGeometry(coordinates)) {
+  if (usePruned && hasBrokenRouteGeometry(coordinates, routed.coordinates)) {
     usePruned = false;
     coordinates = routed.coordinates;
   }
@@ -412,7 +413,7 @@ function finalizeLoopWithoutSpurs(best: RoutedLoopResult): RoutedLoopResult {
     pruned.removedRanges.length === 0 ||
     pruned.removedM < MIN_PRUNE_REMOVED_M ||
     pruned.coordinates.length < 4 ||
-    hasBrokenRouteGeometry(pruned.coordinates)
+    hasBrokenRouteGeometry(pruned.coordinates, best.coordinates)
   ) {
     return best;
   }
@@ -557,8 +558,6 @@ async function generateRouteWithEngine(
         );
         if (hasFerry) continue;
 
-        if (hasBrokenRouteGeometry(routed.coordinates)) continue;
-
         const { refined, metrics, quality } = applySpurRefinement(
           routed,
           request.distanceKm,
@@ -570,14 +569,6 @@ async function generateRouteWithEngine(
           (request.viaPoints?.length ?? 0) > 0,
           loopPrefs,
         );
-
-        if (hasBrokenRouteGeometry(refined.coordinates)) {
-          if (quality < bestRejectedScore) {
-            bestRejectedScore = quality;
-            bestRejected = refined;
-          }
-          continue;
-        }
 
         if (shouldEscalateUrbanTuning(request.distanceKm, refined.distanceKm)) {
           variantUrbanEscalated = true;
@@ -750,8 +741,10 @@ async function generateRouteWithEngine(
       ) {
         break;
       }
-    } catch {
-      // try next variant
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[loopforge] variant failed:", error);
+      }
     }
   }
 
@@ -779,7 +772,7 @@ async function generateRouteWithEngine(
       rejectedMetrics.distanceError < rejectedDistanceLimit &&
       bestRejected.distanceKm >= minLoopKm &&
       rejectedApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED &&
-      !hasBrokenRouteGeometry(bestRejected.coordinates)
+      !hasSuspiciousTeleportEdge(bestRejected.coordinates)
     ) {
       best = bestRejected;
       usedRelaxedFallback = true;
@@ -809,7 +802,7 @@ async function generateRouteWithEngine(
       fallbackMetrics.distanceError < fallbackDistanceLimit &&
       bestFallback.distanceKm >= minLoopKm &&
       fallbackApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED &&
-      !hasBrokenRouteGeometry(bestFallback.coordinates)
+      !hasSuspiciousTeleportEdge(bestFallback.coordinates)
     ) {
       best = bestFallback;
       usedRelaxedFallback = true;
@@ -853,8 +846,6 @@ async function generateRouteWithEngine(
           urbanRouting: true,
           skipGpx: true,
         });
-        if (hasBrokenRouteGeometry(routed.coordinates)) continue;
-
         const { refined, metrics } = applySpurRefinement(
           routed,
           request.distanceKm,
@@ -873,7 +864,7 @@ async function generateRouteWithEngine(
             )
           : 0;
         if (
-          !hasBrokenRouteGeometry(refined.coordinates) &&
+          !hasSuspiciousTeleportEdge(refined.coordinates) &&
           metrics.directionCoverage >= 0.3 &&
           metrics.distanceError <
             maxAcceptableDistanceError(request.distanceKm, true) &&
@@ -948,7 +939,7 @@ async function generateRouteWithEngine(
     if (
       lowOverlapMetrics.directionCoverage >= minDirectionCoverage &&
       lowOverlapMetrics.distanceError <= distanceErrorLimit &&
-      !hasBrokenRouteGeometry(bestLowOverlap.coordinates)
+      !hasSuspiciousTeleportEdge(bestLowOverlap.coordinates)
     ) {
       best = bestLowOverlap;
       finalMetrics = lowOverlapMetrics;

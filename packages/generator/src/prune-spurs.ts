@@ -398,28 +398,72 @@ export function pruneApproachDeadEndSpurs(coordinates: Coord[]): PruneSpursResul
   };
 }
 
-/** Max straight-line gap between consecutive nav points (meters). */
-export const MAX_NAV_EDGE_M = 200;
+/** BRouter often spaces points ~500–700 m apart on long straights — not a GPS teleport. */
+const NORMAL_BROUTER_MAX_EDGE_M = 750;
+const ABSOLUTE_TELEPORT_M = 2000;
 
-export function maxConsecutiveEdgeM(coordinates: Coord[]): number {
-  let max = 0;
+function edgeLengthsM(coordinates: Coord[]): number[] {
+  const edges: number[] = [];
   for (let i = 1; i < coordinates.length; i++) {
-    max = Math.max(
-      max,
+    edges.push(
       haversineM(toLatLng(coordinates[i - 1]), toLatLng(coordinates[i])),
     );
   }
-  return max;
+  return edges;
 }
 
-/** True when consecutive points jump across unmapped space (Wahoo / GPX unsafe). */
-export function hasBrokenRouteGeometry(
-  coordinates: Coord[],
-  maxLegM = MAX_NAV_EDGE_M,
-): boolean {
-  if (coordinates.length < 2) return false;
-  return maxConsecutiveEdgeM(coordinates) > maxLegM;
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * p));
+  return sorted[idx]!;
 }
+
+export function maxConsecutiveEdgeM(coordinates: Coord[]): number {
+  const edges = edgeLengthsM(coordinates);
+  return edges.length > 0 ? Math.max(...edges) : 0;
+}
+
+/** Long chord that stands out from normal BRouter point spacing (map teleport / bad prune). */
+export function hasSuspiciousTeleportEdge(coordinates: Coord[]): boolean {
+  if (coordinates.length < 3) return false;
+
+  const edges = edgeLengthsM(coordinates);
+  const max = Math.max(...edges);
+  if (max <= NORMAL_BROUTER_MAX_EDGE_M) return false;
+
+  const sorted = [...edges].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)]!;
+  const p95 = percentile(sorted, 0.95);
+
+  if (max > ABSOLUTE_TELEPORT_M) return true;
+  if (max > 900 && max > p95 * 10) return true;
+  if (max > NORMAL_BROUTER_MAX_EDGE_M && max > p95 * 14 && max > median * 50) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Detect geometry unsafe for GPS — compares before/after prune when available.
+ * Do not use a flat 200 m threshold; BRouter legitimately emits ~600 m legs.
+ */
+export function hasBrokenRouteGeometry(
+  after: Coord[],
+  before?: Coord[],
+): boolean {
+  if (before && before.length >= 2) {
+    const beforeMax = maxConsecutiveEdgeM(before);
+    const afterMax = maxConsecutiveEdgeM(after);
+    if (afterMax > beforeMax + 60 && afterMax > 280) {
+      return true;
+    }
+  }
+  return hasSuspiciousTeleportEdge(after);
+}
+
+/** @deprecated Use hasBrokenRouteGeometry — kept for tuning/tests. */
+export const MAX_NAV_EDGE_M = NORMAL_BROUTER_MAX_EDGE_M;
 
 /** Iteratively remove dead-end spurs from a routed loop. */
 export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
@@ -461,7 +505,7 @@ export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
     };
   }
 
-  if (hasBrokenRouteGeometry(current) && !hasBrokenRouteGeometry(coordinates)) {
+  if (hasBrokenRouteGeometry(current, coordinates)) {
     return {
       coordinates,
       removedRanges: [],
@@ -597,7 +641,7 @@ export function prepareCoordinatesForNavigation(coordinates: Coord[]): Coord[] {
   const pruned = pruneDeadEndSpurs(coordinates);
   const candidate =
     pruned.coordinates.length >= 4 ? pruned.coordinates : coordinates;
-  return hasBrokenRouteGeometry(candidate) ? coordinates : candidate;
+  return hasBrokenRouteGeometry(candidate, coordinates) ? coordinates : candidate;
 }
 
 export { totalPathLengthM as routeLengthM };
