@@ -88,12 +88,19 @@ function brouterProfileOverrides(
   avoidAsphalt?: boolean,
   profileName?: string,
   urbanRouting?: boolean,
+  closedLoop?: boolean,
 ): Record<string, string> {
   const overrides: Record<string, string> = {
-    correctMisplacedViaPoints: "1",
-    correctMisplacedViaPointsDistance: urbanRouting ? "3200" : "1200",
     allow_ferries: "0",
   };
+
+  if (closedLoop) {
+    // Closed loops (start = end) — via correction cuts valid loop legs as "detours".
+    overrides.correctMisplacedViaPoints = "0";
+  } else {
+    overrides.correctMisplacedViaPoints = "1";
+    overrides.correctMisplacedViaPointsDistance = urbanRouting ? "3200" : "1200";
+  }
 
   if (bikeType === "gravel" || bikeType === "general") {
     if (rideProfile === "technical") {
@@ -163,6 +170,7 @@ function buildBrouterQuery(
   rideProfile?: RideProfile,
   avoidAsphalt?: boolean,
   urbanRouting?: boolean,
+  closedLoop?: boolean,
 ): URLSearchParams {
   const query = new URLSearchParams({
     lonlats,
@@ -177,6 +185,7 @@ function buildBrouterQuery(
       avoidAsphalt,
       profileName,
       urbanRouting,
+      closedLoop,
     ),
   )) {
     query.set(`profile:${key}`, value);
@@ -299,6 +308,8 @@ export interface BrouterRouteResult {
   segments: { tags: OsmTags; distanceM: number }[];
   mapGeojson: RouteMapGeoJson | null;
   gpx: string;
+  /** Raw BRouter message rows — used to recolor geometry after post-processing. */
+  brouterMessages?: string[][];
 }
 
 interface BrouterGeoJson {
@@ -426,6 +437,8 @@ async function fetchBrouterRoute(
     rideProfile?: RideProfile;
     avoidAsphalt?: boolean;
     urbanRouting?: boolean;
+    /** Route returns to its first point (loop) — disable via-point detour stripping. */
+    closedLoop?: boolean;
   },
 ): Promise<BrouterRouteResult> {
   const lonlats = points.map((p) => `${p.lng},${p.lat}`).join("|");
@@ -441,6 +454,7 @@ async function fetchBrouterRoute(
       options?.rideProfile,
       options?.avoidAsphalt,
       options?.urbanRouting,
+      options?.closedLoop,
     );
 
     const response = await fetchBrouterWithRetry(
@@ -496,6 +510,7 @@ async function fetchBrouterRoute(
       segments,
       mapGeojson,
       gpx,
+      brouterMessages: messages,
     };
   }
 
@@ -584,6 +599,7 @@ export async function fetchRouteThroughWaypoints(
       rideProfile: params.rideProfile,
       avoidAsphalt: params.avoidAsphalt,
       urbanRouting: params.urbanRouting,
+      closedLoop: true,
     },
   );
 }

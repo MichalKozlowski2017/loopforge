@@ -398,6 +398,29 @@ export function pruneApproachDeadEndSpurs(coordinates: Coord[]): PruneSpursResul
   };
 }
 
+/** Max straight-line gap between consecutive nav points (meters). */
+export const MAX_NAV_EDGE_M = 200;
+
+export function maxConsecutiveEdgeM(coordinates: Coord[]): number {
+  let max = 0;
+  for (let i = 1; i < coordinates.length; i++) {
+    max = Math.max(
+      max,
+      haversineM(toLatLng(coordinates[i - 1]), toLatLng(coordinates[i])),
+    );
+  }
+  return max;
+}
+
+/** True when consecutive points jump across unmapped space (Wahoo / GPX unsafe). */
+export function hasBrokenRouteGeometry(
+  coordinates: Coord[],
+  maxLegM = MAX_NAV_EDGE_M,
+): boolean {
+  if (coordinates.length < 2) return false;
+  return maxConsecutiveEdgeM(coordinates) > maxLegM;
+}
+
 /** Iteratively remove dead-end spurs from a routed loop. */
 export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
   let current = coordinates;
@@ -431,6 +454,14 @@ export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
 
   const afterM = totalPathLengthM(current);
   if (afterM < beforeM * 0.58) {
+    return {
+      coordinates,
+      removedRanges: [],
+      removedM: 0,
+    };
+  }
+
+  if (hasBrokenRouteGeometry(current) && !hasBrokenRouteGeometry(coordinates)) {
     return {
       coordinates,
       removedRanges: [],
@@ -564,7 +595,9 @@ export function pruneMapGeoJson(
 /** Strip dead-end spurs before GPX export (map keeps full geometry). */
 export function prepareCoordinatesForNavigation(coordinates: Coord[]): Coord[] {
   const pruned = pruneDeadEndSpurs(coordinates);
-  return pruned.coordinates.length >= 4 ? pruned.coordinates : coordinates;
+  const candidate =
+    pruned.coordinates.length >= 4 ? pruned.coordinates : coordinates;
+  return hasBrokenRouteGeometry(candidate) ? coordinates : candidate;
 }
 
 export { totalPathLengthM as routeLengthM };

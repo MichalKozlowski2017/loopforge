@@ -12,6 +12,7 @@ import {
   fetchApproachRouteBetweenPoints as fetchBrouterApproach,
   fetchApproachRouteThroughPoints as fetchBrouterApproachThrough,
   getBrouterConfig,
+  buildColoredGeoJsonFromRoute,
 } from "@loopforge/brouter";
 import {
   fetchRouteThroughWaypoints as fetchPgRoute,
@@ -36,6 +37,7 @@ import {
   pruneDeadEndSpurs,
   pruneMapGeoJson,
   routeLengthM,
+  hasBrokenRouteGeometry,
 } from "./prune-spurs";
 import {
   maxAcceptableDistanceError,
@@ -113,6 +115,24 @@ interface RoutedLoopResult {
   segments: { tags: import("@loopforge/osm-types").OsmTags; distanceM: number }[];
   mapGeojson?: import("@loopforge/osm-types").RouteMapGeoJson;
   gpx?: string;
+  brouterMessages?: string[][];
+}
+
+function syncMapGeoJson(
+  coordinates: [number, number][],
+  routed: Pick<RoutedLoopResult, "mapGeojson" | "brouterMessages">,
+): import("@loopforge/osm-types").RouteMapGeoJson | undefined {
+  if (routed.brouterMessages && routed.brouterMessages.length > 0) {
+    return (
+      buildColoredGeoJsonFromRoute(coordinates, routed.brouterMessages) ??
+      undefined
+    );
+  }
+  return (
+    pruneMapGeoJson(routed.mapGeojson ?? null, coordinates) ??
+    routed.mapGeojson ??
+    undefined
+  );
 }
 
 function toRadians(deg: number): number {
@@ -212,14 +232,23 @@ function buildGeneratedRoute(
     elevationGainM: number;
     segments: { tags: import("@loopforge/osm-types").OsmTags; distanceM: number }[];
     mapGeojson?: import("@loopforge/osm-types").RouteMapGeoJson;
+    brouterMessages?: string[][];
     gpx?: string;
   },
 ): GeneratedRoute {
   const { start, bikeType, direction, distanceKm } = request;
   const navCoordinates = prepareCoordinatesForNavigation(coordinates);
-  const syncedMapGeojson = options.mapGeojson
-    ? pruneMapGeoJson(options.mapGeojson, navCoordinates)
-    : null;
+  if (hasBrokenRouteGeometry(navCoordinates)) {
+    throw new Error(
+      "Trasa ma przerwy w nawigacji (skróty przez mapę) — spróbuj innego kierunku lub krótszego dystansu.",
+    );
+  }
+  const syncedMapGeojson =
+    options.brouterMessages && options.brouterMessages.length > 0
+      ? buildColoredGeoJsonFromRoute(navCoordinates, options.brouterMessages)
+      : options.mapGeojson
+        ? pruneMapGeoJson(options.mapGeojson, navCoordinates)
+        : null;
   const actualKm =
     navCoordinates.length > 1 ? totalDistanceKm(navCoordinates) : distanceKm;
   const score = scoreRoute(options.segments, bikeType, request.profile);
@@ -323,15 +352,18 @@ function applySpurRefinement(
   pruned: boolean;
 } {
   const pruned = pruneDeadEndSpurs(routed.coordinates);
-  const usePruned =
+  let usePruned =
     pruned.removedRanges.length > 0 &&
     pruned.removedM >= MIN_PRUNE_REMOVED_M &&
     pruned.coordinates.length >= 4;
-  const coordinates = usePruned ? pruned.coordinates : routed.coordinates;
-  const mapGeojson = pruneMapGeoJson(
-    routed.mapGeojson ?? null,
-    coordinates,
-  );
+  let coordinates = usePruned ? pruned.coordinates : routed.coordinates;
+
+  if (usePruned && hasBrokenRouteGeometry(coordinates)) {
+    usePruned = false;
+    coordinates = routed.coordinates;
+  }
+
+  const mapGeojson = syncMapGeoJson(coordinates, routed);
 
   const refined: RoutedLoopResult = {
     ...routed,
@@ -379,16 +411,14 @@ function finalizeLoopWithoutSpurs(best: RoutedLoopResult): RoutedLoopResult {
   if (
     pruned.removedRanges.length === 0 ||
     pruned.removedM < MIN_PRUNE_REMOVED_M ||
-    pruned.coordinates.length < 4
+    pruned.coordinates.length < 4 ||
+    hasBrokenRouteGeometry(pruned.coordinates)
   ) {
     return best;
   }
 
   const coordinates = pruned.coordinates;
-  const mapGeojson =
-    pruneMapGeoJson(best.mapGeojson ?? null, coordinates) ??
-    best.mapGeojson ??
-    undefined;
+  const mapGeojson = syncMapGeoJson(coordinates, best);
 
   return {
     ...best,
@@ -527,6 +557,8 @@ async function generateRouteWithEngine(
         );
         if (hasFerry) continue;
 
+        if (hasBrokenRouteGeometry(routed.coordinates)) continue;
+
         const { refined, metrics, quality } = applySpurRefinement(
           routed,
           request.distanceKm,
@@ -538,6 +570,14 @@ async function generateRouteWithEngine(
           (request.viaPoints?.length ?? 0) > 0,
           loopPrefs,
         );
+
+        if (hasBrokenRouteGeometry(refined.coordinates)) {
+          if (quality < bestRejectedScore) {
+            bestRejectedScore = quality;
+            bestRejected = refined;
+          }
+          continue;
+        }
 
         if (shouldEscalateUrbanTuning(request.distanceKm, refined.distanceKm)) {
           variantUrbanEscalated = true;
@@ -738,7 +778,8 @@ async function generateRouteWithEngine(
       rejectedMetrics.directionCoverage >= 0.38 &&
       rejectedMetrics.distanceError < rejectedDistanceLimit &&
       bestRejected.distanceKm >= minLoopKm &&
-      rejectedApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED
+      rejectedApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED &&
+      !hasBrokenRouteGeometry(bestRejected.coordinates)
     ) {
       best = bestRejected;
       usedRelaxedFallback = true;
@@ -767,7 +808,8 @@ async function generateRouteWithEngine(
       fallbackMetrics.directionCoverage >= 0.32 &&
       fallbackMetrics.distanceError < fallbackDistanceLimit &&
       bestFallback.distanceKm >= minLoopKm &&
-      fallbackApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED
+      fallbackApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED &&
+      !hasBrokenRouteGeometry(bestFallback.coordinates)
     ) {
       best = bestFallback;
       usedRelaxedFallback = true;
@@ -811,6 +853,8 @@ async function generateRouteWithEngine(
           urbanRouting: true,
           skipGpx: true,
         });
+        if (hasBrokenRouteGeometry(routed.coordinates)) continue;
+
         const { refined, metrics } = applySpurRefinement(
           routed,
           request.distanceKm,
@@ -829,6 +873,7 @@ async function generateRouteWithEngine(
             )
           : 0;
         if (
+          !hasBrokenRouteGeometry(refined.coordinates) &&
           metrics.directionCoverage >= 0.3 &&
           metrics.distanceError <
             maxAcceptableDistanceError(request.distanceKm, true) &&
@@ -902,7 +947,8 @@ async function generateRouteWithEngine(
     );
     if (
       lowOverlapMetrics.directionCoverage >= minDirectionCoverage &&
-      lowOverlapMetrics.distanceError <= distanceErrorLimit
+      lowOverlapMetrics.distanceError <= distanceErrorLimit &&
+      !hasBrokenRouteGeometry(bestLowOverlap.coordinates)
     ) {
       best = bestLowOverlap;
       finalMetrics = lowOverlapMetrics;
@@ -948,6 +994,7 @@ async function generateRouteWithEngine(
       elevationGainM: finalized.elevationGainM,
       segments: finalized.segments,
       mapGeojson: finalized.mapGeojson ?? undefined,
+      brouterMessages: finalized.brouterMessages,
     }),
     loopSegments: finalized.segments,
   };
@@ -1314,6 +1361,7 @@ async function generateLoopRoute(
           segments: routed.segments,
           mapGeojson: routed.mapGeojson ?? undefined,
           gpx: routed.gpx,
+          brouterMessages: routed.brouterMessages,
         };
       },
       options,

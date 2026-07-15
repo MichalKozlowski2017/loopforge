@@ -1,6 +1,7 @@
 export { getBrouterConfig, isBrouterConfigured, type BrouterConfig } from "./config";
 export {
   buildColoredGeoJson,
+  buildColoredGeoJsonFromRoute,
   colorForSurface,
 } from "./colored-geojson";
 export { SURFACE_LEGEND } from "@loopforge/osm-types";
