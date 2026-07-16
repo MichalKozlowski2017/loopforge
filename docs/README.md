@@ -6,6 +6,7 @@
 |---|---|
 | [plan.md](./plan.md) | Pełny plan: architektura, algorytm, scoring, API, stack, ryzyka |
 | [phases.md](./phases.md) | Fazy 0–4 — cele, kryteria sukcesu, checklist |
+| [pro-plan.md](./pro-plan.md) | Model biznesowy, Free vs Pro, roadmapa feature’ów Pro |
 | [setup.md](./setup.md) | Instalacja środowiska na Macu (Faza 0) |
 | [github.md](./github.md) | Instrukcja: repo GitHub + remote |
 
