@@ -20,6 +20,12 @@ export function maxAcceptableDistanceError(targetKm: number, relaxed: boolean): 
   return relaxed ? 0.26 : 0.22;
 }
 
+/** Maximum routed loop length as a fraction of the requested distance. */
+export function maxLoopShareOfTarget(targetKm: number, relaxed = false): number {
+  const err = maxAcceptableDistanceError(targetKm, relaxed);
+  return 1 + err;
+}
+
 /** Minimum routed loop length as a fraction of the requested distance. */
 export function minLoopShareOfTarget(targetKm: number, urban = false): number {
   if (targetKm >= 40) return urban ? 0.8 : 0.85;

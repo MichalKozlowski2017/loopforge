@@ -315,11 +315,63 @@ function mergeSpurRanges(ranges: SpurRange[]): SpurRange[] {
   return merged;
 }
 
-function removeSpurRanges(coordinates: Coord[], ranges: SpurRange[]): Coord[] {
-  if (ranges.length === 0) return coordinates;
+/**
+ * Max length of a *new* edge created by removing spur indices.
+ * Longer stitches jump across the map (fields/buildings) instead of roads.
+ */
+const MAX_PRUNE_STITCH_EDGE_M = 45;
+
+function wouldCreateAirChord(
+  coordinates: Coord[],
+  ranges: SpurRange[],
+  maxStitchM: number,
+): boolean {
+  if (ranges.length === 0) return false;
 
   const remove = new Set<number>();
   for (const range of ranges) {
+    for (let i = range.start; i <= range.end; i++) {
+      remove.add(i);
+    }
+  }
+
+  let prevKept = -1;
+  for (let i = 0; i < coordinates.length; i++) {
+    if (remove.has(i)) continue;
+    if (prevKept >= 0 && i > prevKept + 1) {
+      const stitchM = haversineM(
+        toLatLng(coordinates[prevKept]!),
+        toLatLng(coordinates[i]!),
+      );
+      if (stitchM > maxStitchM) return true;
+    }
+    prevKept = i;
+  }
+  return false;
+}
+
+function removeSpurRanges(coordinates: Coord[], ranges: SpurRange[]): Coord[] {
+  if (ranges.length === 0) return coordinates;
+
+  // Drop ranges that would stitch endpoints across a long air gap.
+  const safeRanges = ranges.filter((range) => {
+    const before = Math.max(0, range.start - 1);
+    const after = Math.min(coordinates.length - 1, range.end + 1);
+    if (after <= before) return false;
+    const stitchM = haversineM(
+      toLatLng(coordinates[before]!),
+      toLatLng(coordinates[after]!),
+    );
+    return stitchM <= MAX_PRUNE_STITCH_EDGE_M;
+  });
+
+  if (safeRanges.length === 0) return coordinates;
+  if (wouldCreateAirChord(coordinates, safeRanges, MAX_PRUNE_STITCH_EDGE_M)) {
+    return coordinates;
+  }
+
+  const remove = new Set<number>();
+  for (const range of safeRanges) {
     for (let i = range.start; i <= range.end; i++) {
       remove.add(i);
     }
@@ -398,9 +450,9 @@ export function pruneApproachDeadEndSpurs(coordinates: Coord[]): PruneSpursResul
   };
 }
 
-/** BRouter often spaces points ~500–700 m apart on long straights — not a GPS teleport. */
+/** Long on-network BRouter edges exist; air-chords from prune must stay shorter. */
 const NORMAL_BROUTER_MAX_EDGE_M = 750;
-const ABSOLUTE_TELEPORT_M = 2000;
+const ABSOLUTE_TELEPORT_M = 1200;
 
 function edgeLengthsM(coordinates: Coord[]): number[] {
   const edges: number[] = [];
@@ -429,21 +481,20 @@ export function hasSuspiciousTeleportEdge(coordinates: Coord[]): boolean {
 
   const edges = edgeLengthsM(coordinates);
   const max = Math.max(...edges);
-  if (max <= NORMAL_BROUTER_MAX_EDGE_M) {
-    const sorted = [...edges].sort((a, b) => a - b);
-    const p95 = percentile(sorted, 0.95);
-    // One long edge among mostly short urban vertices — map chord through blocks.
-    if (max > 120 && p95 < 90 && max > p95 * 2.5) return true;
-    return false;
-  }
-
   const sorted = [...edges].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)]!;
   const p95 = percentile(sorted, 0.95);
 
+  // Hard ceiling — nothing on a bike route should jump 1.2 km in one edge.
   if (max > ABSOLUTE_TELEPORT_M) return true;
-  if (max > 900 && max > p95 * 10) return true;
-  if (max > NORMAL_BROUTER_MAX_EDGE_M && max > p95 * 14 && max > median * 50) {
+
+  // Dense polyline (urban): one edge much longer than the rest → likely air chord.
+  if (p95 > 0 && p95 < 60 && max > 150 && max > p95 * 4) {
+    return true;
+  }
+
+  // Sparse BRouter rural legs (~500–700 m) are normal; only extreme outliers.
+  if (max > NORMAL_BROUTER_MAX_EDGE_M && max > p95 * 8 && max > median * 25) {
     return true;
   }
 
@@ -452,7 +503,7 @@ export function hasSuspiciousTeleportEdge(coordinates: Coord[]): boolean {
 
 /**
  * Detect geometry unsafe for GPS — compares before/after prune when available.
- * Do not use a flat 200 m threshold; BRouter legitimately emits ~600 m legs.
+ * Any new stitch longer than a short junction gap is treated as broken.
  */
 export function hasBrokenRouteGeometry(
   after: Coord[],
@@ -461,7 +512,7 @@ export function hasBrokenRouteGeometry(
   if (before && before.length >= 2) {
     const beforeMax = maxConsecutiveEdgeM(before);
     const afterMax = maxConsecutiveEdgeM(after);
-    if (afterMax > beforeMax + 60 && afterMax > 280) {
+    if (afterMax > beforeMax + 25 && afterMax > MAX_PRUNE_STITCH_EDGE_M) {
       return true;
     }
   }

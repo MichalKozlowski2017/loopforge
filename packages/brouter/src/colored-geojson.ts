@@ -145,19 +145,16 @@ export function extractRouteCoordinatesFromMessages(
   return coords;
 }
 
-/** Prefer whichever BRouter source has more vertices — avoids map chords on curves. */
+/**
+ * Prefer BRouter GeoJSON shape points over message vertices.
+ * Messages are sparse (mostly graph nodes) and draw air-chords across curves/fields.
+ */
 export function pickDensestRouteCoordinates(
   geojsonCoords: [number, number][],
   messages: string[][] | undefined,
 ): [number, number][] {
-  const messageCoords = extractRouteCoordinatesFromMessages(messages);
-  if (geojsonCoords.length >= 2 && messageCoords.length >= 2) {
-    return geojsonCoords.length >= messageCoords.length
-      ? geojsonCoords
-      : messageCoords;
-  }
   if (geojsonCoords.length >= 2) return geojsonCoords;
-  return messageCoords;
+  return extractRouteCoordinatesFromMessages(messages);
 }
 
 export function buildRouteMapGeoJson(
