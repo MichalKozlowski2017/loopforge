@@ -8,7 +8,7 @@ import type {
 } from "@loopforge/osm-types";
 import { getSurfaceStyle } from "@loopforge/osm-types";
 import type { BrouterConfig } from "./config";
-import { buildColoredGeoJsonFromRoute, buildColoredGeoJson, extractRouteCoordinatesFromMessages } from "./colored-geojson";
+import { buildColoredGeoJsonFromRoute, buildColoredGeoJson, buildRouteMapGeoJson, pickDensestRouteCoordinates } from "./colored-geojson";
 import { ensureBrouterServer, restartBrouterServer } from "./server";
 
 const DIRECTION_BEARING: Record<Direction, number> = {
@@ -472,11 +472,8 @@ function resolveRouteGeometry(
   coordinates: [number, number][];
   mapGeojson: ReturnType<typeof buildColoredGeoJson>;
 } {
-  const messageCoords = extractRouteCoordinatesFromMessages(messages);
-  const coordinates = messageCoords.length >= 2 ? messageCoords : geojsonCoords;
-  const mapGeojson =
-    buildColoredGeoJson(messages) ??
-    buildColoredGeoJsonFromRoute(coordinates, messages);
+  const coordinates = pickDensestRouteCoordinates(geojsonCoords, messages);
+  const mapGeojson = buildRouteMapGeoJson(coordinates, messages);
   return { coordinates, mapGeojson };
 }
 

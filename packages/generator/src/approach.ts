@@ -76,12 +76,14 @@ function appendCoordinates(
     target.push(...incoming);
     return;
   }
-  const last = target[target.length - 1];
-  const first = incoming[0];
+  const last = target[target.length - 1]!;
+  const first = incoming[0]!;
+  const gapM = haversineCoordsM(last, first);
+  if (gapM > 15) return;
   if (last[0] === first[0] && last[1] === first[1]) {
     target.push(...incoming.slice(1));
   } else {
-    target.push(...incoming);
+    target.push(...incoming.slice(1));
   }
 }
 

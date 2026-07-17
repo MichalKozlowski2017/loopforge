@@ -145,6 +145,31 @@ export function extractRouteCoordinatesFromMessages(
   return coords;
 }
 
+/** Prefer whichever BRouter source has more vertices — avoids map chords on curves. */
+export function pickDensestRouteCoordinates(
+  geojsonCoords: [number, number][],
+  messages: string[][] | undefined,
+): [number, number][] {
+  const messageCoords = extractRouteCoordinatesFromMessages(messages);
+  if (geojsonCoords.length >= 2 && messageCoords.length >= 2) {
+    return geojsonCoords.length >= messageCoords.length
+      ? geojsonCoords
+      : messageCoords;
+  }
+  if (geojsonCoords.length >= 2) return geojsonCoords;
+  return messageCoords;
+}
+
+export function buildRouteMapGeoJson(
+  coordinates: [number, number][],
+  messages: string[][] | undefined,
+): RouteMapGeoJson | null {
+  if (coordinates.length >= 2) {
+    return buildColoredGeoJsonFromRoute(coordinates, messages);
+  }
+  return buildColoredGeoJson(messages);
+}
+
 /**
  * Color the exact BRouter route geometry — every consecutive coordinate pair
  * becomes a segment, so the line always follows paths (no chord shortcuts).

@@ -2,8 +2,10 @@ export { getBrouterConfig, isBrouterConfigured, type BrouterConfig } from "./con
 export {
   buildColoredGeoJson,
   buildColoredGeoJsonFromRoute,
+  buildRouteMapGeoJson,
   colorForSurface,
   extractRouteCoordinatesFromMessages,
+  pickDensestRouteCoordinates,
 } from "./colored-geojson";
 export { SURFACE_LEGEND } from "@loopforge/osm-types";
 export {

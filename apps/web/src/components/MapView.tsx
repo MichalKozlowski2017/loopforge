@@ -278,7 +278,7 @@ export function MapView({
       return true;
     }
 
-    if (normalizedRoute?.geometry.coordinates.length) {
+    if (normalizedRoute?.geometry.coordinates.length && !normalizedSegments?.features.length) {
       map.addSource(ROUTE_SOURCE, {
         type: "geojson",
         data: normalizedRoute,

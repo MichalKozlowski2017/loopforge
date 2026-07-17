@@ -13,7 +13,8 @@ import {
   fetchApproachRouteThroughPoints as fetchBrouterApproachThrough,
   getBrouterConfig,
   buildColoredGeoJson,
-  extractRouteCoordinatesFromMessages,
+  buildRouteMapGeoJson,
+  pickDensestRouteCoordinates,
 } from "@loopforge/brouter";
 import {
   fetchRouteThroughWaypoints as fetchPgRoute,
@@ -125,7 +126,7 @@ function syncMapGeoJson(
   routed: Pick<RoutedLoopResult, "mapGeojson" | "brouterMessages">,
 ): import("@loopforge/osm-types").RouteMapGeoJson | undefined {
   if (routed.brouterMessages && routed.brouterMessages.length > 0) {
-    return buildColoredGeoJson(routed.brouterMessages) ?? undefined;
+    return buildRouteMapGeoJson(coordinates, routed.brouterMessages) ?? undefined;
   }
   return (
     pruneMapGeoJson(routed.mapGeojson ?? null, coordinates) ??
@@ -236,11 +237,10 @@ function buildGeneratedRoute(
   },
 ): GeneratedRoute {
   const { start, bikeType, direction, distanceKm } = request;
-  const messageCoordinates = options.brouterMessages
-    ? extractRouteCoordinatesFromMessages(options.brouterMessages)
-    : [];
-  const denseCoordinates =
-    messageCoordinates.length >= 2 ? messageCoordinates : coordinates;
+  const denseCoordinates = pickDensestRouteCoordinates(
+    coordinates,
+    options.brouterMessages,
+  );
   const navCoordinates = prepareCoordinatesForNavigation(denseCoordinates);
   if (
     hasSuspiciousTeleportEdge(denseCoordinates) ||
@@ -252,12 +252,11 @@ function buildGeneratedRoute(
   }
   const syncedMapGeojson =
     options.brouterMessages && options.brouterMessages.length > 0
-      ? buildColoredGeoJson(options.brouterMessages)
+      ? buildRouteMapGeoJson(denseCoordinates, options.brouterMessages)
       : options.mapGeojson
         ? pruneMapGeoJson(options.mapGeojson, navCoordinates)
         : null;
-  const displayCoordinates =
-    denseCoordinates.length >= 2 ? denseCoordinates : navCoordinates;
+  const displayCoordinates = denseCoordinates;
   const actualKm =
     navCoordinates.length > 1 ? totalDistanceKm(navCoordinates) : distanceKm;
   const score = scoreRoute(options.segments, bikeType, request.profile);
