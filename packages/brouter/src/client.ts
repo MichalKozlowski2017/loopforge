@@ -79,7 +79,12 @@ function profilesForRequest(
   }
   if (bikeType === "road") {
     if (preferQuietRoutes) {
-      return ["fastbike-verylowtraffic", "fastbike-lowtraffic", "fastbike"];
+      return [
+        "fastbike-verylowtraffic",
+        "fastbike-lowtraffic",
+        "safety",
+        "fastbike",
+      ];
     }
     return ROAD_PROFILE[rideProfile ?? "fast"];
   }
@@ -202,6 +207,11 @@ function brouterProfileOverrides(
     }
     if (bikeType === "general") {
       overrides.avoid_unsafe = "1";
+    }
+    if (bikeType === "road") {
+      overrides.use_proposed_cycleroutes = "1";
+      overrides.consider_traffic = "1";
+      overrides.consider_noise = "1";
     }
     if (bikeType === "mtb") {
       const pavedFactor = Number(overrides.smallpaved_factor ?? "0");

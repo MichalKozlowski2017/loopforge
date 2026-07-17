@@ -462,7 +462,9 @@ export function scoreLoopQualityWithShape(
   direction?: Direction,
   options?: {
     avoidAsphalt?: boolean;
+    preferQuietRoutes?: boolean;
     pavedShare?: number;
+    busyRoadShare?: number;
     offroadShare?: number;
     approachOverlap?: number;
     viaPointsMode?: boolean;
@@ -508,6 +510,12 @@ export function scoreLoopQualityWithShape(
     score += pavedShare * 16;
     score += Math.max(0, pavedShare - 0.28) ** 2 * 40;
     score += metrics.distanceError * 28;
+  }
+
+  if (options?.preferQuietRoutes) {
+    const busyShare = options.busyRoadShare ?? 0;
+    score += busyShare * 22;
+    score += Math.max(0, busyShare - 0.12) ** 2 * 70;
   }
 
   if (options?.viaPointsMode) {

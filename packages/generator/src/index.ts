@@ -336,6 +336,33 @@ function offroadShareFromSegments(
   return totalM > 0 ? offroadM / totalM : 0;
 }
 
+const BUSY_HIGHWAYS = new Set([
+  "motorway",
+  "motorway_link",
+  "trunk",
+  "trunk_link",
+  "primary",
+  "primary_link",
+  "secondary",
+  "secondary_link",
+]);
+
+function busyRoadShareFromSegments(
+  segments: { tags: OsmTags; distanceM: number }[],
+): number {
+  let busyM = 0;
+  let totalM = 0;
+  for (const segment of segments) {
+    if (segment.distanceM <= 0) continue;
+    totalM += segment.distanceM;
+    const highway = segment.tags.highway;
+    if (highway && BUSY_HIGHWAYS.has(highway)) {
+      busyM += segment.distanceM;
+    }
+  }
+  return totalM > 0 ? busyM / totalM : 0;
+}
+
 function isBrouterIslandError(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error);
   return /target island|island detected|not reachable|cannot find a route|routing failed|endpoint not found/i.test(
@@ -418,6 +445,7 @@ function applySpurRefinement(
   approachCoordinates?: [number, number][],
   viaPointsMode = false,
   profilePrefs?: ReturnType<typeof getRideProfileLoopPrefs>,
+  preferQuietRoutes = false,
 ): {
   refined: RoutedLoopResult;
   metrics: ReturnType<typeof loopQualityMetrics> & { approachOverlap: number };
@@ -468,7 +496,9 @@ function applySpurRefinement(
     direction,
     {
       avoidAsphalt,
+      preferQuietRoutes,
       pavedShare: pavedShareFromSegments(routed.segments),
+      busyRoadShare: busyRoadShareFromSegments(routed.segments),
       offroadShare: offroadShareFromSegments(routed.segments),
       approachOverlap,
       viaPointsMode,
@@ -642,6 +672,7 @@ async function generateRouteWithEngine(
           options?.approachCoordinates,
           (request.viaPoints?.length ?? 0) > 0,
           loopPrefs,
+          request.preferQuietRoutes ?? false,
         );
 
         if (shouldEscalateUrbanTuning(request.distanceKm, refined.distanceKm)) {
@@ -931,6 +962,7 @@ async function generateRouteWithEngine(
           options?.approachCoordinates,
           (request.viaPoints?.length ?? 0) > 0,
           recoveryPrefs,
+          request.preferQuietRoutes ?? false,
         );
         if (
           !hasSuspiciousTeleportEdge(refined.coordinates) &&
