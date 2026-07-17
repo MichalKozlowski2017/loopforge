@@ -63,10 +63,17 @@ const BIKE_PROFILE: Record<BikeType, string> = {
   general: "customprofiles/loopforge-trekking",
 };
 
+const ROAD_CUSTOM_PROFILE = "customprofiles/loopforge-road";
+
 const ROAD_PROFILE: Record<RideProfile, string[]> = {
-  fast: ["fastbike"],
-  flow: ["fastbike-lowtraffic", "fastbike"],
-  technical: ["fastbike-verylowtraffic", "fastbike-lowtraffic", "fastbike"],
+  fast: [ROAD_CUSTOM_PROFILE, "fastbike"],
+  flow: [ROAD_CUSTOM_PROFILE, "fastbike-lowtraffic", "fastbike"],
+  technical: [
+    ROAD_CUSTOM_PROFILE,
+    "fastbike-verylowtraffic",
+    "fastbike-lowtraffic",
+    "fastbike",
+  ],
 };
 
 function profilesForRequest(
@@ -80,6 +87,7 @@ function profilesForRequest(
   if (bikeType === "road") {
     if (preferQuietRoutes) {
       return [
+        ROAD_CUSTOM_PROFILE,
         "fastbike-verylowtraffic",
         "fastbike-lowtraffic",
         "safety",
@@ -212,6 +220,8 @@ function brouterProfileOverrides(
       overrides.use_proposed_cycleroutes = "1";
       overrides.consider_traffic = "1";
       overrides.consider_noise = "1";
+      overrides.allow_steps = "0";
+      overrides.allow_ferries = "0";
     }
     if (bikeType === "mtb") {
       const pavedFactor = Number(overrides.smallpaved_factor ?? "0");

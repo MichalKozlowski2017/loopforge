@@ -69,7 +69,7 @@ assign is_main_road highway=primary|primary_link|secondary|secondary_link|tertia
 assign initialclassifier switch route=ferry 4 switch is_main_road 3 switch footway=crossing 2 1
 assign initialcost switch route=ferry 20000 switch is_main_road 400 switch assume_wet_conditions 100 20
 
-assign nobikeaccess switch bicycle= switch vehicle= access=no|private vehicle=no|private bicycle=no|private|dismount
+assign nobikeaccess switch bicycle= switch vehicle= access=no|private vehicle=no|private bicycle=no|private|dismount|use_sidepath
 assign nofootaccess switch foot= ( and access=no|private ( not bicycle=dismount ) ) foot=no|private
 
 assign badoneway
@@ -79,8 +79,7 @@ assign badoneway
 
 assign onewaypenalty
     switch or ( not badoneway ) ( or cycleway=opposite|opposite_lane|opposite_track oneway:bicycle=no ) 1
-    switch not junction=roundabout                                                                      5
-                                                                                                        20
+                                                                                                        10000
 
 assign smoothnesspenalty
     switch smoothness=excellent         switch not assume_wet_conditions 1.0 1.0
@@ -265,7 +264,7 @@ assign costfactor
     multiply noforestpenalty multiply noisepenalty
     multiply trafficpenalty multiply townpenalty
     multiply hikingpenalty multiply mtbpenalty
-    multiply switch bicycle=use_sidepath 1.6 1
+    multiply switch bicycle=use_sidepath 10000 1
     multiply switch nobikeaccess 6 1
     multiply tracktypepenalty
     switch or highway=motorway|motorway_link motorroad=yes      10000
@@ -337,7 +336,7 @@ assign classifiermask
 
 ---context:node
 
-assign nobikeaccess switch bicycle= switch vehicle= access=no|private vehicle=no|private bicycle=no|private|dismount
+assign nobikeaccess switch bicycle= switch vehicle= access=no|private vehicle=no|private bicycle=no|private|dismount|use_sidepath
 assign nofootaccess switch foot= ( and access=no|private ( not bicycle=dismount ) ) foot=no|private
 
 assign barrierpenalty
