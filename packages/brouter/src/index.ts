@@ -3,6 +3,7 @@ export {
   buildColoredGeoJson,
   buildColoredGeoJsonFromRoute,
   colorForSurface,
+  extractRouteCoordinatesFromMessages,
 } from "./colored-geojson";
 export { SURFACE_LEGEND } from "@loopforge/osm-types";
 export {

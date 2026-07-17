@@ -8,7 +8,7 @@ import type {
 } from "@loopforge/osm-types";
 import { getSurfaceStyle } from "@loopforge/osm-types";
 import type { BrouterConfig } from "./config";
-import { buildColoredGeoJsonFromRoute } from "./colored-geojson";
+import { buildColoredGeoJsonFromRoute, buildColoredGeoJson, extractRouteCoordinatesFromMessages } from "./colored-geojson";
 import { ensureBrouterServer, restartBrouterServer } from "./server";
 
 const DIRECTION_BEARING: Record<Direction, number> = {
@@ -308,16 +308,17 @@ async function fetchApproachBrouterRoute(
       throw lastError;
     }
 
-    const coordinates = filterCoordinates(feature.geometry.coordinates);
+    const messages = feature.properties.messages as string[][] | undefined;
+    const segments = parseSegmentsFromMessages(messages);
+    const { coordinates, mapGeojson } = resolveRouteGeometry(
+      filterCoordinates(feature.geometry.coordinates),
+      messages,
+    );
     if (coordinates.length < 2) {
       lastError = new Error("BRouter returned invalid route coordinates");
       if (i < profiles.length - 1) continue;
       throw lastError;
     }
-
-    const messages = feature.properties.messages as string[][] | undefined;
-    const segments = parseSegmentsFromMessages(messages);
-    const mapGeojson = buildColoredGeoJsonFromRoute(coordinates, messages);
     const distanceKm = distanceFromCoordinates(coordinates) / 1000;
     const elevationGainM = Number(feature.properties["filtered ascend"] ?? 0);
 
@@ -464,6 +465,21 @@ function filterCoordinates(coords: number[][]): [number, number][] {
   return normalized;
 }
 
+function resolveRouteGeometry(
+  geojsonCoords: [number, number][],
+  messages: string[][] | undefined,
+): {
+  coordinates: [number, number][];
+  mapGeojson: ReturnType<typeof buildColoredGeoJson>;
+} {
+  const messageCoords = extractRouteCoordinatesFromMessages(messages);
+  const coordinates = messageCoords.length >= 2 ? messageCoords : geojsonCoords;
+  const mapGeojson =
+    buildColoredGeoJson(messages) ??
+    buildColoredGeoJsonFromRoute(coordinates, messages);
+  return { coordinates, mapGeojson };
+}
+
 function surfaceBreakdownFromSegments(
   segments: { tags: OsmTags; distanceM: number }[],
 ): import("@loopforge/osm-types").SurfaceBreakdownItem[] {
@@ -554,16 +570,17 @@ async function fetchBrouterRoute(
       throw lastError;
     }
 
-    const coordinates = filterCoordinates(feature.geometry.coordinates);
+    const messages = feature.properties.messages as string[][] | undefined;
+    const segments = parseSegmentsFromMessages(messages);
+    const { coordinates, mapGeojson } = resolveRouteGeometry(
+      filterCoordinates(feature.geometry.coordinates),
+      messages,
+    );
     if (coordinates.length < 2) {
       lastError = new Error("BRouter returned invalid route coordinates");
       if (i < profiles.length - 1) continue;
       throw lastError;
     }
-
-    const messages = feature.properties.messages as string[][] | undefined;
-    const segments = parseSegmentsFromMessages(messages);
-    const mapGeojson = buildColoredGeoJsonFromRoute(coordinates, messages);
     const distanceKm = distanceFromCoordinates(coordinates) / 1000;
     const elevationGainM = Number(feature.properties["filtered ascend"] ?? 0);
 
@@ -718,13 +735,15 @@ async function fetchRoundTripAttempt(
     throw new Error("BRouter returned an empty route");
   }
 
-  const coordinates = filterCoordinates(feature.geometry.coordinates);
+  const messages = feature.properties.messages as string[][] | undefined;
+  const segments = parseSegmentsFromMessages(messages);
+  const { coordinates, mapGeojson } = resolveRouteGeometry(
+    filterCoordinates(feature.geometry.coordinates),
+    messages,
+  );
   if (coordinates.length < 2) {
     throw new Error("BRouter returned invalid route coordinates");
   }
-  const messages = feature.properties.messages as string[][] | undefined;
-  const segments = parseSegmentsFromMessages(messages);
-  const mapGeojson = buildColoredGeoJsonFromRoute(coordinates, messages);
   const distanceKm = distanceFromCoordinates(coordinates) / 1000;
   const elevationGainM = Number(feature.properties["filtered ascend"] ?? 0);
 

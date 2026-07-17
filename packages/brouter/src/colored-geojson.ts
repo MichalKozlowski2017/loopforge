@@ -112,6 +112,30 @@ function parseTaggedVertices(
   return vertices;
 }
 
+/** Dense route polyline from BRouter message rows (full vertex detail). */
+export function extractRouteCoordinatesFromMessages(
+  messages: string[][] | undefined,
+): [number, number][] {
+  if (!messages || messages.length < 2) return [];
+
+  const coords: [number, number][] = [];
+  for (let i = 1; i < messages.length; i++) {
+    const row = messages[i];
+    const lon = row[0];
+    const lat = row[1];
+    if (!isMicroDegree(lon) || !isMicroDegree(lat)) continue;
+
+    const coord = microToCoord(lon, lat);
+    if (!isValidCoord(coord)) continue;
+
+    const last = coords.at(-1);
+    if (last && last[0] === coord[0] && last[1] === coord[1]) continue;
+    coords.push(coord);
+  }
+
+  return coords;
+}
+
 /**
  * Color the exact BRouter route geometry — every consecutive coordinate pair
  * becomes a segment, so the line always follows paths (no chord shortcuts).

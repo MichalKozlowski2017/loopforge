@@ -12,7 +12,8 @@ import {
   fetchApproachRouteBetweenPoints as fetchBrouterApproach,
   fetchApproachRouteThroughPoints as fetchBrouterApproachThrough,
   getBrouterConfig,
-  buildColoredGeoJsonFromRoute,
+  buildColoredGeoJson,
+  extractRouteCoordinatesFromMessages,
 } from "@loopforge/brouter";
 import {
   fetchRouteThroughWaypoints as fetchPgRoute,
@@ -124,10 +125,10 @@ function syncMapGeoJson(
   routed: Pick<RoutedLoopResult, "mapGeojson" | "brouterMessages">,
 ): import("@loopforge/osm-types").RouteMapGeoJson | undefined {
   if (routed.brouterMessages && routed.brouterMessages.length > 0) {
-    return (
-      buildColoredGeoJsonFromRoute(coordinates, routed.brouterMessages) ??
-      undefined
-    );
+    const colored = buildColoredGeoJson(routed.brouterMessages);
+    if (colored) {
+      return pruneMapGeoJson(colored, coordinates) ?? colored;
+    }
   }
   return (
     pruneMapGeoJson(routed.mapGeojson ?? null, coordinates) ??
@@ -238,7 +239,12 @@ function buildGeneratedRoute(
   },
 ): GeneratedRoute {
   const { start, bikeType, direction, distanceKm } = request;
-  const navCoordinates = prepareCoordinatesForNavigation(coordinates);
+  const messageCoordinates = options.brouterMessages
+    ? extractRouteCoordinatesFromMessages(options.brouterMessages)
+    : [];
+  const denseCoordinates =
+    messageCoordinates.length >= 2 ? messageCoordinates : coordinates;
+  const navCoordinates = prepareCoordinatesForNavigation(denseCoordinates);
   if (hasSuspiciousTeleportEdge(navCoordinates)) {
     throw new Error(
       "Trasa ma przerwy w nawigacji (skróty przez mapę) — spróbuj innego kierunku lub krótszego dystansu.",
@@ -246,7 +252,10 @@ function buildGeneratedRoute(
   }
   const syncedMapGeojson =
     options.brouterMessages && options.brouterMessages.length > 0
-      ? buildColoredGeoJsonFromRoute(navCoordinates, options.brouterMessages)
+      ? pruneMapGeoJson(
+          buildColoredGeoJson(options.brouterMessages),
+          navCoordinates,
+        ) ?? buildColoredGeoJson(options.brouterMessages)
       : options.mapGeojson
         ? pruneMapGeoJson(options.mapGeojson, navCoordinates)
         : null;
