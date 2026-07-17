@@ -56,23 +56,34 @@ interface SpurDetectConfig {
 }
 
 const DEFAULT_SPUR_CONFIG: SpurDetectConfig = {
-  matchM: 65,
-  minSpurM: 22,
-  minGap: 6,
-  maxSpanRatio: 0.62,
-  minDetourRatio: 1.18,
-  midBulgeRatio: 0.26,
-  maxMidBulgeM: 95,
+  matchM: 90,
+  minSpurM: 18,
+  minGap: 5,
+  maxSpanRatio: 0.55,
+  minDetourRatio: 1.12,
+  midBulgeRatio: 0.18,
+  maxMidBulgeM: 140,
 };
 
 const MICRO_SPUR_CONFIG: SpurDetectConfig = {
-  matchM: 26,
-  minSpurM: 12,
+  matchM: 40,
+  minSpurM: 10,
   minGap: 4,
+  maxSpanRatio: 0.35,
+  minDetourRatio: 1.12,
+  midBulgeRatio: 0.16,
+  maxMidBulgeM: 70,
+};
+
+/** Longer cul-de-sac / park stubs that rejoin near the same junction. */
+const STUB_SPUR_CONFIG: SpurDetectConfig = {
+  matchM: 90,
+  minSpurM: 35,
+  minGap: 6,
   maxSpanRatio: 0.4,
-  minDetourRatio: 1.18,
-  midBulgeRatio: 0.22,
-  maxMidBulgeM: 45,
+  minDetourRatio: 1.2,
+  midBulgeRatio: 0.2,
+  maxMidBulgeM: 220,
 };
 
 function findDeadEndSpurRangesWithConfig(
@@ -88,6 +99,8 @@ function findDeadEndSpurRangesWithConfig(
 
   for (let i = 0; i < coordinates.length - config.minGap; i++) {
     const origin = toLatLng(coordinates[i]);
+    let best: SpurRange | null = null;
+    let bestPathM = 0;
 
     for (let j = i + config.minGap; j < coordinates.length; j++) {
       if (j - i > maxSpan) break;
@@ -117,8 +130,14 @@ function findDeadEndSpurRangesWithConfig(
         continue;
       }
 
-      ranges.push({ start: i + 1, end: j - 1 });
-      break;
+      if (spurPathM > bestPathM) {
+        bestPathM = spurPathM;
+        best = { start: i + 1, end: j - 1 };
+      }
+    }
+
+    if (best && best.end >= best.start) {
+      ranges.push(best);
     }
   }
 
@@ -136,6 +155,11 @@ export function findDeadEndSpurRanges(coordinates: Coord[]): SpurRange[] {
 /** Small jogs into side streets / field tracks (10–80 m). */
 export function findMicroSpurRanges(coordinates: Coord[]): SpurRange[] {
   return findDeadEndSpurRangesWithConfig(coordinates, MICRO_SPUR_CONFIG);
+}
+
+/** Medium park / service-road stubs that return to the same junction. */
+export function findStubSpurRanges(coordinates: Coord[]): SpurRange[] {
+  return findDeadEndSpurRangesWithConfig(coordinates, STUB_SPUR_CONFIG);
 }
 
 function bearingDeg(a: LatLng, b: LatLng): number {
@@ -174,11 +198,11 @@ export function findOpenPathBranchStubRanges(coordinates: Coord[]): SpurRange[] 
   if (coordinates.length < 5) return [];
 
   const ranges: SpurRange[] = [];
-  const maxStubM = 420;
-  const minStubM = 8;
-  const rejoinM = 44;
-  const minTurnDeg = 22;
-  const endReserve = 12;
+  const maxStubM = 900;
+  const minStubM = 12;
+  const rejoinM = 90;
+  const minTurnDeg = 18;
+  const endReserve = 8;
 
   for (let j = 1; j < coordinates.length - 2; j++) {
     if (j >= coordinates.length - endReserve) continue;
@@ -193,6 +217,16 @@ export function findOpenPathBranchStubRanges(coordinates: Coord[]): SpurRange[] 
       const distFromJunction = haversineM(junction, toLatLng(coordinates[k]!));
       if (distFromJunction > rejoinM) continue;
       if (stubM < minStubM) continue;
+
+      // Require the stub to actually leave the junction (not a tiny wobble).
+      let maxAway = 0;
+      for (let t = j + 1; t < k; t++) {
+        maxAway = Math.max(
+          maxAway,
+          haversineM(junction, toLatLng(coordinates[t]!)),
+        );
+      }
+      if (maxAway < Math.min(28, stubM * 0.2)) continue;
 
       ranges.push({ start: j + 1, end: k - 1 });
       break;
@@ -248,7 +282,7 @@ export function findHairpinSpurRanges(coordinates: Coord[]): SpurRange[] {
     if (bearingDelta(inBearing, outBearing) < 125) continue;
 
     for (let j = tipEnd + 1; j < Math.min(i + 80, coordinates.length); j++) {
-      if (haversineM(toLatLng(coordinates[i]), toLatLng(coordinates[j])) > 35) {
+      if (haversineM(toLatLng(coordinates[i]), toLatLng(coordinates[j])) > 90) {
         continue;
       }
       const stubM = pathLengthM(coordinates, i, j);
@@ -266,10 +300,10 @@ export function findReverseSegmentSpurRanges(coordinates: Coord[]): SpurRange[] 
   if (coordinates.length < 16) return [];
 
   const ranges: SpurRange[] = [];
-  const matchM = 45;
-  const minGap = 6;
-  const window = Math.min(320, Math.floor(coordinates.length * 0.6));
-  const minSpurM = 28;
+  const matchM = 55;
+  const minGap = 5;
+  const window = Math.min(400, Math.floor(coordinates.length * 0.65));
+  const minSpurM = 22;
 
   for (let i = 0; i < coordinates.length - 1; i++) {
     const a = toLatLng(coordinates[i]);
@@ -317,9 +351,10 @@ function mergeSpurRanges(ranges: SpurRange[]): SpurRange[] {
 
 /**
  * Max length of a *new* edge created by removing spur indices.
- * Longer stitches jump across the map (fields/buildings) instead of roads.
+ * Must be >= spur rejoin radius (matchM) so out-and-back stubs can be cut.
+ * Longer stitches jump across fields/buildings — those stay blocked.
  */
-const MAX_PRUNE_STITCH_EDGE_M = 45;
+const MAX_PRUNE_STITCH_EDGE_M = 90;
 
 function wouldCreateAirChord(
   coordinates: Coord[],
@@ -413,6 +448,7 @@ export function pruneApproachDeadEndSpurs(coordinates: Coord[]): PruneSpursResul
     const ranges = mergeSpurRanges([
       ...findDeadEndSpurRanges(current),
       ...findMicroSpurRanges(current),
+      ...findStubSpurRanges(current),
       ...findHairpinSpurRanges(current),
       ...findReverseSegmentSpurRanges(current),
       ...findOpenPathBranchStubRanges(current),
@@ -528,10 +564,11 @@ export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
   const allRanges: SpurRange[] = [];
   const beforeM = totalPathLengthM(coordinates);
 
-  for (let pass = 0; pass < 10; pass++) {
+  for (let pass = 0; pass < 14; pass++) {
     const ranges = mergeSpurRanges([
       ...findDeadEndSpurRanges(current),
       ...findMicroSpurRanges(current),
+      ...findStubSpurRanges(current),
       ...findHairpinSpurRanges(current),
       ...findReverseSegmentSpurRanges(current),
       ...findOpenPathBranchStubRanges(current),
