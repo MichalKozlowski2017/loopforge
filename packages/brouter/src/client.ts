@@ -72,19 +72,40 @@ const ROAD_PROFILE: Record<RideProfile, string[]> = {
 function profilesForRequest(
   bikeType: BikeType,
   rideProfile?: RideProfile,
+  preferQuietRoutes?: boolean,
 ): string[] {
   if (bikeType === "mtb") {
     return [MTB_CUSTOM_PROFILE, MTB_STOCK_PROFILE];
   }
   if (bikeType === "road") {
+    if (preferQuietRoutes) {
+      return ["fastbike-verylowtraffic", "fastbike-lowtraffic", "fastbike"];
+    }
     return ROAD_PROFILE[rideProfile ?? "fast"];
   }
   if (bikeType === "gravel") {
+    if (preferQuietRoutes) {
+      return [
+        BIKE_PROFILE.gravel,
+        "trekking",
+        "fastbike-verylowtraffic",
+        "fastbike-lowtraffic",
+        "fastbike",
+      ];
+    }
     return [
       BIKE_PROFILE.gravel,
       "trekking",
       "fastbike-lowtraffic",
       "fastbike",
+    ];
+  }
+  if (preferQuietRoutes) {
+    return [
+      BIKE_PROFILE.general,
+      "trekking",
+      "fastbike-verylowtraffic",
+      "fastbike-lowtraffic",
     ];
   }
   return [BIKE_PROFILE.general, "trekking", "fastbike-lowtraffic"];
@@ -103,6 +124,7 @@ function brouterProfileOverrides(
   profileName?: string,
   urbanRouting?: boolean,
   closedLoop?: boolean,
+  preferQuietRoutes?: boolean,
 ): Record<string, string> {
   const overrides: Record<string, string> = {
     allow_ferries: "0",
@@ -174,6 +196,19 @@ function brouterProfileOverrides(
     overrides.prefer_forests = "1";
   }
 
+  if (preferQuietRoutes) {
+    if (bikeType === "gravel" || bikeType === "general") {
+      overrides.prefer_cycle_routes = "1";
+    }
+    if (bikeType === "general") {
+      overrides.avoid_unsafe = "1";
+    }
+    if (bikeType === "mtb") {
+      const pavedFactor = Number(overrides.smallpaved_factor ?? "0");
+      overrides.smallpaved_factor = String(Math.min(pavedFactor, -1.2));
+    }
+  }
+
   return overrides;
 }
 
@@ -185,6 +220,7 @@ function buildBrouterQuery(
   avoidAsphalt?: boolean,
   urbanRouting?: boolean,
   closedLoop?: boolean,
+  preferQuietRoutes?: boolean,
 ): URLSearchParams {
   const query = new URLSearchParams({
     lonlats,
@@ -200,6 +236,7 @@ function buildBrouterQuery(
       profileName,
       urbanRouting,
       closedLoop,
+      preferQuietRoutes,
     ),
   )) {
     query.set(`profile:${key}`, value);
@@ -313,6 +350,8 @@ export interface WaypointRouteParams {
   waypoints: LatLng[];
   rideProfile?: RideProfile;
   avoidAsphalt?: boolean;
+  /** Prefer cycleways and low-traffic streets over busy car roads. */
+  preferQuietRoutes?: boolean;
   /** Looser via-point correction for dense urban road grids. */
   urbanRouting?: boolean;
   /** Skip extra GPX request — use buildGpx() on the client/generator side. */
@@ -454,13 +493,18 @@ async function fetchBrouterRoute(
     skipGpx?: boolean;
     rideProfile?: RideProfile;
     avoidAsphalt?: boolean;
+    preferQuietRoutes?: boolean;
     urbanRouting?: boolean;
     /** Route returns to its first point (loop) — disable via-point detour stripping. */
     closedLoop?: boolean;
   },
 ): Promise<BrouterRouteResult> {
   const lonlats = points.map((p) => `${p.lng},${p.lat}`).join("|");
-  const profiles = profilesForRequest(bikeType, options?.rideProfile);
+  const profiles = profilesForRequest(
+    bikeType,
+    options?.rideProfile,
+    options?.preferQuietRoutes,
+  );
   let lastError: Error | null = null;
 
   for (let i = 0; i < profiles.length; i++) {
@@ -473,6 +517,7 @@ async function fetchBrouterRoute(
       options?.avoidAsphalt,
       options?.urbanRouting,
       options?.closedLoop,
+      options?.preferQuietRoutes,
     );
 
     const response = await fetchBrouterWithRetry(
@@ -620,6 +665,7 @@ export async function fetchRouteThroughWaypoints(
       skipGpx: params.skipGpx,
       rideProfile: params.rideProfile,
       avoidAsphalt: params.avoidAsphalt,
+      preferQuietRoutes: params.preferQuietRoutes,
       urbanRouting: params.urbanRouting,
       closedLoop: true,
     },

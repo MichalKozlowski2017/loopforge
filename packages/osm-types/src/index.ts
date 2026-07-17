@@ -68,6 +68,8 @@ export interface GenerateRouteRequest {
   profile?: RideProfile;
   /** Penalize paved surfaces (gravel / MTB). Not a hard ban — asphalt when no alternative. */
   avoidAsphalt?: boolean;
+  /** Prefer cycleways and low-traffic streets over busy car roads when possible. */
+  preferQuietRoutes?: boolean;
   /** Route a fast approach leg from start to loop entry before generating the loop. */
   approachEnabled?: boolean;
   /** Target approach distance in km (air-line anchor along direction). */
@@ -141,6 +143,7 @@ export interface StoredRoute extends GeneratedRoute {
   start: LatLng;
   profile?: RideProfile;
   avoidAsphalt?: boolean;
+  preferQuietRoutes?: boolean;
   approachEnabled?: boolean;
   /** Configured approach target distance (km). */
   approachDistanceKm?: number;

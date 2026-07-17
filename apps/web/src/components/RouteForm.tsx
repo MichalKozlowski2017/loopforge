@@ -12,6 +12,7 @@ export interface RouteFormValues {
   direction: Direction;
   profile: RideProfile;
   avoidAsphalt: boolean;
+  preferQuietRoutes: boolean;
   approachEnabled: boolean;
   approachDistanceKm: number;
   lat: number;
@@ -130,6 +131,26 @@ export function RouteForm({
           </span>
         </label>
       ) : null}
+
+      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3 transition hover:border-amber-800/45">
+        <input
+          type="checkbox"
+          checked={values.preferQuietRoutes}
+          onChange={(event) =>
+            onChange({ ...values, preferQuietRoutes: event.target.checked })
+          }
+          className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-amber-600 focus:ring-amber-500"
+        />
+        <span>
+          <span className="block text-sm font-medium text-zinc-200">
+            Ścieżki i spokojne drogi
+          </span>
+          <span className="mt-0.5 block text-xs text-zinc-500">
+            Priorytet ścieżek rowerowych i spokojnych ulic. Omijamy ruch
+            samochodowy, gdy jest sensowna alternatywa.
+          </span>
+        </span>
+      </label>
 
       <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3 transition hover:border-amber-800/45">
         <input

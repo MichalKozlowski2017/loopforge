@@ -372,6 +372,7 @@ async function fetchLoopRouteResilient(
     waypoints: LatLng[];
     rideProfile?: GenerateRouteRequest["profile"];
     avoidAsphalt?: boolean;
+    preferQuietRoutes?: boolean;
     urbanRouting?: boolean;
     skipGpx: boolean;
   }) => Promise<RoutedLoopResult>,
@@ -381,6 +382,7 @@ async function fetchLoopRouteResilient(
     waypoints: LatLng[];
     rideProfile?: GenerateRouteRequest["profile"];
     avoidAsphalt?: boolean;
+    preferQuietRoutes?: boolean;
     urbanRouting?: boolean;
     skipGpx: boolean;
   },
@@ -507,6 +509,7 @@ async function generateRouteWithEngine(
     waypoints: LatLng[];
     rideProfile?: GenerateRouteRequest["profile"];
     avoidAsphalt?: boolean;
+    preferQuietRoutes?: boolean;
     urbanRouting?: boolean;
     skipGpx: boolean;
   }) => Promise<RoutedLoopResult>,
@@ -619,6 +622,7 @@ async function generateRouteWithEngine(
           waypoints,
           rideProfile: request.profile,
           avoidAsphalt: request.avoidAsphalt,
+          preferQuietRoutes: request.preferQuietRoutes,
           urbanRouting: baseUrban || variantUrbanEscalated,
           skipGpx: true,
         });
@@ -913,6 +917,7 @@ async function generateRouteWithEngine(
           waypoints,
           rideProfile: request.profile,
           avoidAsphalt: false,
+          preferQuietRoutes: request.preferQuietRoutes,
           urbanRouting: true,
           skipGpx: true,
         });

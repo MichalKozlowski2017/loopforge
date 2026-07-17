@@ -80,6 +80,7 @@ export async function POST(request: Request) {
           direction: routeInput.direction,
           profile: routeInput.profile,
           avoidAsphalt: routeInput.avoidAsphalt,
+          preferQuietRoutes: routeInput.preferQuietRoutes,
           approachEnabled: routeInput.approachEnabled,
           approachDistanceKm: routeInput.approachEnabled
             ? routeInput.approachDistanceKm

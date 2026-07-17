@@ -60,6 +60,7 @@ const DEFAULT_FORM: RouteFormValues = {
   direction: "NE",
   profile: "flow",
   avoidAsphalt: true,
+  preferQuietRoutes: false,
   approachEnabled: false,
   approachDistanceKm: 10,
   viaPoints: [],
@@ -122,6 +123,7 @@ export default function HomePage() {
       avoidAsphalt:
         data.avoidAsphalt ??
         (data.bikeType === "mtb" || data.bikeType === "gravel"),
+      preferQuietRoutes: data.preferQuietRoutes ?? false,
       approachEnabled: data.approachEnabled ?? false,
       approachDistanceKm: data.approachDistanceKm ?? 10,
       viaPoints: data.viaPoints ?? [],
@@ -209,6 +211,7 @@ export default function HomePage() {
           form.bikeType === "gravel" || form.bikeType === "mtb"
             ? form.avoidAsphalt
             : undefined,
+        preferQuietRoutes: form.preferQuietRoutes || undefined,
         approachEnabled: form.approachEnabled || undefined,
         approachDistanceKm: form.approachEnabled
           ? form.approachDistanceKm
