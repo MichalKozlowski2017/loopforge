@@ -178,10 +178,6 @@ export function buildColoredGeoJsonFromRoute(
   if (coordinates.length < 2) return null;
 
   const taggedVertices = messages ? parseTaggedVertices(messages) : [];
-  if (taggedVertices.length === 0) {
-    return buildColoredGeoJson(messages);
-  }
-
   const edges: RouteSegmentFeature[] = [];
 
   for (let i = 0; i < coordinates.length - 1; i++) {
@@ -189,7 +185,10 @@ export function buildColoredGeoJsonFromRoute(
     const end = coordinates[i + 1];
     if (start[0] === end[0] && start[1] === end[1]) continue;
 
-    const tags = tagsForCoordinate(start, taggedVertices);
+    const tags =
+      taggedVertices.length > 0
+        ? tagsForCoordinate(start, taggedVertices)
+        : ({} as OsmTags);
     const style = getSurfaceStyle(tags);
     edges.push({
       type: "Feature",

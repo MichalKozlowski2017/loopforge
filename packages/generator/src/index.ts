@@ -127,15 +127,12 @@ function syncMapGeoJson(
 ): import("@loopforge/osm-types").RouteMapGeoJson | undefined {
   // Prefer coloring the exact displayed polyline (road-following GeoJSON).
   // Never rebuild from sparse message vertices alone — that draws air chords.
+  // Never fall back to unpruned mapGeojson — that reintroduces dead-end stubs.
   if (coordinates.length >= 2) {
     const colored = buildRouteMapGeoJson(coordinates, routed.brouterMessages);
     if (colored) return colored;
   }
-  return (
-    pruneMapGeoJson(routed.mapGeojson ?? null, coordinates) ??
-    routed.mapGeojson ??
-    undefined
-  );
+  return pruneMapGeoJson(routed.mapGeojson ?? null, coordinates) ?? undefined;
 }
 
 function toRadians(deg: number): number {
@@ -291,7 +288,7 @@ function buildGeneratedRoute(
         coordinates: displayCoordinates,
       },
     },
-    mapGeojson: syncedMapGeojson ?? options.mapGeojson,
+    mapGeojson: syncedMapGeojson ?? undefined,
     metrics: {
       distanceKm: actualKm,
       loopDistanceKm: actualKm,
@@ -1216,39 +1213,8 @@ async function generateRouteWithEngine(
   }
 
   const finalized = finalizeLoopWithoutSpurs(best);
-  const preFinalizeMetrics = loopQualityMetrics(
-    best.coordinates,
-    request.distanceKm,
-    best.distanceKm,
-    request.start,
-    request.direction,
-  );
-  const finalLoopMetrics = loopQualityMetrics(
-    finalized.coordinates,
-    request.distanceKm,
-    finalized.distanceKm,
-    request.start,
-    request.direction,
-  );
-  const finalizedTooSpurHeavy =
-    finalLoopMetrics.spurShare > MAX_SPUR_SHARE * 1.6 ||
-    finalLoopMetrics.backtrack > MAX_BACKTRACK * 1.5;
-
-  // Prefer prune when it helps; never abort for spur score alone.
-  let output = finalized;
-  if (finalizedTooSpurHeavy) {
-    const keepOriginal =
-      preFinalizeMetrics.backtrack + preFinalizeMetrics.spurShare <=
-      finalLoopMetrics.backtrack + finalLoopMetrics.spurShare;
-    output = keepOriginal ? best : finalized;
-    if (process.env.NODE_ENV !== "production") {
-      console.warn(
-        "[loopforge] spur/backtrack high — returning",
-        keepOriginal ? "pre-prune" : "pruned",
-        `backtrack=${(keepOriginal ? preFinalizeMetrics : finalLoopMetrics).backtrack.toFixed(3)}`,
-      );
-    }
-  }
+  // Always keep pruned geometry — restoring pre-prune reintroduces dead-end stubs.
+  const output = finalized;
 
   return {
     route: buildGeneratedRoute(request, output.coordinates, {

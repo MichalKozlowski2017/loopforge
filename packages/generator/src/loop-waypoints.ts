@@ -575,14 +575,14 @@ export function overlapRatio(coordinates: [number, number][]): number {
   return duplicates / coordinates.length;
 }
 
-/** Detect short out-and-back spurs (same segment reversed within ~40 points). */
+/** Detect short out-and-back spurs (same segment reversed). */
 export function backtrackRatio(coordinates: [number, number][]): number {
   coordinates = downsampleCoordinates(coordinates, MAX_QUALITY_POINTS);
   if (coordinates.length < 10) return 0;
 
   let spurs = 0;
-  const window = Math.min(280, Math.max(80, Math.floor(coordinates.length * 0.5)));
-  const thresholdM = 35;
+  const thresholdM = 45;
+  const maxWindowM = 3500;
 
   for (let i = 0; i < coordinates.length - 3; i++) {
     const a = { lng: coordinates[i][0], lat: coordinates[i][1] };
@@ -590,10 +590,21 @@ export function backtrackRatio(coordinates: [number, number][]): number {
 
     const ab = haversineM(a, b);
     if (ab < 15) continue;
+    const fwd = bearingDeg(a, b);
 
-    for (let j = i + 2; j < Math.min(i + window, coordinates.length - 1); j++) {
+    let spanM = 0;
+    for (let j = i + 2; j < coordinates.length - 1; j++) {
+      spanM += haversineM(
+        { lng: coordinates[j - 1][0], lat: coordinates[j - 1][1] },
+        { lng: coordinates[j][0], lat: coordinates[j][1] },
+      );
+      if (spanM > maxWindowM) break;
+
       const c = { lng: coordinates[j][0], lat: coordinates[j][1] };
       const d = { lng: coordinates[j + 1][0], lat: coordinates[j + 1][1] };
+
+      const back = bearingDeg(c, d);
+      if (Math.abs(((fwd - back + 540) % 360) - 180) < 150) continue;
 
       const rev =
         haversineM(a, d) < thresholdM && haversineM(b, c) < thresholdM;
@@ -613,32 +624,43 @@ export function spurLengthM(coordinates: [number, number][]): number {
   if (coordinates.length < 12) return 0;
 
   let spurM = 0;
-  const minGap = 8;
-  const matchM = 40;
-  const window = Math.min(280, Math.max(60, Math.floor(coordinates.length * 0.5)));
+  const minGap = 6;
+  const matchM = 55;
+  const maxWindowM = 4000;
 
   for (let i = 0; i < coordinates.length - 1; i++) {
     const a = { lng: coordinates[i][0], lat: coordinates[i][1] };
     const b = { lng: coordinates[i + 1][0], lat: coordinates[i + 1][1] };
     const segLen = haversineM(a, b);
-    if (segLen < 12) continue;
+    if (segLen < 10) continue;
 
     const fwd = bearingDeg(a, b);
+    let spanM = 0;
 
-    for (let j = i + minGap; j < Math.min(i + window, coordinates.length - 1); j++) {
+    for (let j = i + 1; j < coordinates.length - 1; j++) {
+      spanM += haversineM(
+        { lng: coordinates[j - 1][0], lat: coordinates[j - 1][1] },
+        { lng: coordinates[j][0], lat: coordinates[j][1] },
+      );
+      if (j - i < minGap) continue;
+      if (spanM > maxWindowM) break;
+
       const c = { lng: coordinates[j][0], lat: coordinates[j][1] };
       const d = { lng: coordinates[j + 1][0], lat: coordinates[j + 1][1] };
 
       const exactReverse =
         haversineM(a, d) < matchM && haversineM(b, c) < matchM;
-      if (exactReverse) {
+      const rev = bearingDeg(c, d);
+      // Formula: ~0 same direction, ~180 opposite.
+      const dirDelta = Math.abs(((fwd - rev + 540) % 360) - 180);
+
+      if (exactReverse && dirDelta >= 150) {
         spurM += pathLengthM(coordinates, i, j + 1);
         break;
       }
 
-      const rev = bearingDeg(c, d);
-      const bearingDelta = Math.abs(((fwd - rev + 540) % 360) - 180);
-      if (bearingDelta > 30) continue;
+      // Near-parallel opposite corridor (offset return path).
+      if (dirDelta < 150) continue;
 
       const midA = { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 };
       const midB = { lat: (c.lat + d.lat) / 2, lng: (c.lng + d.lng) / 2 };
