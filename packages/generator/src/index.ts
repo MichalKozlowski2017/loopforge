@@ -618,6 +618,7 @@ async function generateRouteWithEngine(
           urbanWaypointAdjustments(
             request.distanceKm,
             variantUrbanEscalated,
+            baseUrban,
           ),
         );
         const shape = loopShapeForVariant(
@@ -689,7 +690,10 @@ async function generateRouteWithEngine(
           request.preferQuietRoutes ?? false,
         );
 
-        if (shouldEscalateUrbanTuning(request.distanceKm, refined.distanceKm)) {
+        if (
+          baseUrban &&
+          shouldEscalateUrbanTuning(request.distanceKm, refined.distanceKm)
+        ) {
           variantUrbanEscalated = true;
         }
 
@@ -768,9 +772,11 @@ async function generateRouteWithEngine(
         const maxDistanceError = maxAcceptableDistanceError(
           request.distanceKm,
           false,
+          baseUrban,
         );
         const maxLoopKm =
-          request.distanceKm * maxLoopShareOfTarget(request.distanceKm, false);
+          request.distanceKm *
+          maxLoopShareOfTarget(request.distanceKm, false, baseUrban);
         const tooShort =
           refined.distanceKm < minLoopKm ||
           metrics.distanceError > maxDistanceError;
@@ -843,6 +849,7 @@ async function generateRouteWithEngine(
           metrics.distanceError <= maxAcceptableDistanceError(
             request.distanceKm,
             false,
+            baseUrban,
           ) &&
           refined.distanceKm >= minLoopKm
         ) {
@@ -853,7 +860,7 @@ async function generateRouteWithEngine(
         if (
           metrics.directionCoverage >= 0.55 &&
           metrics.distanceError <
-            maxAcceptableDistanceError(request.distanceKm, false) &&
+            maxAcceptableDistanceError(request.distanceKm, false, baseUrban) &&
           metrics.spurShare < 0.06 &&
           refined.distanceKm >= minLoopKm
         ) {
@@ -880,7 +887,8 @@ async function generateRouteWithEngine(
           best.distanceKm,
           request.start,
           request.direction,
-        ).distanceError <= maxAcceptableDistanceError(request.distanceKm, false)
+        ).distanceError <=
+          maxAcceptableDistanceError(request.distanceKm, false, baseUrban)
       ) {
         break;
       }
@@ -909,6 +917,7 @@ async function generateRouteWithEngine(
     const rejectedDistanceLimit = maxAcceptableDistanceError(
       request.distanceKm,
       true,
+      baseUrban,
     );
     if (
       rejectedMetrics.directionCoverage >= 0.38 &&
@@ -939,6 +948,7 @@ async function generateRouteWithEngine(
     const fallbackDistanceLimit = maxAcceptableDistanceError(
       request.distanceKm,
       true,
+      baseUrban,
     );
     if (
       fallbackMetrics.directionCoverage >= 0.32 &&
@@ -958,7 +968,7 @@ async function generateRouteWithEngine(
       try {
         const recoveryPrefs = mergeLoopPrefs(
           profilePrefs,
-          urbanWaypointAdjustments(request.distanceKm, true),
+          urbanWaypointAdjustments(request.distanceKm, true, baseUrban),
         );
         const shape = loopShapeForVariant(
           request.distanceKm,
@@ -986,8 +996,8 @@ async function generateRouteWithEngine(
           waypoints,
           rideProfile: request.profile,
           avoidAsphalt: false,
-          preferQuietRoutes: request.preferQuietRoutes,
-          urbanRouting: true,
+          preferQuietRoutes: false,
+          urbanRouting: baseUrban,
           skipGpx: true,
         });
         if (hasSuspiciousTeleportEdge(routed.coordinates)) continue;
@@ -1001,14 +1011,15 @@ async function generateRouteWithEngine(
           options?.approachCoordinates,
           (request.viaPoints?.length ?? 0) > 0,
           recoveryPrefs,
-          request.preferQuietRoutes ?? false,
+          false,
         );
         if (
           !hasSuspiciousTeleportEdge(refined.coordinates) &&
           refined.coordinates.length >= 4 &&
           refined.distanceKm >= request.distanceKm * 0.45 &&
           refined.distanceKm <=
-            request.distanceKm * maxLoopShareOfTarget(request.distanceKm, true)
+            request.distanceKm *
+              maxLoopShareOfTarget(request.distanceKm, true, baseUrban)
         ) {
           best = refined;
           usedRelaxedFallback = true;
@@ -1032,7 +1043,8 @@ async function generateRouteWithEngine(
   if (!best && bestLowOverlap) {
     if (
       bestLowOverlap.distanceKm <=
-        request.distanceKm * maxLoopShareOfTarget(request.distanceKm, true) &&
+        request.distanceKm *
+          maxLoopShareOfTarget(request.distanceKm, true, baseUrban) &&
       !hasSuspiciousTeleportEdge(bestLowOverlap.coordinates)
     ) {
       best = bestLowOverlap;
@@ -1047,7 +1059,8 @@ async function generateRouteWithEngine(
     bestFallback.coordinates.length >= 4 &&
     bestFallback.distanceKm >= request.distanceKm * 0.35 &&
     bestFallback.distanceKm <=
-      request.distanceKm * maxLoopShareOfTarget(request.distanceKm, true)
+      request.distanceKm *
+        maxLoopShareOfTarget(request.distanceKm, true, baseUrban)
   ) {
     best = bestFallback;
     usedRelaxedFallback = true;
@@ -1055,7 +1068,7 @@ async function generateRouteWithEngine(
 
   // Prefer any real routed loop over showing the user an empty error.
   if (!best) {
-    const maxShare = maxLoopShareOfTarget(request.distanceKm, true);
+    const maxShare = maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
     const candidates = [bestRejected, bestFallback, bestLowOverlap].filter(
       (c): c is RoutedLoopResult =>
         !!c &&
@@ -1124,8 +1137,11 @@ async function generateRouteWithEngine(
       ? 0.36
       : 0.42;
   const distanceErrorLimit = usedRelaxedFallback
-    ? Math.max(maxAcceptableDistanceError(request.distanceKm, true), 0.45)
-    : maxAcceptableDistanceError(request.distanceKm, false);
+    ? Math.max(
+        maxAcceptableDistanceError(request.distanceKm, true, baseUrban),
+        0.45,
+      )
+    : maxAcceptableDistanceError(request.distanceKm, false, baseUrban);
 
   let finalMetrics = loopQualityMetrics(
     best.coordinates,
@@ -1168,7 +1184,7 @@ async function generateRouteWithEngine(
     finalMetrics.distanceError > distanceErrorLimit ||
     best.distanceKm < minLoopKmFinal
   ) {
-    const maxShare = maxLoopShareOfTarget(request.distanceKm, true);
+    const maxShare = maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
     // Once BRouter found roads, keep the loop — imperfect beats empty UI,
     // but never return a loop nearly 2× the requested distance.
     if (

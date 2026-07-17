@@ -13,30 +13,49 @@ export function shouldEscalateUrbanTuning(
   return actualKm < targetKm * 0.82;
 }
 
-export function maxAcceptableDistanceError(targetKm: number, relaxed: boolean): number {
-  if (targetKm >= 45) return relaxed ? 0.17 : 0.14;
-  if (targetKm >= 35) return relaxed ? 0.19 : 0.16;
-  if (targetKm >= 25) return relaxed ? 0.22 : 0.18;
-  return relaxed ? 0.26 : 0.22;
+export function maxAcceptableDistanceError(
+  targetKm: number,
+  relaxed: boolean,
+  urban = true,
+): number {
+  let err: number;
+  if (targetKm >= 45) err = relaxed ? 0.17 : 0.14;
+  else if (targetKm >= 35) err = relaxed ? 0.19 : 0.16;
+  else if (targetKm >= 25) err = relaxed ? 0.22 : 0.18;
+  else err = relaxed ? 0.26 : 0.22;
+
+  // Sparse rural networks often undershoot/overshoot more than metro grids.
+  if (!urban) err += relaxed ? 0.06 : 0.04;
+  return err;
 }
 
 /** Maximum routed loop length as a fraction of the requested distance. */
-export function maxLoopShareOfTarget(targetKm: number, relaxed = false): number {
-  const err = maxAcceptableDistanceError(targetKm, relaxed);
+export function maxLoopShareOfTarget(
+  targetKm: number,
+  relaxed = false,
+  urban = true,
+): number {
+  const err = maxAcceptableDistanceError(targetKm, relaxed, urban);
   return 1 + err;
 }
 
 /** Minimum routed loop length as a fraction of the requested distance. */
 export function minLoopShareOfTarget(targetKm: number, urban = false): number {
-  if (targetKm >= 40) return urban ? 0.8 : 0.85;
-  if (targetKm >= 30) return urban ? 0.78 : 0.82;
-  return 0.78;
+  // Rural: allow more undershoot — gravel/dirt graphs are patchy.
+  if (targetKm >= 40) return urban ? 0.8 : 0.7;
+  if (targetKm >= 30) return urban ? 0.78 : 0.68;
+  return urban ? 0.78 : 0.65;
 }
 
 export function urbanWaypointAdjustments(
   distanceKm: number,
   escalated: boolean,
+  inMetro = false,
 ): Partial<RideProfileLoopPrefs> {
+  // Never apply metro waypoint compression outside the city — it breaks rural loops.
+  if (!inMetro) {
+    return {};
+  }
   if (!prefersUrbanLoopTuning(distanceKm) && !escalated) {
     return {};
   }
@@ -87,6 +106,7 @@ export function startInMetroArea(start: LatLng): boolean {
   );
 }
 
-export function useUrbanRouting(start: LatLng, distanceKm: number): boolean {
-  return prefersUrbanLoopTuning(distanceKm) || startInMetroArea(start);
+/** Urban routing prefs only when the start is inside a metro bbox — not by distance alone. */
+export function useUrbanRouting(start: LatLng, _distanceKm?: number): boolean {
+  return startInMetroArea(start);
 }

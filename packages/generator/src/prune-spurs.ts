@@ -56,34 +56,34 @@ interface SpurDetectConfig {
 }
 
 const DEFAULT_SPUR_CONFIG: SpurDetectConfig = {
-  matchM: 90,
-  minSpurM: 18,
+  matchM: 110,
+  minSpurM: 16,
   minGap: 5,
   maxSpanRatio: 0.55,
-  minDetourRatio: 1.12,
-  midBulgeRatio: 0.18,
-  maxMidBulgeM: 140,
+  minDetourRatio: 1.1,
+  midBulgeRatio: 0.16,
+  maxMidBulgeM: 160,
 };
 
 const MICRO_SPUR_CONFIG: SpurDetectConfig = {
-  matchM: 40,
-  minSpurM: 10,
+  matchM: 48,
+  minSpurM: 8,
   minGap: 4,
   maxSpanRatio: 0.35,
-  minDetourRatio: 1.12,
-  midBulgeRatio: 0.16,
-  maxMidBulgeM: 70,
+  minDetourRatio: 1.1,
+  midBulgeRatio: 0.14,
+  maxMidBulgeM: 80,
 };
 
 /** Longer cul-de-sac / park stubs that rejoin near the same junction. */
 const STUB_SPUR_CONFIG: SpurDetectConfig = {
-  matchM: 90,
-  minSpurM: 35,
+  matchM: 120,
+  minSpurM: 28,
   minGap: 6,
-  maxSpanRatio: 0.4,
-  minDetourRatio: 1.2,
-  midBulgeRatio: 0.2,
-  maxMidBulgeM: 220,
+  maxSpanRatio: 0.42,
+  minDetourRatio: 1.15,
+  midBulgeRatio: 0.18,
+  maxMidBulgeM: 240,
 };
 
 function findDeadEndSpurRangesWithConfig(
@@ -200,8 +200,8 @@ export function findOpenPathBranchStubRanges(coordinates: Coord[]): SpurRange[] 
   const ranges: SpurRange[] = [];
   const maxStubM = 900;
   const minStubM = 12;
-  const rejoinM = 90;
-  const minTurnDeg = 18;
+  const rejoinM = 120;
+  const minTurnDeg = 16;
   const endReserve = 8;
 
   for (let j = 1; j < coordinates.length - 2; j++) {
@@ -282,7 +282,7 @@ export function findHairpinSpurRanges(coordinates: Coord[]): SpurRange[] {
     if (bearingDelta(inBearing, outBearing) < 125) continue;
 
     for (let j = tipEnd + 1; j < Math.min(i + 80, coordinates.length); j++) {
-      if (haversineM(toLatLng(coordinates[i]), toLatLng(coordinates[j])) > 90) {
+      if (haversineM(toLatLng(coordinates[i]), toLatLng(coordinates[j])) > 120) {
         continue;
       }
       const stubM = pathLengthM(coordinates, i, j);
@@ -300,7 +300,7 @@ export function findReverseSegmentSpurRanges(coordinates: Coord[]): SpurRange[] 
   if (coordinates.length < 16) return [];
 
   const ranges: SpurRange[] = [];
-  const matchM = 55;
+  const matchM = 65;
   const minGap = 5;
   const window = Math.min(400, Math.floor(coordinates.length * 0.65));
   const minSpurM = 22;
@@ -354,7 +354,7 @@ function mergeSpurRanges(ranges: SpurRange[]): SpurRange[] {
  * Must be >= spur rejoin radius (matchM) so out-and-back stubs can be cut.
  * Longer stitches jump across fields/buildings — those stay blocked.
  */
-const MAX_PRUNE_STITCH_EDGE_M = 90;
+const MAX_PRUNE_STITCH_EDGE_M = 120;
 
 function wouldCreateAirChord(
   coordinates: Coord[],
@@ -486,8 +486,7 @@ export function pruneApproachDeadEndSpurs(coordinates: Coord[]): PruneSpursResul
   };
 }
 
-/** Long on-network BRouter edges exist; air-chords from prune must stay shorter. */
-const NORMAL_BROUTER_MAX_EDGE_M = 750;
+/** Hard ceiling — only true map teleports / broken stitches. */
 const ABSOLUTE_TELEPORT_M = 1200;
 
 function edgeLengthsM(coordinates: Coord[]): number[] {
@@ -500,63 +499,43 @@ function edgeLengthsM(coordinates: Coord[]): number[] {
   return edges;
 }
 
-function percentile(sorted: number[], p: number): number {
-  if (sorted.length === 0) return 0;
-  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * p));
-  return sorted[idx]!;
-}
-
 export function maxConsecutiveEdgeM(coordinates: Coord[]): number {
   const edges = edgeLengthsM(coordinates);
   return edges.length > 0 ? Math.max(...edges) : 0;
 }
 
-/** Long chord that stands out from normal BRouter point spacing (map teleport / bad prune). */
+/**
+ * Reject only absolute air jumps. Dense BRouter GeoJSON often has 150–400 m
+ * on-road edges that used to false-positive and wipe rural + urban candidates.
+ */
 export function hasSuspiciousTeleportEdge(coordinates: Coord[]): boolean {
   if (coordinates.length < 3) return false;
-
-  const edges = edgeLengthsM(coordinates);
-  const max = Math.max(...edges);
-  const sorted = [...edges].sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)]!;
-  const p95 = percentile(sorted, 0.95);
-
-  // Hard ceiling — nothing on a bike route should jump 1.2 km in one edge.
-  if (max > ABSOLUTE_TELEPORT_M) return true;
-
-  // Dense polyline (urban): one edge much longer than the rest → likely air chord.
-  if (p95 > 0 && p95 < 60 && max > 150 && max > p95 * 4) {
-    return true;
-  }
-
-  // Sparse BRouter rural legs (~500–700 m) are normal; only extreme outliers.
-  if (max > NORMAL_BROUTER_MAX_EDGE_M && max > p95 * 8 && max > median * 25) {
-    return true;
-  }
-
-  return false;
+  return maxConsecutiveEdgeM(coordinates) > ABSOLUTE_TELEPORT_M;
 }
 
 /**
- * Detect geometry unsafe for GPS — compares before/after prune when available.
- * Any new stitch longer than a short junction gap is treated as broken.
+ * Detect geometry unsafe for GPS after spur prune.
+ * Only flag *new* stitches longer than the junction budget — do not treat
+ * pre-existing BRouter long edges as broken (that rolled back all city prunes).
  */
 export function hasBrokenRouteGeometry(
   after: Coord[],
   before?: Coord[],
 ): boolean {
+  const afterMax = maxConsecutiveEdgeM(after);
+  if (afterMax > ABSOLUTE_TELEPORT_M) return true;
+
   if (before && before.length >= 2) {
     const beforeMax = maxConsecutiveEdgeM(before);
-    const afterMax = maxConsecutiveEdgeM(after);
-    if (afterMax > beforeMax + 25 && afterMax > MAX_PRUNE_STITCH_EDGE_M) {
+    if (afterMax > MAX_PRUNE_STITCH_EDGE_M && afterMax > beforeMax + 15) {
       return true;
     }
   }
-  return hasSuspiciousTeleportEdge(after);
+  return false;
 }
 
 /** @deprecated Use hasBrokenRouteGeometry — kept for tuning/tests. */
-export const MAX_NAV_EDGE_M = NORMAL_BROUTER_MAX_EDGE_M;
+export const MAX_NAV_EDGE_M = ABSOLUTE_TELEPORT_M;
 
 /** Iteratively remove dead-end spurs from a routed loop. */
 export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
