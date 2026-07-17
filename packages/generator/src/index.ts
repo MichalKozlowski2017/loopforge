@@ -125,10 +125,7 @@ function syncMapGeoJson(
   routed: Pick<RoutedLoopResult, "mapGeojson" | "brouterMessages">,
 ): import("@loopforge/osm-types").RouteMapGeoJson | undefined {
   if (routed.brouterMessages && routed.brouterMessages.length > 0) {
-    const colored = buildColoredGeoJson(routed.brouterMessages);
-    if (colored) {
-      return pruneMapGeoJson(colored, coordinates) ?? colored;
-    }
+    return buildColoredGeoJson(routed.brouterMessages) ?? undefined;
   }
   return (
     pruneMapGeoJson(routed.mapGeojson ?? null, coordinates) ??
@@ -245,20 +242,22 @@ function buildGeneratedRoute(
   const denseCoordinates =
     messageCoordinates.length >= 2 ? messageCoordinates : coordinates;
   const navCoordinates = prepareCoordinatesForNavigation(denseCoordinates);
-  if (hasSuspiciousTeleportEdge(navCoordinates)) {
+  if (
+    hasSuspiciousTeleportEdge(denseCoordinates) ||
+    hasSuspiciousTeleportEdge(navCoordinates)
+  ) {
     throw new Error(
       "Trasa ma przerwy w nawigacji (skróty przez mapę) — spróbuj innego kierunku lub krótszego dystansu.",
     );
   }
   const syncedMapGeojson =
     options.brouterMessages && options.brouterMessages.length > 0
-      ? pruneMapGeoJson(
-          buildColoredGeoJson(options.brouterMessages),
-          navCoordinates,
-        ) ?? buildColoredGeoJson(options.brouterMessages)
+      ? buildColoredGeoJson(options.brouterMessages)
       : options.mapGeojson
         ? pruneMapGeoJson(options.mapGeojson, navCoordinates)
         : null;
+  const displayCoordinates =
+    denseCoordinates.length >= 2 ? denseCoordinates : navCoordinates;
   const actualKm =
     navCoordinates.length > 1 ? totalDistanceKm(navCoordinates) : distanceKm;
   const score = scoreRoute(options.segments, bikeType, request.profile);
@@ -285,7 +284,7 @@ function buildGeneratedRoute(
       },
       geometry: {
         type: "LineString",
-        coordinates: navCoordinates,
+        coordinates: displayCoordinates,
       },
     },
     mapGeojson: syncedMapGeojson ?? options.mapGeojson,
@@ -666,6 +665,8 @@ async function generateRouteWithEngine(
           skipGpx: true,
         });
 
+        if (hasSuspiciousTeleportEdge(routed.coordinates)) continue;
+
         const hasFerry = routed.segments.some(
           (segment) => segment.tags.route === "ferry",
         );
@@ -961,6 +962,7 @@ async function generateRouteWithEngine(
           urbanRouting: true,
           skipGpx: true,
         });
+        if (hasSuspiciousTeleportEdge(routed.coordinates)) continue;
         const { refined, metrics } = applySpurRefinement(
           routed,
           request.distanceKm,

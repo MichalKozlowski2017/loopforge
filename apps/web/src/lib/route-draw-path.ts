@@ -34,6 +34,8 @@ function normalizeCoords(coords: number[][]): LngLat[] {
 
 function concatSegments(segments: LngLat[][]): LngLat[] {
   const coords: LngLat[] = [];
+  const MAX_JOIN_GAP_M = 15;
+
   for (const segment of segments) {
     if (segment.length === 0) continue;
     if (coords.length === 0) {
@@ -42,10 +44,12 @@ function concatSegments(segments: LngLat[][]): LngLat[] {
     }
     const last = coords[coords.length - 1]!;
     const first = segment[0]!;
+    const gapM = haversineMeters(last, first);
+    if (gapM > MAX_JOIN_GAP_M) continue;
     if (last[0] === first[0] && last[1] === first[1]) {
       coords.push(...segment.slice(1));
     } else {
-      coords.push(...segment);
+      coords.push(...segment.slice(1));
     }
   }
   return coords;

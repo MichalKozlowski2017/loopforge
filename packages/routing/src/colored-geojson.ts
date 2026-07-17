@@ -15,6 +15,14 @@ function styleKey(feature: RouteSegmentFeature): string {
   return `${feature.properties.label}|${feature.properties.color}|${feature.properties.category}`;
 }
 
+function coordsMatch(
+  a: [number, number],
+  b: [number, number],
+  eps = 1e-6,
+): boolean {
+  return Math.abs(a[0] - b[0]) <= eps && Math.abs(a[1] - b[1]) <= eps;
+}
+
 function mergeAdjacentFeatures(
   features: RouteSegmentFeature[],
 ): RouteSegmentFeature[] {
@@ -34,14 +42,15 @@ function mergeAdjacentFeatures(
     const current = features[i];
     const previous = merged[merged.length - 1];
 
-    if (styleKey(previous) === styleKey(current)) {
-      const last = previous.geometry.coordinates.at(-1);
-      const first = current.geometry.coordinates[0];
-      const rest =
-        last && first && last[0] === first[0] && last[1] === first[1]
-          ? current.geometry.coordinates.slice(1)
-          : current.geometry.coordinates;
-      previous.geometry.coordinates.push(...rest);
+    const last = previous.geometry.coordinates.at(-1);
+    const first = current.geometry.coordinates[0];
+    const contiguous =
+      last && first && coordsMatch(last as [number, number], first as [number, number]);
+
+    if (styleKey(previous) === styleKey(current) && contiguous) {
+      previous.geometry.coordinates.push(
+        ...current.geometry.coordinates.slice(1),
+      );
     } else {
       merged.push({
         ...current,

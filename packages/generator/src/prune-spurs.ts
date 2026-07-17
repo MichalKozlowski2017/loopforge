@@ -429,7 +429,13 @@ export function hasSuspiciousTeleportEdge(coordinates: Coord[]): boolean {
 
   const edges = edgeLengthsM(coordinates);
   const max = Math.max(...edges);
-  if (max <= NORMAL_BROUTER_MAX_EDGE_M) return false;
+  if (max <= NORMAL_BROUTER_MAX_EDGE_M) {
+    const sorted = [...edges].sort((a, b) => a - b);
+    const p95 = percentile(sorted, 0.95);
+    // One long edge among mostly short urban vertices — map chord through blocks.
+    if (max > 120 && p95 < 90 && max > p95 * 2.5) return true;
+    return false;
+  }
 
   const sorted = [...edges].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)]!;

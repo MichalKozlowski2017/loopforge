@@ -25,6 +25,14 @@ function styleKey(feature: RouteSegmentFeature): string {
   return `${feature.properties.label}|${feature.properties.color}|${feature.properties.category}`;
 }
 
+function coordsMatch(
+  a: [number, number],
+  b: [number, number],
+  eps = 1e-6,
+): boolean {
+  return Math.abs(a[0] - b[0]) <= eps && Math.abs(a[1] - b[1]) <= eps;
+}
+
 function mergeAdjacentFeatures(
   features: RouteSegmentFeature[],
 ): RouteSegmentFeature[] {
@@ -44,14 +52,15 @@ function mergeAdjacentFeatures(
     const current = features[i];
     const previous = merged[merged.length - 1];
 
-    if (styleKey(previous) === styleKey(current)) {
-      const last = previous.geometry.coordinates.at(-1);
-      const first = current.geometry.coordinates[0];
-      const rest =
-        last && first && last[0] === first[0] && last[1] === first[1]
-          ? current.geometry.coordinates.slice(1)
-          : current.geometry.coordinates;
-      previous.geometry.coordinates.push(...rest);
+    const last = previous.geometry.coordinates.at(-1);
+    const first = current.geometry.coordinates[0];
+    const contiguous =
+      last && first && coordsMatch(last as [number, number], first as [number, number]);
+
+    if (styleKey(previous) === styleKey(current) && contiguous) {
+      previous.geometry.coordinates.push(
+        ...current.geometry.coordinates.slice(1),
+      );
     } else {
       merged.push({
         ...current,
@@ -184,55 +193,33 @@ export function buildColoredGeoJsonFromRoute(
 }
 
 /**
- * Builds colored segments edge-by-edge from BRouter message rows.
+ * Builds colored segments edge-by-edge from consecutive BRouter vertices.
  * Row 0 is a header — skipped. Only numeric micro-degree coordinates are used.
  */
 export function buildColoredGeoJson(
   messages: string[][] | undefined,
 ): RouteMapGeoJson | null {
-  if (!messages || messages.length < 3) return null;
+  const vertices = messages ? parseTaggedVertices(messages) : [];
+  if (vertices.length < 2) return null;
 
   const edges: RouteSegmentFeature[] = [];
-  let lastTags: Record<string, string> = {};
 
-  for (let i = 2; i < messages.length; i++) {
-    const previous = messages[i - 1];
-    const row = messages[i];
-    const lon1 = previous[0];
-    const lat1 = previous[1];
-    const lon2 = row[0];
-    const lat2 = row[1];
-
-    if (
-      !isMicroDegree(lon1) ||
-      !isMicroDegree(lat1) ||
-      !isMicroDegree(lon2) ||
-      !isMicroDegree(lat2)
-    ) {
-      continue;
-    }
-
-    const wayTags = row[9] || previous[9] || "";
-    const tags = wayTags ? parseOsmTagString(wayTags) : lastTags;
-    if (Object.keys(tags).length > 0) {
-      lastTags = tags;
-    }
-
-    const start = microToCoord(lon1, lat1);
-    const end = microToCoord(lon2, lat2);
-    if (!isValidCoord(start) || !isValidCoord(end)) continue;
+  for (let i = 1; i < vertices.length; i++) {
+    const start = vertices[i - 1]!.coord;
+    const end = vertices[i]!.coord;
     if (start[0] === end[0] && start[1] === end[1]) continue;
 
-    const style = getSurfaceStyle(lastTags as OsmTags);
+    const tags = vertices[i]!.tags;
+    const style = getSurfaceStyle(tags);
     edges.push({
       type: "Feature",
       properties: {
-        surface: lastTags.surface ?? lastTags.highway ?? "nieznane",
+        surface: tags.surface ?? tags.highway ?? "nieznane",
         label: style.label,
         category: style.category,
         color: style.color,
         dash: style.dash,
-        highway: lastTags.highway,
+        highway: tags.highway,
       },
       geometry: {
         type: "LineString",
