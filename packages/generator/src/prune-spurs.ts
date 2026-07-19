@@ -699,24 +699,32 @@ function hasLocalAirChordEdge(
 }
 
 /**
- * Detect air-chords / teleports from absolute jumps, metro dense outliers,
- * and local density contrasts (mixed open-country + town loops).
+ * Hard teleport only — used when accepting/rejecting BRouter candidates.
+ * Must not false-positive on normal dense GeoJSON straights or rural legs.
+ */
+export function hasHardTeleportEdge(coordinates: Coord[]): boolean {
+  if (coordinates.length < 3) return false;
+  return maxConsecutiveEdgeM(coordinates) > 1200;
+}
+
+/**
+ * Stricter geometry checks after prune / for map fidelity.
+ * Not used to discard raw BRouter variants (that blocked all generation).
  */
 export function hasSuspiciousTeleportEdge(
   coordinates: Coord[],
   context: GeometryContext = {},
 ): boolean {
   if (coordinates.length < 3) return false;
+  if (hasHardTeleportEdge(coordinates)) return true;
 
   const limits = resolveGeometryLimits(coordinates, context);
-  const edges = edgeLengthsM(coordinates);
-  const max = Math.max(...edges);
-  if (max > limits.absoluteTeleportM) return true;
-
   if (hasLocalAirChordEdge(coordinates, limits)) return true;
 
   if (!limits.useDenseTeleportCheck) return false;
 
+  const edges = edgeLengthsM(coordinates);
+  const max = Math.max(...edges);
   const sorted = [...edges].sort((a, b) => a - b);
   const p95 = percentile(sorted, 0.95);
 
@@ -724,7 +732,7 @@ export function hasSuspiciousTeleportEdge(
     p95 > 0 &&
     p95 < limits.denseP95MaxM &&
     max > limits.denseOutlierMinM &&
-    max > p95 * 5.5
+    max > p95 * 6
   ) {
     return true;
   }

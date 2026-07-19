@@ -39,7 +39,7 @@ import {
   pruneMapGeoJson,
   routeLengthM,
   hasBrokenRouteGeometry,
-  hasSuspiciousTeleportEdge,
+  hasHardTeleportEdge,
 } from "./prune-spurs";
 import {
   maxAcceptableDistanceError,
@@ -252,7 +252,8 @@ function buildGeneratedRoute(
     navCoordinates.length >= 2
       ? navCoordinates
       : denseCoordinates;
-  if (hasSuspiciousTeleportEdge(displayCoordinates, geoCtx)) {
+  // Only hard teleports fail the build — soft air-chord checks are for prune rollback.
+  if (hasHardTeleportEdge(displayCoordinates)) {
     throw new Error(
       "Trasa ma przerwy w nawigacji (skróty przez mapę) — spróbuj innego kierunku lub krótszego dystansu.",
     );
@@ -680,7 +681,7 @@ async function generateRouteWithEngine(
           skipGpx: true,
         });
 
-        if (hasSuspiciousTeleportEdge(routed.coordinates, geoCtx)) continue;
+        if (hasHardTeleportEdge(routed.coordinates)) continue;
 
         const hasFerry = routed.segments.some(
           (segment) => segment.tags.route === "ferry",
@@ -934,7 +935,7 @@ async function generateRouteWithEngine(
       rejectedMetrics.distanceError < rejectedDistanceLimit &&
       bestRejected.distanceKm >= minLoopKm &&
       rejectedApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED &&
-      !hasSuspiciousTeleportEdge(bestRejected.coordinates, geoCtx)
+      !hasHardTeleportEdge(bestRejected.coordinates)
     ) {
       best = bestRejected;
       usedRelaxedFallback = true;
@@ -965,7 +966,7 @@ async function generateRouteWithEngine(
       fallbackMetrics.distanceError < fallbackDistanceLimit &&
       bestFallback.distanceKm >= minLoopKm &&
       fallbackApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED &&
-      !hasSuspiciousTeleportEdge(bestFallback.coordinates, geoCtx)
+      !hasHardTeleportEdge(bestFallback.coordinates)
     ) {
       best = bestFallback;
       usedRelaxedFallback = true;
@@ -1010,7 +1011,7 @@ async function generateRouteWithEngine(
           urbanRouting: baseUrban,
           skipGpx: true,
         });
-        if (hasSuspiciousTeleportEdge(routed.coordinates, geoCtx)) continue;
+        if (hasHardTeleportEdge(routed.coordinates)) continue;
         const { refined, metrics } = applySpurRefinement(
           routed,
           request.distanceKm,
@@ -1024,7 +1025,7 @@ async function generateRouteWithEngine(
           false,
         );
         if (
-          !hasSuspiciousTeleportEdge(refined.coordinates, geoCtx) &&
+          !hasHardTeleportEdge(refined.coordinates) &&
           refined.coordinates.length >= 4 &&
           refined.distanceKm >= request.distanceKm * 0.45 &&
           refined.distanceKm <=
@@ -1055,7 +1056,7 @@ async function generateRouteWithEngine(
       bestLowOverlap.distanceKm <=
         request.distanceKm *
           maxLoopShareOfTarget(request.distanceKm, true, baseUrban) &&
-      !hasSuspiciousTeleportEdge(bestLowOverlap.coordinates, geoCtx)
+      !hasHardTeleportEdge(bestLowOverlap.coordinates)
     ) {
       best = bestLowOverlap;
       usedRelaxedFallback = true;
@@ -1065,7 +1066,7 @@ async function generateRouteWithEngine(
   if (
     !best &&
     bestFallback &&
-    !hasSuspiciousTeleportEdge(bestFallback.coordinates, geoCtx) &&
+    !hasHardTeleportEdge(bestFallback.coordinates) &&
     bestFallback.coordinates.length >= 4 &&
     bestFallback.distanceKm >= request.distanceKm * 0.35 &&
     bestFallback.distanceKm <=
@@ -1085,7 +1086,7 @@ async function generateRouteWithEngine(
         c.coordinates.length >= 4 &&
         c.distanceKm >= request.distanceKm * 0.35 &&
         c.distanceKm <= request.distanceKm * maxShare &&
-        !hasSuspiciousTeleportEdge(c.coordinates, geoCtx),
+        !hasHardTeleportEdge(c.coordinates),
     );
     if (candidates.length > 0) {
       candidates.sort((a, b) => {
@@ -1177,7 +1178,7 @@ async function generateRouteWithEngine(
     if (
       lowOverlapMetrics.directionCoverage >= minDirectionCoverage &&
       lowOverlapMetrics.distanceError <= distanceErrorLimit &&
-      !hasSuspiciousTeleportEdge(bestLowOverlap.coordinates, geoCtx)
+      !hasHardTeleportEdge(bestLowOverlap.coordinates)
     ) {
       best = bestLowOverlap;
       finalMetrics = lowOverlapMetrics;

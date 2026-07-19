@@ -134,13 +134,14 @@ export type GeometrySafetyLimits = {
 const METRO_GEOMETRY_LIMITS: GeometrySafetyLimits = {
   maxPruneStitchM: 100,
   useDenseTeleportCheck: true,
-  denseP95MaxM: 32,
-  denseOutlierMinM: 110,
+  denseP95MaxM: 28,
+  denseOutlierMinM: 140,
   absoluteTeleportM: 1200,
   useLocalAirChordCheck: true,
-  localAirChordMinM: 95,
-  localAirChordMedianMaxM: 34,
-  localAirChordRatio: 5,
+  // Only clear diagonals — ~100 m on-road straights are normal in dense GeoJSON.
+  localAirChordMinM: 150,
+  localAirChordMedianMaxM: 28,
+  localAirChordRatio: 7,
   source: "metro",
 };
 
@@ -148,13 +149,13 @@ const METRO_GEOMETRY_LIMITS: GeometrySafetyLimits = {
 const MIXED_GEOMETRY_LIMITS: GeometrySafetyLimits = {
   maxPruneStitchM: 90,
   useDenseTeleportCheck: true,
-  denseP95MaxM: 36,
-  denseOutlierMinM: 105,
+  denseP95MaxM: 32,
+  denseOutlierMinM: 140,
   absoluteTeleportM: 1200,
   useLocalAirChordCheck: true,
-  localAirChordMinM: 90,
-  localAirChordMedianMaxM: 36,
-  localAirChordRatio: 4.5,
+  localAirChordMinM: 150,
+  localAirChordMedianMaxM: 30,
+  localAirChordRatio: 7,
   source: "mixed",
 };
 
@@ -165,9 +166,9 @@ const OPEN_COUNTRY_GEOMETRY_LIMITS: GeometrySafetyLimits = {
   denseOutlierMinM: Number.POSITIVE_INFINITY,
   absoluteTeleportM: 1200,
   useLocalAirChordCheck: true,
-  localAirChordMinM: 110,
-  localAirChordMedianMaxM: 40,
-  localAirChordRatio: 5.5,
+  localAirChordMinM: 180,
+  localAirChordMedianMaxM: 32,
+  localAirChordRatio: 8,
   source: "open-country",
 };
 
