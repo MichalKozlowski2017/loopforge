@@ -110,3 +110,180 @@ export function startInMetroArea(start: LatLng): boolean {
 export function useUrbanRouting(start: LatLng, _distanceKm?: number): boolean {
   return startInMetroArea(start);
 }
+
+export type GeometrySafetyLimits = {
+  /** Max new edge when cutting a dead-end spur at a junction. */
+  maxPruneStitchM: number;
+  /** Global dense-polyline outlier check (metro-scale). */
+  useDenseTeleportCheck: boolean;
+  denseP95MaxM: number;
+  denseOutlierMinM: number;
+  absoluteTeleportM: number;
+  /**
+   * Always scan for long edges with short local neighbours — works on mixed
+   * loops (open country + small town) where global p95 stays rural.
+   */
+  useLocalAirChordCheck: boolean;
+  localAirChordMinM: number;
+  localAirChordMedianMaxM: number;
+  localAirChordRatio: number;
+  /** Debug / logs: why this profile was chosen. */
+  source: "metro" | "dense-town" | "mixed" | "open-country";
+};
+
+const METRO_GEOMETRY_LIMITS: GeometrySafetyLimits = {
+  maxPruneStitchM: 100,
+  useDenseTeleportCheck: true,
+  denseP95MaxM: 32,
+  denseOutlierMinM: 110,
+  absoluteTeleportM: 1200,
+  useLocalAirChordCheck: true,
+  localAirChordMinM: 95,
+  localAirChordMedianMaxM: 34,
+  localAirChordRatio: 5,
+  source: "metro",
+};
+
+/** Small town / mixed fabric (e.g. Dzielce → through Tłuszcz). */
+const MIXED_GEOMETRY_LIMITS: GeometrySafetyLimits = {
+  maxPruneStitchM: 90,
+  useDenseTeleportCheck: true,
+  denseP95MaxM: 36,
+  denseOutlierMinM: 105,
+  absoluteTeleportM: 1200,
+  useLocalAirChordCheck: true,
+  localAirChordMinM: 90,
+  localAirChordMedianMaxM: 36,
+  localAirChordRatio: 4.5,
+  source: "mixed",
+};
+
+const OPEN_COUNTRY_GEOMETRY_LIMITS: GeometrySafetyLimits = {
+  maxPruneStitchM: 70,
+  useDenseTeleportCheck: false,
+  denseP95MaxM: 0,
+  denseOutlierMinM: Number.POSITIVE_INFINITY,
+  absoluteTeleportM: 1200,
+  useLocalAirChordCheck: true,
+  localAirChordMinM: 110,
+  localAirChordMedianMaxM: 40,
+  localAirChordRatio: 5.5,
+  source: "open-country",
+};
+
+/** Binary preset when only the start point is known (pre-route). */
+export function geometrySafetyLimits(urban: boolean): GeometrySafetyLimits {
+  return urban
+    ? { ...METRO_GEOMETRY_LIMITS, source: "metro" }
+    : { ...OPEN_COUNTRY_GEOMETRY_LIMITS, source: "open-country" };
+}
+
+function pointInMetroArea(lat: number, lng: number): boolean {
+  return METRO_BBOXES.some(
+    (box) =>
+      lat >= box.minLat &&
+      lat <= box.maxLat &&
+      lng >= box.minLng &&
+      lng <= box.maxLng,
+  );
+}
+
+/** Share of route vertices that fall inside a known metro bbox. */
+export function metroShareOfCoordinates(
+  coordinates: Array<[number, number]>,
+): number {
+  if (coordinates.length === 0) return 0;
+  let inside = 0;
+  for (const [lng, lat] of coordinates) {
+    if (pointInMetroArea(lat, lng)) inside += 1;
+  }
+  return inside / coordinates.length;
+}
+
+function haversineEdgeM(
+  a: [number, number],
+  b: [number, number],
+): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(b[1] - a[1]);
+  const dLng = toRad(b[0] - a[0]);
+  const lat1 = toRad(a[1]);
+  const lat2 = toRad(b[1]);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.sqrt(h));
+}
+
+export function routeEdgeLengthStats(
+  coordinates: Array<[number, number]>,
+): { medianM: number; p95M: number; denseEdgeShare: number } {
+  if (coordinates.length < 2) {
+    return { medianM: 0, p95M: 0, denseEdgeShare: 0 };
+  }
+  const edges: number[] = [];
+  for (let i = 1; i < coordinates.length; i++) {
+    edges.push(haversineEdgeM(coordinates[i - 1]!, coordinates[i]!));
+  }
+  const sorted = [...edges].sort((a, b) => a - b);
+  const medianM = sorted[Math.floor(sorted.length / 2)] ?? 0;
+  const p95M = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] ?? 0;
+  const denseEdgeShare =
+    edges.length > 0
+      ? edges.filter((m) => m > 0 && m < 35).length / edges.length
+      : 0;
+  return { medianM, p95M, denseEdgeShare };
+}
+
+/**
+ * Infer geometry budgets from the actual polyline (+ optional start).
+ * Handles metro, small-town density (Tłuszcz-class), mixed loops, and open country.
+ */
+export function inferGeometrySafetyLimits(
+  coordinates: Array<[number, number]>,
+  start?: LatLng,
+): GeometrySafetyLimits {
+  const startUrban = start ? startInMetroArea(start) : false;
+  const metroShare =
+    coordinates.length >= 8 ? metroShareOfCoordinates(coordinates) : 0;
+  const { medianM, p95M, denseEdgeShare } = routeEdgeLengthStats(coordinates);
+
+  if (startUrban || metroShare >= 0.22) {
+    return { ...METRO_GEOMETRY_LIMITS, source: "metro" };
+  }
+
+  // Dense street fabric even outside our metro bboxes (powiat towns).
+  if (
+    coordinates.length >= 40 &&
+    denseEdgeShare >= 0.5 &&
+    medianM > 0 &&
+    medianM <= 28 &&
+    p95M <= 45
+  ) {
+    return {
+      ...MIXED_GEOMETRY_LIMITS,
+      maxPruneStitchM: 100,
+      source: "dense-town",
+    };
+  }
+
+  // Mixed: meaningful dense share plus open legs (Dzielce ↔ Tłuszcz).
+  if (
+    coordinates.length >= 40 &&
+    denseEdgeShare >= 0.28 &&
+    denseEdgeShare < 0.5
+  ) {
+    return { ...MIXED_GEOMETRY_LIMITS, source: "mixed" };
+  }
+
+  if (
+    coordinates.length >= 40 &&
+    denseEdgeShare >= 0.5 &&
+    (medianM > 28 || p95M > 45)
+  ) {
+    // Dense but with longer edges — still treat as mixed town fabric.
+    return { ...MIXED_GEOMETRY_LIMITS, source: "mixed" };
+  }
+
+  return { ...OPEN_COUNTRY_GEOMETRY_LIMITS, source: "open-country" };
+}

@@ -237,18 +237,22 @@ function buildGeneratedRoute(
   },
 ): GeneratedRoute {
   const { start, bikeType, direction, distanceKm } = request;
+  const geoCtx = { start };
   const denseCoordinates = pickDensestRouteCoordinates(
     coordinates,
     options.brouterMessages,
   );
   // Keep map + GPX on the same road-following polyline. Safe spur prune only.
-  const navCoordinates = prepareCoordinatesForNavigation(denseCoordinates);
+  const navCoordinates = prepareCoordinatesForNavigation(
+    denseCoordinates,
+    geoCtx,
+  );
   const displayCoordinates =
-    !hasBrokenRouteGeometry(navCoordinates, denseCoordinates) &&
+    !hasBrokenRouteGeometry(navCoordinates, denseCoordinates, geoCtx) &&
     navCoordinates.length >= 2
       ? navCoordinates
       : denseCoordinates;
-  if (hasSuspiciousTeleportEdge(displayCoordinates)) {
+  if (hasSuspiciousTeleportEdge(displayCoordinates, geoCtx)) {
     throw new Error(
       "Trasa ma przerwy w nawigacji (skróty przez mapę) — spróbuj innego kierunku lub krótszego dystansu.",
     );
@@ -461,14 +465,18 @@ function applySpurRefinement(
   quality: number;
   pruned: boolean;
 } {
-  const pruned = pruneDeadEndSpurs(routed.coordinates);
+  const geoCtx = { start };
+  const pruned = pruneDeadEndSpurs(routed.coordinates, geoCtx);
   let usePruned =
     pruned.removedRanges.length > 0 &&
     pruned.removedM >= MIN_PRUNE_REMOVED_M &&
     pruned.coordinates.length >= 4;
   let coordinates = usePruned ? pruned.coordinates : routed.coordinates;
 
-  if (usePruned && hasBrokenRouteGeometry(coordinates, routed.coordinates)) {
+  if (
+    usePruned &&
+    hasBrokenRouteGeometry(coordinates, routed.coordinates, geoCtx)
+  ) {
     usePruned = false;
     coordinates = routed.coordinates;
   }
@@ -518,13 +526,17 @@ function applySpurRefinement(
   return { refined, metrics, quality, pruned: usePruned };
 }
 
-function finalizeLoopWithoutSpurs(best: RoutedLoopResult): RoutedLoopResult {
-  const pruned = pruneDeadEndSpurs(best.coordinates);
+function finalizeLoopWithoutSpurs(
+  best: RoutedLoopResult,
+  start: LatLng,
+): RoutedLoopResult {
+  const geoCtx = { start };
+  const pruned = pruneDeadEndSpurs(best.coordinates, geoCtx);
   if (
     pruned.removedRanges.length === 0 ||
     pruned.removedM < MIN_PRUNE_REMOVED_M ||
     pruned.coordinates.length < 4 ||
-    hasBrokenRouteGeometry(pruned.coordinates, best.coordinates)
+    hasBrokenRouteGeometry(pruned.coordinates, best.coordinates, geoCtx)
   ) {
     return best;
   }
@@ -564,6 +576,7 @@ async function generateRouteWithEngine(
     request.profile,
   );
   const baseUrban = useUrbanRouting(request.start, request.distanceKm);
+  const geoCtx = { start: request.start };
   const deadlineMs =
     Date.now() + (baseUrban ? 110_000 : 95_000);
   let best: RoutedLoopResult | null = null;
@@ -667,7 +680,7 @@ async function generateRouteWithEngine(
           skipGpx: true,
         });
 
-        if (hasSuspiciousTeleportEdge(routed.coordinates)) continue;
+        if (hasSuspiciousTeleportEdge(routed.coordinates, geoCtx)) continue;
 
         const hasFerry = routed.segments.some(
           (segment) => segment.tags.route === "ferry",
@@ -921,7 +934,7 @@ async function generateRouteWithEngine(
       rejectedMetrics.distanceError < rejectedDistanceLimit &&
       bestRejected.distanceKm >= minLoopKm &&
       rejectedApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED &&
-      !hasSuspiciousTeleportEdge(bestRejected.coordinates)
+      !hasSuspiciousTeleportEdge(bestRejected.coordinates, geoCtx)
     ) {
       best = bestRejected;
       usedRelaxedFallback = true;
@@ -952,7 +965,7 @@ async function generateRouteWithEngine(
       fallbackMetrics.distanceError < fallbackDistanceLimit &&
       bestFallback.distanceKm >= minLoopKm &&
       fallbackApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED &&
-      !hasSuspiciousTeleportEdge(bestFallback.coordinates)
+      !hasSuspiciousTeleportEdge(bestFallback.coordinates, geoCtx)
     ) {
       best = bestFallback;
       usedRelaxedFallback = true;
@@ -997,7 +1010,7 @@ async function generateRouteWithEngine(
           urbanRouting: baseUrban,
           skipGpx: true,
         });
-        if (hasSuspiciousTeleportEdge(routed.coordinates)) continue;
+        if (hasSuspiciousTeleportEdge(routed.coordinates, geoCtx)) continue;
         const { refined, metrics } = applySpurRefinement(
           routed,
           request.distanceKm,
@@ -1011,7 +1024,7 @@ async function generateRouteWithEngine(
           false,
         );
         if (
-          !hasSuspiciousTeleportEdge(refined.coordinates) &&
+          !hasSuspiciousTeleportEdge(refined.coordinates, geoCtx) &&
           refined.coordinates.length >= 4 &&
           refined.distanceKm >= request.distanceKm * 0.45 &&
           refined.distanceKm <=
@@ -1042,7 +1055,7 @@ async function generateRouteWithEngine(
       bestLowOverlap.distanceKm <=
         request.distanceKm *
           maxLoopShareOfTarget(request.distanceKm, true, baseUrban) &&
-      !hasSuspiciousTeleportEdge(bestLowOverlap.coordinates)
+      !hasSuspiciousTeleportEdge(bestLowOverlap.coordinates, geoCtx)
     ) {
       best = bestLowOverlap;
       usedRelaxedFallback = true;
@@ -1052,7 +1065,7 @@ async function generateRouteWithEngine(
   if (
     !best &&
     bestFallback &&
-    !hasSuspiciousTeleportEdge(bestFallback.coordinates) &&
+    !hasSuspiciousTeleportEdge(bestFallback.coordinates, geoCtx) &&
     bestFallback.coordinates.length >= 4 &&
     bestFallback.distanceKm >= request.distanceKm * 0.35 &&
     bestFallback.distanceKm <=
@@ -1072,7 +1085,7 @@ async function generateRouteWithEngine(
         c.coordinates.length >= 4 &&
         c.distanceKm >= request.distanceKm * 0.35 &&
         c.distanceKm <= request.distanceKm * maxShare &&
-        !hasSuspiciousTeleportEdge(c.coordinates),
+        !hasSuspiciousTeleportEdge(c.coordinates, geoCtx),
     );
     if (candidates.length > 0) {
       candidates.sort((a, b) => {
@@ -1164,7 +1177,7 @@ async function generateRouteWithEngine(
     if (
       lowOverlapMetrics.directionCoverage >= minDirectionCoverage &&
       lowOverlapMetrics.distanceError <= distanceErrorLimit &&
-      !hasSuspiciousTeleportEdge(bestLowOverlap.coordinates)
+      !hasSuspiciousTeleportEdge(bestLowOverlap.coordinates, geoCtx)
     ) {
       best = bestLowOverlap;
       finalMetrics = lowOverlapMetrics;
@@ -1212,7 +1225,7 @@ async function generateRouteWithEngine(
     }
   }
 
-  const finalized = finalizeLoopWithoutSpurs(best);
+  const finalized = finalizeLoopWithoutSpurs(best, request.start);
   // Always keep pruned geometry — restoring pre-prune reintroduces dead-end stubs.
   const output = finalized;
 
@@ -1467,7 +1480,7 @@ async function generateRouteWithApproach(
     request.bikeType,
     corridorWaypoints,
   );
-  const approachSanitized = pruneApproachLeg(approachRaw);
+  const approachSanitized = pruneApproachLeg(approachRaw, userStart);
   const refined = refineApproachForLoopEntry(approachSanitized, {
     home: userStart,
     entryTarget,
@@ -1607,6 +1620,12 @@ function routingEnginePreference(): "auto" | "pgrouting" | "brouter" {
 }
 
 export { prepareCoordinatesForNavigation } from "./prune-spurs";
+export {
+  inferGeometrySafetyLimits,
+  metroShareOfCoordinates,
+  routeEdgeLengthStats,
+  useUrbanRouting,
+} from "./urban-context";
 export {
   MAX_VIA_POINTS,
   estimateLoopAnchor,

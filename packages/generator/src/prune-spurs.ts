@@ -1,7 +1,33 @@
 import type { RouteMapGeoJson } from "@loopforge/osm-types";
+import {
+  geometrySafetyLimits,
+  inferGeometrySafetyLimits,
+  type GeometrySafetyLimits,
+} from "./urban-context";
 
 type Coord = [number, number];
 type LatLng = { lat: number; lng: number };
+
+export type GeometryContext = {
+  /**
+   * Optional hard override (tests / legacy). Prefer `start` + infer-from-coords.
+   * When set, skips polyline inference.
+   */
+  urban?: boolean;
+  /** Generation start — biases metro when the pin is in a metro bbox. */
+  start?: LatLng;
+};
+
+function resolveGeometryLimits(
+  coordinates: Coord[],
+  context: GeometryContext = {},
+): GeometrySafetyLimits {
+  if (context.urban === true) return geometrySafetyLimits(true);
+  if (context.urban === false && context.start == null) {
+    return geometrySafetyLimits(false);
+  }
+  return inferGeometrySafetyLimits(coordinates, context.start);
+}
 
 const EARTH_RADIUS_M = 6_371_000;
 
@@ -271,12 +297,8 @@ function mergeSpurRanges(ranges: SpurRange[]): SpurRange[] {
   return merged;
 }
 
-/**
- * Max length of a *new* edge created by removing spur indices.
- * Must be >= spur rejoin radius (matchM) so out-and-back stubs can be cut.
- * Longer stitches jump across fields/buildings — those stay blocked.
- */
-const MAX_PRUNE_STITCH_EDGE_M = 160;
+/** Detection-only cap; actual remove uses context budget from geometrySafetyLimits. */
+const MAX_DETECT_STITCH_M = 120;
 
 /** Sharp hairpin at a dead-end tip (route turns ~180° within a short stub). */
 export function findHairpinSpurRanges(coordinates: Coord[]): SpurRange[] {
@@ -393,8 +415,8 @@ export function findReverseSegmentSpurRanges(coordinates: Coord[]): SpurRange[] 
         toLatLng(coordinates[i]!),
         toLatLng(coordinates[after]!),
       );
-      // Reject corridor-wide false positives that can't be stitched at a junction.
-      if (stitchM > MAX_PRUNE_STITCH_EDGE_M) continue;
+      // Reject corridor-wide false positives; final budget applied in removeSpurRanges.
+      if (stitchM > MAX_DETECT_STITCH_M) continue;
 
       ranges.push({ start: i + 1, end: j });
       break;
@@ -437,7 +459,49 @@ function rangesOverlap(a: SpurRange, b: SpurRange): boolean {
   return !(a.end < b.start - 1 || a.start > b.end + 1);
 }
 
-function removeSpurRanges(coordinates: Coord[], ranges: SpurRange[]): Coord[] {
+/** Local median edge length around an index — town fabric vs open country. */
+function localMedianEdgeM(
+  coordinates: Coord[],
+  index: number,
+  window = 14,
+): number {
+  const edges: number[] = [];
+  const from = Math.max(1, index - window);
+  const to = Math.min(coordinates.length - 1, index + window);
+  for (let i = from; i <= to; i++) {
+    edges.push(
+      haversineM(toLatLng(coordinates[i - 1]!), toLatLng(coordinates[i]!)),
+    );
+  }
+  if (edges.length === 0) return 0;
+  const sorted = [...edges].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)]!;
+}
+
+/**
+ * Adaptive stitch budget at a junction: dense town streets allow wider rejoins
+ * for dead-end cuts; open legs stay tight against field chords.
+ */
+function stitchBudgetAtJunction(
+  coordinates: Coord[],
+  beforeIdx: number,
+  baseMaxStitchM: number,
+): number {
+  const localMed = localMedianEdgeM(coordinates, beforeIdx);
+  if (localMed > 0 && localMed < 28) {
+    return Math.min(110, Math.max(baseMaxStitchM, 100));
+  }
+  if (localMed > 45) {
+    return Math.min(baseMaxStitchM, 70);
+  }
+  return baseMaxStitchM;
+}
+
+function removeSpurRanges(
+  coordinates: Coord[],
+  ranges: SpurRange[],
+  baseMaxStitchM: number,
+): Coord[] {
   if (ranges.length === 0) return coordinates;
 
   // Largest safe stubs first — never abort the whole set for one bad combo.
@@ -450,16 +514,28 @@ function removeSpurRanges(coordinates: Coord[], ranges: SpurRange[]): Coord[] {
         toLatLng(coordinates[before]!),
         toLatLng(coordinates[after]!),
       );
-      if (stitchM > MAX_PRUNE_STITCH_EDGE_M) return null;
+      const maxStitchM = stitchBudgetAtJunction(
+        coordinates,
+        before,
+        baseMaxStitchM,
+      );
+      if (stitchM > maxStitchM) return null;
       return {
         range,
         pathM: pathLengthM(coordinates, range.start, range.end + 1),
         stitchM,
+        maxStitchM,
       };
     })
     .filter(
-      (item): item is { range: SpurRange; pathM: number; stitchM: number } =>
-        item != null,
+      (
+        item,
+      ): item is {
+        range: SpurRange;
+        pathM: number;
+        stitchM: number;
+        maxStitchM: number;
+      } => item != null,
     )
     // Prefer long stubs with tight junction stitches (true out-and-backs).
     .sort(
@@ -471,7 +547,8 @@ function removeSpurRanges(coordinates: Coord[], ranges: SpurRange[]): Coord[] {
   for (const candidate of candidates) {
     if (accepted.some((r) => rangesOverlap(r, candidate.range))) continue;
     const trial = [...accepted, candidate.range];
-    if (wouldCreateAirChord(coordinates, trial, MAX_PRUNE_STITCH_EDGE_M)) {
+    // Use the candidate's local budget so town cuts aren't blocked by rural cap.
+    if (wouldCreateAirChord(coordinates, trial, candidate.maxStitchM)) {
       continue;
     }
     accepted.push(candidate.range);
@@ -513,7 +590,11 @@ export interface PruneSpursResult {
 const APPROACH_MIN_REMAINING_RATIO = 0.55;
 
 /** Iteratively remove dead-end spurs from an open approach leg. */
-export function pruneApproachDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
+export function pruneApproachDeadEndSpurs(
+  coordinates: Coord[],
+  context: GeometryContext = {},
+): PruneSpursResult {
+  const { maxPruneStitchM } = resolveGeometryLimits(coordinates, context);
   let current = coordinates;
   const allRanges: SpurRange[] = [];
   const beforeM = totalPathLengthM(coordinates);
@@ -532,7 +613,7 @@ export function pruneApproachDeadEndSpurs(coordinates: Coord[]): PruneSpursResul
     if (ranges.length === 0) break;
 
     const beforePass = current.length;
-    current = removeSpurRanges(current, ranges);
+    current = removeSpurRanges(current, ranges, maxPruneStitchM);
     if (current.length === beforePass) break;
 
     allRanges.push(...ranges);
@@ -558,9 +639,6 @@ export function pruneApproachDeadEndSpurs(coordinates: Coord[]): PruneSpursResul
   };
 }
 
-/** Hard ceiling — only true map teleports / broken stitches. */
-const ABSOLUTE_TELEPORT_M = 1200;
-
 function edgeLengthsM(coordinates: Coord[]): number[] {
   const edges: number[] = [];
   for (let i = 1; i < coordinates.length; i++) {
@@ -571,35 +649,107 @@ function edgeLengthsM(coordinates: Coord[]): number[] {
   return edges;
 }
 
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * p));
+  return sorted[idx]!;
+}
+
 export function maxConsecutiveEdgeM(coordinates: Coord[]): number {
   const edges = edgeLengthsM(coordinates);
   return edges.length > 0 ? Math.max(...edges) : 0;
 }
 
 /**
- * Reject only absolute air jumps. Dense BRouter GeoJSON often has 150–400 m
- * on-road edges that used to false-positive and wipe rural + urban candidates.
+ * Long edge with short local neighbours — catches rails/roundabout cuts inside
+ * an otherwise rural loop (global p95 stays high).
  */
-export function hasSuspiciousTeleportEdge(coordinates: Coord[]): boolean {
+function hasLocalAirChordEdge(
+  coordinates: Coord[],
+  limits: GeometrySafetyLimits,
+): boolean {
+  if (!limits.useLocalAirChordCheck || coordinates.length < 8) return false;
+
+  const edges = edgeLengthsM(coordinates);
+  const window = 12;
+  for (let i = 0; i < edges.length; i++) {
+    const edgeM = edges[i]!;
+    if (edgeM < limits.localAirChordMinM) continue;
+
+    const nearby: number[] = [];
+    for (
+      let j = Math.max(0, i - window);
+      j < Math.min(edges.length, i + window + 1);
+      j++
+    ) {
+      if (j !== i) nearby.push(edges[j]!);
+    }
+    if (nearby.length < 4) continue;
+    const sorted = [...nearby].sort((a, b) => a - b);
+    const localMed = sorted[Math.floor(sorted.length / 2)]!;
+    if (
+      localMed > 0 &&
+      localMed < limits.localAirChordMedianMaxM &&
+      edgeM > localMed * limits.localAirChordRatio
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Detect air-chords / teleports from absolute jumps, metro dense outliers,
+ * and local density contrasts (mixed open-country + town loops).
+ */
+export function hasSuspiciousTeleportEdge(
+  coordinates: Coord[],
+  context: GeometryContext = {},
+): boolean {
   if (coordinates.length < 3) return false;
-  return maxConsecutiveEdgeM(coordinates) > ABSOLUTE_TELEPORT_M;
+
+  const limits = resolveGeometryLimits(coordinates, context);
+  const edges = edgeLengthsM(coordinates);
+  const max = Math.max(...edges);
+  if (max > limits.absoluteTeleportM) return true;
+
+  if (hasLocalAirChordEdge(coordinates, limits)) return true;
+
+  if (!limits.useDenseTeleportCheck) return false;
+
+  const sorted = [...edges].sort((a, b) => a - b);
+  const p95 = percentile(sorted, 0.95);
+
+  if (
+    p95 > 0 &&
+    p95 < limits.denseP95MaxM &&
+    max > limits.denseOutlierMinM &&
+    max > p95 * 5.5
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
  * Detect geometry unsafe for GPS after spur prune.
- * Only flag *new* stitches longer than the junction budget — do not treat
- * pre-existing BRouter long edges as broken (that rolled back all city prunes).
+ * Flag *new* stitches longer than the inferred junction budget.
  */
 export function hasBrokenRouteGeometry(
   after: Coord[],
   before?: Coord[],
+  context: GeometryContext = {},
 ): boolean {
-  const afterMax = maxConsecutiveEdgeM(after);
-  if (afterMax > ABSOLUTE_TELEPORT_M) return true;
+  if (hasSuspiciousTeleportEdge(after, context)) return true;
 
+  const { maxPruneStitchM } = resolveGeometryLimits(after, context);
   if (before && before.length >= 2) {
     const beforeMax = maxConsecutiveEdgeM(before);
-    if (afterMax > MAX_PRUNE_STITCH_EDGE_M && afterMax > beforeMax + 15) {
+    const afterMax = maxConsecutiveEdgeM(after);
+    // Allow adaptive town stitches slightly above the base budget.
+    const ceiling = Math.max(maxPruneStitchM, 110);
+    if (afterMax > ceiling && afterMax > beforeMax + 10) {
       return true;
     }
   }
@@ -607,10 +757,14 @@ export function hasBrokenRouteGeometry(
 }
 
 /** @deprecated Use hasBrokenRouteGeometry — kept for tuning/tests. */
-export const MAX_NAV_EDGE_M = ABSOLUTE_TELEPORT_M;
+export const MAX_NAV_EDGE_M = 1200;
 
 /** Iteratively remove dead-end spurs from a routed loop. */
-export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
+export function pruneDeadEndSpurs(
+  coordinates: Coord[],
+  context: GeometryContext = {},
+): PruneSpursResult {
+  const { maxPruneStitchM } = resolveGeometryLimits(coordinates, context);
   let current = coordinates;
   const allRanges: SpurRange[] = [];
   const beforeM = totalPathLengthM(coordinates);
@@ -629,7 +783,7 @@ export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
     if (ranges.length === 0) break;
 
     const beforePass = current.length;
-    current = removeSpurRanges(current, ranges);
+    current = removeSpurRanges(current, ranges, maxPruneStitchM);
     if (current.length === beforePass) break;
 
     allRanges.push(...ranges);
@@ -649,7 +803,7 @@ export function pruneDeadEndSpurs(coordinates: Coord[]): PruneSpursResult {
     };
   }
 
-  if (hasBrokenRouteGeometry(current, coordinates)) {
+  if (hasBrokenRouteGeometry(current, coordinates, context)) {
     return {
       coordinates,
       removedRanges: [],
@@ -781,11 +935,16 @@ export function pruneMapGeoJson(
 }
 
 /** Strip dead-end spurs so map + GPX share the same cleaned polyline. */
-export function prepareCoordinatesForNavigation(coordinates: Coord[]): Coord[] {
-  const pruned = pruneDeadEndSpurs(coordinates);
+export function prepareCoordinatesForNavigation(
+  coordinates: Coord[],
+  context: GeometryContext = {},
+): Coord[] {
+  const pruned = pruneDeadEndSpurs(coordinates, context);
   const candidate =
     pruned.coordinates.length >= 4 ? pruned.coordinates : coordinates;
-  return hasBrokenRouteGeometry(candidate, coordinates) ? coordinates : candidate;
+  return hasBrokenRouteGeometry(candidate, coordinates, context)
+    ? coordinates
+    : candidate;
 }
 
 export { totalPathLengthM as routeLengthM };

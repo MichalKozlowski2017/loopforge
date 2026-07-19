@@ -39,10 +39,17 @@ export interface RoutedLeg {
 }
 
 /** Remove BRouter dead-end spurs from the approach leg and sync map segments. */
-export function pruneApproachLeg(leg: RoutedLeg): RoutedLeg {
+export function pruneApproachLeg(leg: RoutedLeg, start?: LatLng): RoutedLeg {
   if (leg.coordinates.length < 4) return leg;
 
-  const pruned = pruneApproachDeadEndSpurs(leg.coordinates);
+  const inferredStart =
+    start ??
+    (leg.coordinates[0]
+      ? { lat: leg.coordinates[0][1], lng: leg.coordinates[0][0] }
+      : undefined);
+  const pruned = pruneApproachDeadEndSpurs(leg.coordinates, {
+    start: inferredStart,
+  });
   if (
     pruned.removedM < MIN_APPROACH_PRUNE_REMOVED_M ||
     pruned.coordinates.length < 2
@@ -241,8 +248,10 @@ export function mergeApproachAndLoop(
   loopSegments: { tags: OsmTags; distanceM: number }[],
 ): GeneratedRoute {
   const entryCoord: [number, number] = [loopEntry.lng, loopEntry.lat];
+  const geoCtx = { start: userStart };
   const loopNavCoordinates = prepareCoordinatesForNavigation(
     loop.geojson.geometry.coordinates,
+    geoCtx,
   );
   const openedLoop = sliceLoopForHomewardReturn(
     loopNavCoordinates,

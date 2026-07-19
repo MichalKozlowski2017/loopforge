@@ -167,6 +167,25 @@ export function buildRouteMapGeoJson(
   return buildColoredGeoJson(messages);
 }
 
+function haversineM(a: [number, number], b: [number, number]): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(b[1] - a[1]);
+  const dLng = toRad(b[0] - a[0]);
+  const lat1 = toRad(a[1]);
+  const lat2 = toRad(b[1]);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Never draw a single map segment longer than this — long edges are almost
+ * always air-chords (rails, roundabout cuts), not on-road geometry.
+ * Leaving a small gap is better than a fake diagonal across the map.
+ */
+const MAX_MAP_SEGMENT_EDGE_M = 95;
+
 /**
  * Color the exact BRouter route geometry — every consecutive coordinate pair
  * becomes a segment, so the line always follows paths (no chord shortcuts).
@@ -184,6 +203,8 @@ export function buildColoredGeoJsonFromRoute(
     const start = coordinates[i];
     const end = coordinates[i + 1];
     if (start[0] === end[0] && start[1] === end[1]) continue;
+    // Skip air-chord edges so the map never paints diagonals over buildings/rails.
+    if (haversineM(start, end) > MAX_MAP_SEGMENT_EDGE_M) continue;
 
     const tags =
       taggedVertices.length > 0
