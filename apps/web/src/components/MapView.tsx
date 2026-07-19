@@ -278,7 +278,10 @@ export function MapView({
       return true;
     }
 
-    if (normalizedRoute?.geometry.coordinates.length && !normalizedSegments?.features.length) {
+    // Always paint the full polyline. Colored segments are an overlay for
+    // surface styling — never the sole continuity source (gap-skipping there
+    // previously dashed rural loops).
+    if (normalizedRoute?.geometry.coordinates.length) {
       map.addSource(ROUTE_SOURCE, {
         type: "geojson",
         data: normalizedRoute,
@@ -295,7 +298,8 @@ export function MapView({
         paint: {
           "line-color": "#0f766e",
           "line-width": 6,
-          "line-opacity": 0.35,
+          // Strong enough to bridge any remaining segment gaps; segments sit on top.
+          "line-opacity": normalizedSegments?.features.length ? 0.45 : 0.35,
         },
       });
     }

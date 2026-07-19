@@ -167,63 +167,11 @@ export function buildRouteMapGeoJson(
   return buildColoredGeoJson(messages);
 }
 
-function haversineM(a: [number, number], b: [number, number]): number {
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const dLat = toRad(b[1] - a[1]);
-  const dLng = toRad(b[0] - a[0]);
-  const lat1 = toRad(a[1]);
-  const lat2 = toRad(b[1]);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * 6_371_000 * Math.asin(Math.sqrt(h));
-}
-
-/** Absolute teleport — never paint these on the map. */
-const HARD_MAP_TELEPORT_M = 1200;
-
-/**
- * Omit only clear air-chords in dense street fabric.
- * Rural BRouter legs routinely span 100–400 m; a flat ~95 m cap shredded
- * those loops into dashed fragments.
- */
-function shouldOmitMapEdge(
-  edgeM: number,
-  edgeLengths: number[],
-  index: number,
-): boolean {
-  if (edgeM > HARD_MAP_TELEPORT_M) return true;
-  if (edgeM < 140) return false;
-
-  const window = 12;
-  const nearby: number[] = [];
-  for (
-    let j = Math.max(0, index - window);
-    j < Math.min(edgeLengths.length, index + window + 1);
-    j++
-  ) {
-    if (j !== index) nearby.push(edgeLengths[j]!);
-  }
-  if (nearby.length < 4) {
-    return edgeM > 600;
-  }
-
-  const sorted = [...nearby].sort((a, b) => a - b);
-  const localMed = sorted[Math.floor(sorted.length / 2)]!;
-  // Dense town: hide rail/roundabout diagonals over short neighbouring edges.
-  if (localMed > 0 && localMed < 40 && edgeM > Math.max(140, localMed * 6)) {
-    return true;
-  }
-  // Mixed fabric: only strong local outliers.
-  if (localMed > 0 && localMed < 70 && edgeM > Math.max(220, localMed * 7)) {
-    return true;
-  }
-  return edgeM > 800;
-}
-
 /**
  * Color the exact BRouter route geometry — every consecutive coordinate pair
- * becomes a segment, so the line always follows paths (no chord shortcuts).
+ * becomes a segment, so the line always follows the polyline.
+ * Do not omit long edges here: that dashed the rural map. Geometry safety
+ * belongs in prune / candidate selection, not in map painting.
  */
 export function buildColoredGeoJsonFromRoute(
   coordinates: [number, number][],
@@ -232,18 +180,12 @@ export function buildColoredGeoJsonFromRoute(
   if (coordinates.length < 2) return null;
 
   const taggedVertices = messages ? parseTaggedVertices(messages) : [];
-  const edgeLengths: number[] = [];
-  for (let i = 0; i < coordinates.length - 1; i++) {
-    edgeLengths.push(haversineM(coordinates[i]!, coordinates[i + 1]!));
-  }
-
   const edges: RouteSegmentFeature[] = [];
 
   for (let i = 0; i < coordinates.length - 1; i++) {
     const start = coordinates[i]!;
     const end = coordinates[i + 1]!;
     if (start[0] === end[0] && start[1] === end[1]) continue;
-    if (shouldOmitMapEdge(edgeLengths[i]!, edgeLengths, i)) continue;
 
     const tags =
       taggedVertices.length > 0
