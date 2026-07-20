@@ -1,0 +1,112 @@
+import { describe, expect, it } from "vitest";
+import {
+  auditGeneratedRoute,
+  auditRouteGeometry,
+  mirroredPrefixLengthM,
+} from "./route-quality";
+import {
+  approachCorridor,
+  rectLoop,
+  withDeadEndSpur,
+  withMirroredApproach,
+  withTeleport,
+} from "./fixtures/geo";
+import { pruneDeadEndSpurs } from "./prune-spurs";
+
+describe("auditRouteGeometry", () => {
+  it("passes a clean closed rectangular loop", () => {
+    const loop = rectLoop(0, 0, 3000, 2000);
+    const audit = auditRouteGeometry(loop, {
+      allowApproachMirror: false,
+    });
+    expect(audit.ok, format(audit)).toBe(true);
+    expect(audit.metrics.lengthM).toBeGreaterThan(8000);
+    expect(audit.metrics.maxEdgeM).toBeLessThan(1200);
+    expect(audit.metrics.spurShare).toBeLessThan(0.05);
+  });
+
+  it("fails hard teleports (off-path air chords)", () => {
+    const loop = withTeleport(rectLoop(0, 0, 2000, 1500), 20, 2500, 0);
+    const audit = auditRouteGeometry(loop);
+    expect(audit.ok).toBe(false);
+    expect(audit.findings.some((f) => f.code === "HARD_TELEPORT")).toBe(true);
+  });
+
+  it("detects dead-end spurs before prune", () => {
+    const loop = withDeadEndSpur(rectLoop(0, 0, 2500, 1800), 15, 450);
+    const audit = auditRouteGeometry(loop, { failOnRemainingSpurs: true });
+    expect(audit.ok).toBe(false);
+    expect(
+      audit.findings.some(
+        (f) =>
+          f.code === "REMAINING_SPURS" ||
+          f.code === "SPUR_SHARE" ||
+          f.code === "BACKTRACK",
+      ),
+      format(audit),
+    ).toBe(true);
+  });
+
+  it("reduces spur length after prune", () => {
+    const dirty = withDeadEndSpur(rectLoop(0, 0, 2500, 1800), 15, 450);
+    const before = auditRouteGeometry(dirty, { failOnRemainingSpurs: false });
+    const pruned = pruneDeadEndSpurs(dirty, { urban: false });
+    const after = auditRouteGeometry(pruned.coordinates, {
+      allowApproachMirror: false,
+      failOnRemainingSpurs: false,
+    });
+    expect(pruned.removedM).toBeGreaterThan(100);
+    expect(after.metrics.spurShare).toBeLessThanOrEqual(before.metrics.spurShare);
+    expect(after.ok, format(after)).toBe(true);
+  });
+
+  it("flags long mirrored out-and-back on loop-only tracks", () => {
+    const loop = rectLoop(0, 500, 2000, 1500);
+    const approach = approachCorridor(1200);
+    const withApproach = withMirroredApproach(loop, approach);
+    expect(mirroredPrefixLengthM(withApproach)).toBeGreaterThan(800);
+
+    const asLoopOnly = auditRouteGeometry(withApproach, {
+      allowApproachMirror: false,
+      maxMirroredPrefixM: 400,
+      failOnRemainingSpurs: false,
+    });
+    expect(asLoopOnly.ok).toBe(false);
+    expect(asLoopOnly.findings.some((f) => f.code === "MIRRORED_OUT_AND_BACK")).toBe(
+      true,
+    );
+
+    const asWyjazd = auditRouteGeometry(withApproach, {
+      allowApproachMirror: true,
+      failOnRemainingSpurs: false,
+    });
+    expect(asWyjazd.findings.some((f) => f.code === "MIRRORED_OUT_AND_BACK")).toBe(
+      false,
+    );
+  });
+});
+
+describe("auditGeneratedRoute tags", () => {
+  it("fails bicycle=use_sidepath segments", () => {
+    const loop = rectLoop(0, 0, 1000, 800);
+    const audit = auditGeneratedRoute(loop, [
+      { tags: { highway: "residential", bicycle: "use_sidepath" }, distanceM: 120 },
+      { tags: { highway: "cycleway", surface: "asphalt" }, distanceM: 800 },
+    ]);
+    expect(audit.ok).toBe(false);
+    expect(audit.findings.some((f) => f.code === "USE_SIDEPATH")).toBe(true);
+  });
+
+  it("fails bicycle=no segments", () => {
+    const loop = rectLoop(0, 0, 1000, 800);
+    const audit = auditGeneratedRoute(loop, [
+      { tags: { highway: "primary", bicycle: "no" }, distanceM: 80 },
+    ]);
+    expect(audit.ok).toBe(false);
+    expect(audit.findings.some((f) => f.code === "BICYCLE_FORBIDDEN")).toBe(true);
+  });
+});
+
+function format(audit: ReturnType<typeof auditRouteGeometry>): string {
+  return audit.findings.map((f) => `${f.code}:${f.message}`).join(" | ") || "no findings";
+}

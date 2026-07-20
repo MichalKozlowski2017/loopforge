@@ -103,6 +103,8 @@ export interface BuildGpxOptions {
   densifyMaxEdgeM?: number;
 }
 
+export { parseGpxTrackCoordinates } from "./parse";
+
 export function buildGpx(
   name: string,
   coordinates: [number, number][],

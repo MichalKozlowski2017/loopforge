@@ -1622,6 +1622,16 @@ function routingEnginePreference(): "auto" | "pgrouting" | "brouter" {
 
 export { prepareCoordinatesForNavigation } from "./prune-spurs";
 export {
+  auditGeneratedRoute,
+  auditRouteGeometry,
+  formatRouteQualityReport,
+  mirroredPrefixLengthM,
+  segmentAccessIssues,
+  type RouteQualityAudit,
+  type RouteQualityFinding,
+  type RouteQualityOptions,
+} from "./route-quality";
+export {
   inferGeometrySafetyLimits,
   metroShareOfCoordinates,
   routeEdgeLengthStats,

@@ -5,11 +5,16 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./via-validation": "./src/via-validation.ts"
+    "./via-validation": "./src/via-validation.ts",
+    "./route-quality": "./src/route-quality.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'no lint configured'"
+    "lint": "echo 'no lint configured'",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "audit-gpx": "tsx scripts/audit-gpx.mts"
   },
   "dependencies": {
     "@loopforge/brouter": "workspace:*",
@@ -20,6 +25,8 @@
   },
   "devDependencies": {
     "@types/node": "^20",
-    "typescript": "^5"
+    "tsx": "^4.20.3",
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

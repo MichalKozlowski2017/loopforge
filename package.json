@@ -22,7 +22,10 @@
     "drop:osm": "node infra/scripts/run-sql.mjs infra/sql/drop-osm-tables.sql",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @loopforge/generator test",
+    "test:live": "LOOPFORGE_LIVE_ROUTES=1 pnpm --filter @loopforge/generator test:live",
+    "audit-gpx": "pnpm --filter @loopforge/generator audit-gpx"
   },
   "engines": {
     "node": ">=22"
