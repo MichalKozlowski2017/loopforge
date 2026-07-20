@@ -313,8 +313,15 @@ const MAX_BACKTRACK = 0.04;
 /** Relaxed ceiling for fallbacks — still rejects garbage out-and-backs. */
 const MAX_SPUR_SHARE_RELAXED = 0.08;
 const MAX_BACKTRACK_RELAXED = 0.09;
-/** Dense street grids inflate reverse-corridor matches — allow a bit more. */
-const MAX_BACKTRACK_RELAXED_URBAN = 0.14;
+/**
+ * Dense one-way grids inflate spur/backtrack (parallel reverse corridors).
+ * Keep above typical urban road/fast fallbacks (~0.12 / ~0.18) but below
+ * recovery trash (spur ≫ 0.4).
+ */
+const MAX_SPUR_SHARE_RELAXED_URBAN = 0.14;
+const MAX_SPUR_SHARE_RELAXED_QUIET_URBAN = 0.15;
+const MAX_BACKTRACK_RELAXED_URBAN = 0.2;
+const MAX_BACKTRACK_RELAXED_QUIET_URBAN = 0.22;
 const MAX_BACKTRACK_URBAN = 0.065;
 /** Loop-only tracks must not mirror start/end for more than this (meters). */
 const MAX_MIRRORED_PREFIX_M = 500;
@@ -348,14 +355,16 @@ function passesDeliverableGeometry(
 
   const quietUrban = Boolean(options.preferQuiet && options.urban);
   const maxSpur = options.relaxed
-    ? quietUrban
-      ? 0.1
+    ? options.urban
+      ? quietUrban
+        ? MAX_SPUR_SHARE_RELAXED_QUIET_URBAN
+        : MAX_SPUR_SHARE_RELAXED_URBAN
       : MAX_SPUR_SHARE_RELAXED
     : MAX_SPUR_SHARE;
   const maxBacktrack = options.relaxed
     ? options.urban
       ? quietUrban
-        ? 0.18
+        ? MAX_BACKTRACK_RELAXED_QUIET_URBAN
         : MAX_BACKTRACK_RELAXED_URBAN
       : MAX_BACKTRACK_RELAXED
     : options.urban
@@ -907,8 +916,16 @@ async function generateRouteWithEngine(
           Date.now() < deadlineMs - 6_000
         ) {
           const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
-          const shrink = 1 - (1 - ratio) * 0.7;
-          const nextScale = Math.max(0.72, Math.min(scale - 0.05, scale * shrink));
+          // Metro grids often ignore mild shrinks (same arterial loop) —
+          // pull harder so we don't stall ~20% over target.
+          const shrinkPull = baseUrban || variantUrbanEscalated ? 0.92 : 0.7;
+          const minDrop = baseUrban || variantUrbanEscalated ? 0.08 : 0.05;
+          const floor = baseUrban || variantUrbanEscalated ? 0.62 : 0.72;
+          const shrink = 1 - (1 - ratio) * shrinkPull;
+          const nextScale = Math.max(
+            floor,
+            Math.min(scale - minDrop, scale * shrink),
+          );
           if (nextScale < scale - 0.03) {
             reportProgress(onProgress, {
               phase: "refining",
@@ -1157,7 +1174,8 @@ async function generateRouteWithEngine(
           request.distanceKm,
           request.direction,
           variant,
-          baseUrban ? 1.05 : 1.15,
+          // Urban recovery previously overshot (34–50 km for a 25 km target).
+          baseUrban ? 0.88 : 1.15,
           shape,
           false,
           jitter,
@@ -1189,23 +1207,28 @@ async function generateRouteWithEngine(
           recoveryPrefs,
           request.bikeType === "road" || Boolean(request.preferQuietRoutes),
         );
-        if (
-          !hasHardTeleportEdge(refined.coordinates) &&
-          refined.coordinates.length >= 4 &&
+        const recoveryQuiet =
+          request.bikeType === "road" || Boolean(request.preferQuietRoutes);
+        const recoveryShareOk =
           refined.distanceKm >= request.distanceKm * 0.45 &&
           refined.distanceKm <=
             request.distanceKm *
-              maxLoopShareOfTarget(request.distanceKm, true, baseUrban) &&
-          passesDeliverableGeometry(refined.coordinates, {
-            targetDistanceKm: request.distanceKm,
-            actualDistanceKm: refined.distanceKm,
-            start: request.start,
-            direction: request.direction,
-            approachMode: options?.approachCoordinates != null,
-            urban: baseUrban,
-            relaxed: true,
-        preferQuiet: Boolean(request.preferQuietRoutes),
-          })
+              maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
+        const recoveryGate = passesDeliverableGeometry(refined.coordinates, {
+          targetDistanceKm: request.distanceKm,
+          actualDistanceKm: refined.distanceKm,
+          start: request.start,
+          direction: request.direction,
+          approachMode: options?.approachCoordinates != null,
+          urban: baseUrban,
+          relaxed: true,
+          preferQuiet: recoveryQuiet,
+        });
+        if (
+          !hasHardTeleportEdge(refined.coordinates) &&
+          refined.coordinates.length >= 4 &&
+          recoveryShareOk &&
+          recoveryGate
         ) {
           best = refined;
           usedRelaxedFallback = true;

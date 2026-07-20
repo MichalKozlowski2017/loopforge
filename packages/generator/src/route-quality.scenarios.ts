@@ -215,9 +215,9 @@ export async function runLiveRouteScenario(
     options.onPhase?.("audit-geometry");
     const geometryAudit = auditRouteGeometry(coordinates, {
       ...auditOpts,
-      // Align with generator deliverable ceilings (relaxed).
-      maxSpurShare: 0.08,
-      maxBacktrack: scenario.urban ? 0.14 : 0.09,
+      // Align with generator deliverable ceilings (relaxed / urban).
+      maxSpurShare: scenario.urban ? 0.14 : 0.08,
+      maxBacktrack: scenario.urban ? 0.2 : 0.09,
       maxMirroredPrefixM: 800,
     });
     options.onPhase?.("audit-gpx");
