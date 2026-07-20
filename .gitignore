@@ -28,5 +28,9 @@ supabase/.temp/
 # Vercel
 .vercel
 
+# Live route matrix GPX dumps
+.route-test-artifacts/
+packages/generator/.route-test-artifacts/
+
 # Java
 *.class

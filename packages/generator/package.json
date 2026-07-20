@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:live": "vitest run --config vitest.live.config.ts",
+    "test:prod": "tsx scripts/run-prod-route-matrix.mts",
     "audit-gpx": "tsx scripts/audit-gpx.mts"
   },
   "dependencies": {

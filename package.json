@@ -25,6 +25,7 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm --filter @loopforge/generator test",
     "test:live": "LOOPFORGE_LIVE_ROUTES=1 pnpm --filter @loopforge/generator test:live",
+    "test:prod": "pnpm --filter @loopforge/generator test:prod",
     "audit-gpx": "pnpm --filter @loopforge/generator audit-gpx"
   },
   "engines": {
