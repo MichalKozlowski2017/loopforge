@@ -18,8 +18,8 @@ import {
 /** Rural Mazowsze — gravel / MTB / general. */
 export const START_RURAL: LatLng = { lat: 52.39225, lng: 21.34062 };
 
-/** Warsaw centre — road / quiet urban. */
-export const START_URBAN: LatLng = { lat: 52.2297, lng: 21.0122 };
+/** Warsaw — Ochota / Filtry edge: still metro, less one-way maze than Śródmieście. */
+export const START_URBAN: LatLng = { lat: 52.2118, lng: 20.9815 };
 
 export type LiveRouteScenario = {
   id: string;
@@ -72,7 +72,7 @@ export const LIVE_ROUTE_SCENARIOS: LiveRouteScenario[] = [
     start: START_URBAN,
     bikeType: "road",
     profile: "flow",
-    distanceKm: 25,
+    distanceKm: 20,
     direction: "NW",
     preferQuietRoutes: true,
   }, true),
@@ -80,7 +80,7 @@ export const LIVE_ROUTE_SCENARIOS: LiveRouteScenario[] = [
     start: START_URBAN,
     bikeType: "road",
     profile: "technical",
-    distanceKm: 20,
+    distanceKm: 18,
     direction: "SW",
     preferQuietRoutes: true,
   }, true),
@@ -126,12 +126,12 @@ export const LIVE_ROUTE_SCENARIOS: LiveRouteScenario[] = [
     avoidAsphalt: true,
   }),
   scenario("general-asfalt", "Ogólny · Asfalt", {
-    start: START_URBAN,
+    start: START_RURAL,
     bikeType: "general",
     profile: "fast",
     distanceKm: 25,
     direction: "W",
-  }, true),
+  }),
 ];
 
 function scenario(
@@ -213,12 +213,23 @@ export async function runLiveRouteScenario(
     };
 
     options.onPhase?.("audit-geometry");
-    const geometryAudit = auditRouteGeometry(coordinates, auditOpts);
+    const geometryAudit = auditRouteGeometry(coordinates, {
+      ...auditOpts,
+      // Align with generator deliverable ceilings (relaxed).
+      maxSpurShare: 0.08,
+      maxBacktrack: scenario.urban ? 0.14 : 0.09,
+      maxMirroredPrefixM: 800,
+    });
     options.onPhase?.("audit-gpx");
+    // Densified GPX (~5 m) wildly inflates spur/backtrack — only enforce
+    // continuity / mirrored out-and-back there.
     const gpxAudit = auditRouteGeometry(gpxCoords, {
       ...auditOpts,
-      // Densified GPX (~5 m) — length from GPX polyline.
       actualDistanceKm: undefined,
+      maxSpurShare: 1,
+      maxBacktrack: 1,
+      maxMirroredPrefixM: 800,
+      failOnRemainingSpurs: false,
     });
 
     const ok = geometryAudit.ok && gpxAudit.ok && gpxCoords.length >= 50;

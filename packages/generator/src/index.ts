@@ -41,6 +41,7 @@ import {
   hasBrokenRouteGeometry,
   hasHardTeleportEdge,
 } from "./prune-spurs";
+import { mirroredPrefixLengthM } from "./route-quality";
 import {
   maxAcceptableDistanceError,
   maxLoopShareOfTarget,
@@ -309,8 +310,98 @@ function buildGeneratedRoute(
 const MIN_PRUNE_REMOVED_M = 5;
 const MAX_SPUR_SHARE = 0.035;
 const MAX_BACKTRACK = 0.04;
+/** Relaxed ceiling for fallbacks — still rejects garbage out-and-backs. */
+const MAX_SPUR_SHARE_RELAXED = 0.08;
+const MAX_BACKTRACK_RELAXED = 0.09;
+/** Dense street grids inflate reverse-corridor matches — allow a bit more. */
+const MAX_BACKTRACK_RELAXED_URBAN = 0.14;
+const MAX_BACKTRACK_URBAN = 0.065;
+/** Loop-only tracks must not mirror start/end for more than this (meters). */
+const MAX_MIRRORED_PREFIX_M = 500;
+const MAX_MIRRORED_PREFIX_RELAXED_M = 800;
 const MAX_SCALE_PASSES = 4;
 const SCALE_TARGET_DISTANCE_ERROR = 0.12;
+
+function passesDeliverableGeometry(
+  coordinates: [number, number][],
+  options: {
+    targetDistanceKm: number;
+    actualDistanceKm: number;
+    start: LatLng;
+    direction: GenerateRouteRequest["direction"];
+    approachMode: boolean;
+    urban: boolean;
+    relaxed: boolean;
+    preferQuiet?: boolean;
+  },
+): boolean {
+  if (coordinates.length < 4) return false;
+  if (hasHardTeleportEdge(coordinates)) return false;
+
+  const metrics = loopQualityMetrics(
+    coordinates,
+    options.targetDistanceKm,
+    options.actualDistanceKm,
+    options.start,
+    options.direction,
+  );
+
+  const quietUrban = Boolean(options.preferQuiet && options.urban);
+  const maxSpur = options.relaxed
+    ? quietUrban
+      ? 0.1
+      : MAX_SPUR_SHARE_RELAXED
+    : MAX_SPUR_SHARE;
+  const maxBacktrack = options.relaxed
+    ? options.urban
+      ? quietUrban
+        ? 0.18
+        : MAX_BACKTRACK_RELAXED_URBAN
+      : MAX_BACKTRACK_RELAXED
+    : options.urban
+      ? MAX_BACKTRACK_URBAN
+      : MAX_BACKTRACK;
+
+  if (metrics.spurShare > maxSpur) return false;
+  if (metrics.backtrack > maxBacktrack) return false;
+
+  if (!options.approachMode) {
+    const mirroredM = mirroredPrefixLengthM(coordinates);
+    const maxMirror = options.relaxed
+      ? MAX_MIRRORED_PREFIX_RELAXED_M
+      : MAX_MIRRORED_PREFIX_M;
+    if (mirroredM > maxMirror) return false;
+  }
+
+  return true;
+}
+
+function geometryPenalty(
+  coordinates: [number, number][],
+  targetDistanceKm: number,
+  actualDistanceKm: number,
+  start: LatLng,
+  direction: GenerateRouteRequest["direction"],
+  approachMode: boolean,
+): number {
+  const metrics = loopQualityMetrics(
+    coordinates,
+    targetDistanceKm,
+    actualDistanceKm,
+    start,
+    direction,
+  );
+  const mirrorKm = approachMode
+    ? 0
+    : mirroredPrefixLengthM(coordinates) / 1000;
+  return (
+    metrics.distanceError +
+    metrics.spurShare * 28 +
+    metrics.backtrack * 22 +
+    (1 - metrics.directionCoverage) * 1.4 +
+    mirrorKm * 0.35
+  );
+}
 
 function pavedShareFromSegments(
   segments: { tags: OsmTags; distanceM: number }[],
@@ -471,15 +562,36 @@ function applySpurRefinement(
   let usePruned =
     pruned.removedRanges.length > 0 &&
     pruned.removedM >= MIN_PRUNE_REMOVED_M &&
-    pruned.coordinates.length >= 4;
+    pruned.coordinates.length >= 4 &&
+    !hasHardTeleportEdge(pruned.coordinates);
   let coordinates = usePruned ? pruned.coordinates : routed.coordinates;
 
-  if (
-    usePruned &&
-    hasBrokenRouteGeometry(coordinates, routed.coordinates, geoCtx)
-  ) {
-    usePruned = false;
-    coordinates = routed.coordinates;
+  if (usePruned) {
+    const beforeM = loopQualityMetrics(
+      routed.coordinates,
+      targetDistanceKm,
+      routed.distanceKm,
+      start,
+      direction,
+    );
+    const afterKm = routeLengthM(pruned.coordinates) / 1000;
+    const afterM = loopQualityMetrics(
+      pruned.coordinates,
+      targetDistanceKm,
+      afterKm,
+      start,
+      direction,
+    );
+    const qualityImproved =
+      afterM.spurShare + afterM.backtrack <
+      beforeM.spurShare + beforeM.backtrack - 0.008;
+    if (
+      hasBrokenRouteGeometry(coordinates, routed.coordinates, geoCtx) &&
+      !qualityImproved
+    ) {
+      usePruned = false;
+      coordinates = routed.coordinates;
+    }
   }
 
   const mapGeojson = syncMapGeoJson(coordinates, routed);
@@ -530,6 +642,8 @@ function applySpurRefinement(
 function finalizeLoopWithoutSpurs(
   best: RoutedLoopResult,
   start: LatLng,
+  targetDistanceKm: number,
+  direction: GenerateRouteRequest["direction"],
 ): RoutedLoopResult {
   const geoCtx = { start };
   const pruned = pruneDeadEndSpurs(best.coordinates, geoCtx);
@@ -537,7 +651,33 @@ function finalizeLoopWithoutSpurs(
     pruned.removedRanges.length === 0 ||
     pruned.removedM < MIN_PRUNE_REMOVED_M ||
     pruned.coordinates.length < 4 ||
-    hasBrokenRouteGeometry(pruned.coordinates, best.coordinates, geoCtx)
+    hasHardTeleportEdge(pruned.coordinates)
+  ) {
+    return best;
+  }
+
+  const before = loopQualityMetrics(
+    best.coordinates,
+    targetDistanceKm,
+    best.distanceKm,
+    start,
+    direction,
+  );
+  const afterKm = routeLengthM(pruned.coordinates) / 1000;
+  const after = loopQualityMetrics(
+    pruned.coordinates,
+    targetDistanceKm,
+    afterKm,
+    start,
+    direction,
+  );
+  const qualityImproved =
+    after.spurShare + after.backtrack <
+    before.spurShare + before.backtrack - 0.008;
+
+  if (
+    hasBrokenRouteGeometry(pruned.coordinates, best.coordinates, geoCtx) &&
+    !qualityImproved
   ) {
     return best;
   }
@@ -549,7 +689,7 @@ function finalizeLoopWithoutSpurs(
     ...best,
     coordinates,
     mapGeojson,
-    distanceKm: routeLengthM(coordinates) / 1000,
+    distanceKm: afterKm,
   };
 }
 
@@ -579,7 +719,7 @@ async function generateRouteWithEngine(
   const baseUrban = useUrbanRouting(request.start, request.distanceKm);
   const geoCtx = { start: request.start };
   const deadlineMs =
-    Date.now() + (baseUrban ? 110_000 : 95_000);
+    Date.now() + (baseUrban ? 130_000 : 95_000);
   let best: RoutedLoopResult | null = null;
   let bestScore = Infinity;
   let bestRejected: RoutedLoopResult | null = null;
@@ -793,8 +933,12 @@ async function generateRouteWithEngine(
           metrics.distanceError > maxDistanceError;
         const tooLong = refined.distanceKm > maxLoopKm;
 
+        const maxBacktrackStrict = baseUrban ? MAX_BACKTRACK_URBAN : MAX_BACKTRACK;
         const tooSpurHeavy =
-          metrics.spurShare > MAX_SPUR_SHARE || metrics.backtrack > MAX_BACKTRACK;
+          metrics.spurShare > MAX_SPUR_SHARE ||
+          metrics.backtrack > maxBacktrackStrict ||
+          (!options?.approachCoordinates &&
+            mirroredPrefixLengthM(refined.coordinates) > MAX_MIRRORED_PREFIX_M);
         const wrongDirection = metrics.directionCoverage < 0.38;
 
         if (
@@ -935,7 +1079,17 @@ async function generateRouteWithEngine(
       rejectedMetrics.distanceError < rejectedDistanceLimit &&
       bestRejected.distanceKm >= minLoopKm &&
       rejectedApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED &&
-      !hasHardTeleportEdge(bestRejected.coordinates)
+      !hasHardTeleportEdge(bestRejected.coordinates) &&
+      passesDeliverableGeometry(bestRejected.coordinates, {
+        targetDistanceKm: request.distanceKm,
+        actualDistanceKm: bestRejected.distanceKm,
+        start: request.start,
+        direction: request.direction,
+        approachMode: options?.approachCoordinates != null,
+        urban: baseUrban,
+        relaxed: true,
+        preferQuiet: Boolean(request.preferQuietRoutes),
+      })
     ) {
       best = bestRejected;
       usedRelaxedFallback = true;
@@ -966,7 +1120,17 @@ async function generateRouteWithEngine(
       fallbackMetrics.distanceError < fallbackDistanceLimit &&
       bestFallback.distanceKm >= minLoopKm &&
       fallbackApproachOverlap <= MAX_APPROACH_OVERLAP_RELAXED &&
-      !hasHardTeleportEdge(bestFallback.coordinates)
+      !hasHardTeleportEdge(bestFallback.coordinates) &&
+      passesDeliverableGeometry(bestFallback.coordinates, {
+        targetDistanceKm: request.distanceKm,
+        actualDistanceKm: bestFallback.distanceKm,
+        start: request.start,
+        direction: request.direction,
+        approachMode: options?.approachCoordinates != null,
+        urban: baseUrban,
+        relaxed: true,
+        preferQuiet: Boolean(request.preferQuietRoutes),
+      })
     ) {
       best = bestFallback;
       usedRelaxedFallback = true;
@@ -974,7 +1138,7 @@ async function generateRouteWithEngine(
   }
 
   if (!best) {
-    for (const variant of [0, 1, 2, 3]) {
+    for (const variant of [0, 1, 2, 3, 4]) {
       if (Date.now() > deadlineMs) break;
       try {
         const recoveryPrefs = mergeLoopPrefs(
@@ -993,7 +1157,7 @@ async function generateRouteWithEngine(
           request.distanceKm,
           request.direction,
           variant,
-          1.15,
+          baseUrban ? 1.05 : 1.15,
           shape,
           false,
           jitter,
@@ -1007,8 +1171,9 @@ async function generateRouteWithEngine(
           waypoints,
           rideProfile: request.profile,
           avoidAsphalt: false,
-          preferQuietRoutes: false,
-          urbanRouting: baseUrban,
+          preferQuietRoutes:
+            request.bikeType === "road" || Boolean(request.preferQuietRoutes),
+          urbanRouting: true,
           skipGpx: true,
         });
         if (hasHardTeleportEdge(routed.coordinates)) continue;
@@ -1022,7 +1187,7 @@ async function generateRouteWithEngine(
           options?.approachCoordinates,
           (request.viaPoints?.length ?? 0) > 0,
           recoveryPrefs,
-          false,
+          request.bikeType === "road" || Boolean(request.preferQuietRoutes),
         );
         if (
           !hasHardTeleportEdge(refined.coordinates) &&
@@ -1030,7 +1195,17 @@ async function generateRouteWithEngine(
           refined.distanceKm >= request.distanceKm * 0.45 &&
           refined.distanceKm <=
             request.distanceKm *
-              maxLoopShareOfTarget(request.distanceKm, true, baseUrban)
+              maxLoopShareOfTarget(request.distanceKm, true, baseUrban) &&
+          passesDeliverableGeometry(refined.coordinates, {
+            targetDistanceKm: request.distanceKm,
+            actualDistanceKm: refined.distanceKm,
+            start: request.start,
+            direction: request.direction,
+            approachMode: options?.approachCoordinates != null,
+            urban: baseUrban,
+            relaxed: true,
+        preferQuiet: Boolean(request.preferQuietRoutes),
+          })
         ) {
           best = refined;
           usedRelaxedFallback = true;
@@ -1056,7 +1231,17 @@ async function generateRouteWithEngine(
       bestLowOverlap.distanceKm <=
         request.distanceKm *
           maxLoopShareOfTarget(request.distanceKm, true, baseUrban) &&
-      !hasHardTeleportEdge(bestLowOverlap.coordinates)
+      !hasHardTeleportEdge(bestLowOverlap.coordinates) &&
+      passesDeliverableGeometry(bestLowOverlap.coordinates, {
+        targetDistanceKm: request.distanceKm,
+        actualDistanceKm: bestLowOverlap.distanceKm,
+        start: request.start,
+        direction: request.direction,
+        approachMode: options?.approachCoordinates != null,
+        urban: baseUrban,
+        relaxed: true,
+        preferQuiet: Boolean(request.preferQuietRoutes),
+      })
     ) {
       best = bestLowOverlap;
       usedRelaxedFallback = true;
@@ -1071,46 +1256,64 @@ async function generateRouteWithEngine(
     bestFallback.distanceKm >= request.distanceKm * 0.35 &&
     bestFallback.distanceKm <=
       request.distanceKm *
-        maxLoopShareOfTarget(request.distanceKm, true, baseUrban)
+        maxLoopShareOfTarget(request.distanceKm, true, baseUrban) &&
+    passesDeliverableGeometry(bestFallback.coordinates, {
+      targetDistanceKm: request.distanceKm,
+      actualDistanceKm: bestFallback.distanceKm,
+      start: request.start,
+      direction: request.direction,
+      approachMode: options?.approachCoordinates != null,
+      urban: baseUrban,
+      relaxed: true,
+        preferQuiet: Boolean(request.preferQuietRoutes),
+    })
   ) {
     best = bestFallback;
     usedRelaxedFallback = true;
   }
 
-  // Prefer any real routed loop over showing the user an empty error.
+  // Prefer any real routed loop that still clears geometry quality gates.
   if (!best) {
     const maxShare = maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
+    const approachMode = options?.approachCoordinates != null;
     const candidates = [bestRejected, bestFallback, bestLowOverlap].filter(
       (c): c is RoutedLoopResult =>
         !!c &&
         c.coordinates.length >= 4 &&
         c.distanceKm >= request.distanceKm * 0.35 &&
         c.distanceKm <= request.distanceKm * maxShare &&
-        !hasHardTeleportEdge(c.coordinates),
+        !hasHardTeleportEdge(c.coordinates) &&
+        passesDeliverableGeometry(c.coordinates, {
+          targetDistanceKm: request.distanceKm,
+          actualDistanceKm: c.distanceKm,
+          start: request.start,
+          direction: request.direction,
+          approachMode,
+          urban: baseUrban,
+          relaxed: true,
+        preferQuiet: Boolean(request.preferQuietRoutes),
+        }),
     );
     if (candidates.length > 0) {
-      candidates.sort((a, b) => {
-        const ma = loopQualityMetrics(
-          a.coordinates,
-          request.distanceKm,
-          a.distanceKm,
-          request.start,
-          request.direction,
-        );
-        const mb = loopQualityMetrics(
-          b.coordinates,
-          request.distanceKm,
-          b.distanceKm,
-          request.start,
-          request.direction,
-        );
-        return (
-          ma.distanceError +
-          ma.backtrack * 2 +
-          (1 - ma.directionCoverage) -
-          (mb.distanceError + mb.backtrack * 2 + (1 - mb.directionCoverage))
-        );
-      });
+      candidates.sort(
+        (a, b) =>
+          geometryPenalty(
+            a.coordinates,
+            request.distanceKm,
+            a.distanceKm,
+            request.start,
+            request.direction,
+            approachMode,
+          ) -
+          geometryPenalty(
+            b.coordinates,
+            request.distanceKm,
+            b.distanceKm,
+            request.start,
+            request.direction,
+            approachMode,
+          ),
+      );
       best = candidates[0]!;
       usedRelaxedFallback = true;
       if (process.env.NODE_ENV !== "production") {
@@ -1121,7 +1324,6 @@ async function generateRouteWithEngine(
       }
     }
   }
-
   if (!best) {
     const urbanHint = baseUrban
       ? " W aglomeracji spróbuj krótszego dystansu albo startu za miastem."
@@ -1178,7 +1380,17 @@ async function generateRouteWithEngine(
     if (
       lowOverlapMetrics.directionCoverage >= minDirectionCoverage &&
       lowOverlapMetrics.distanceError <= distanceErrorLimit &&
-      !hasHardTeleportEdge(bestLowOverlap.coordinates)
+      !hasHardTeleportEdge(bestLowOverlap.coordinates) &&
+      passesDeliverableGeometry(bestLowOverlap.coordinates, {
+        targetDistanceKm: request.distanceKm,
+        actualDistanceKm: bestLowOverlap.distanceKm,
+        start: request.start,
+        direction: request.direction,
+        approachMode,
+        urban: baseUrban,
+        relaxed: true,
+        preferQuiet: Boolean(request.preferQuietRoutes),
+      })
     ) {
       best = bestLowOverlap;
       finalMetrics = lowOverlapMetrics;
@@ -1196,12 +1408,21 @@ async function generateRouteWithEngine(
     best.distanceKm < minLoopKmFinal
   ) {
     const maxShare = maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
-    // Once BRouter found roads, keep the loop — imperfect beats empty UI,
-    // but never return a loop nearly 2× the requested distance.
+    // Keep imperfect distance only when geometry is still rideable.
     if (
       best.coordinates.length >= 4 &&
       best.distanceKm >= request.distanceKm * 0.35 &&
-      best.distanceKm <= request.distanceKm * maxShare
+      best.distanceKm <= request.distanceKm * maxShare &&
+      passesDeliverableGeometry(best.coordinates, {
+        targetDistanceKm: request.distanceKm,
+        actualDistanceKm: best.distanceKm,
+        start: request.start,
+        direction: request.direction,
+        approachMode,
+        urban: baseUrban,
+        relaxed: true,
+        preferQuiet: Boolean(request.preferQuietRoutes),
+      })
     ) {
       usedRelaxedFallback = true;
       if (process.env.NODE_ENV !== "production") {
@@ -1226,7 +1447,33 @@ async function generateRouteWithEngine(
     }
   }
 
-  const finalized = finalizeLoopWithoutSpurs(best, request.start);
+  const finalized = finalizeLoopWithoutSpurs(
+    best,
+    request.start,
+    request.distanceKm,
+    request.direction,
+  );
+
+  if (
+    !passesDeliverableGeometry(finalized.coordinates, {
+      targetDistanceKm: request.distanceKm,
+      actualDistanceKm: finalized.distanceKm,
+      start: request.start,
+      direction: request.direction,
+      approachMode,
+      urban: baseUrban,
+      relaxed: true,
+        preferQuiet: Boolean(request.preferQuietRoutes),
+    })
+  ) {
+    const urbanHint = baseUrban
+      ? " W aglomeracji spróbuj krótszego dystansu albo startu za miastem."
+      : "";
+    throw new Error(
+      `Nie udało się wygenerować czystej pętli (ślepe zaułki / jazda pod prąd). Spróbuj innego kierunku lub krótszego dystansu.${urbanHint}`,
+    );
+  }
+
   // Always keep pruned geometry — restoring pre-prune reintroduces dead-end stubs.
   const output = finalized;
 
