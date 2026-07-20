@@ -12,6 +12,10 @@ import {
   withTeleport,
 } from "./fixtures/geo";
 import { pruneDeadEndSpurs } from "./prune-spurs";
+import {
+  buildCoreRouteScenarios,
+  buildLiveRouteScenarios,
+} from "./route-quality.scenarios";
 
 describe("auditRouteGeometry", () => {
   it("passes a clean closed rectangular loop", () => {
@@ -110,3 +114,35 @@ describe("auditGeneratedRoute tags", () => {
 function format(audit: ReturnType<typeof auditRouteGeometry>): string {
   return audit.findings.map((f) => `${f.code}:${f.message}`).join(" | ") || "no findings";
 }
+
+describe("live route scenario matrix", () => {
+  it("covers every bike × profile × UI toggle combo (72)", () => {
+    const full = buildLiveRouteScenarios();
+    expect(full).toHaveLength(72);
+    expect(new Set(full.map((s) => s.id)).size).toBe(72);
+
+    const gravel = full.filter((s) => s.request.bikeType === "gravel");
+    expect(gravel).toHaveLength(24);
+    expect(gravel.some((s) => s.request.avoidAsphalt === true)).toBe(true);
+    expect(gravel.some((s) => s.request.avoidAsphalt === false)).toBe(true);
+    expect(gravel.some((s) => s.request.preferQuietRoutes === true)).toBe(true);
+    expect(gravel.some((s) => s.request.approachEnabled === true)).toBe(true);
+
+    const road = full.filter((s) => s.request.bikeType === "road");
+    expect(road).toHaveLength(12);
+    expect(road.every((s) => s.request.avoidAsphalt == null)).toBe(true);
+    expect(road.every((s) => s.urban === true)).toBe(true);
+
+    const approach = full.filter((s) => s.request.approachEnabled);
+    expect(approach.length).toBe(36);
+    expect(
+      approach.every((s) => s.request.approachDistanceKm === 8),
+    ).toBe(true);
+  });
+
+  it("core smoke matrix is one row per bike × profile (12)", () => {
+    const core = buildCoreRouteScenarios();
+    expect(core).toHaveLength(12);
+    expect(core.every((s) => !s.request.approachEnabled)).toBe(true);
+  });
+});

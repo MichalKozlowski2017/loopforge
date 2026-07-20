@@ -6,7 +6,11 @@ import type {
   RideProfile,
   RouteGenerationProgress,
 } from "@loopforge/osm-types";
-import { getRideProfileLabel } from "@loopforge/osm-types";
+import {
+  getRideProfileLabel,
+  getRideProfileOptions,
+  RIDE_PROFILE_OPTIONS,
+} from "@loopforge/osm-types";
 import { parseGpxTrackCoordinates } from "@loopforge/gpx";
 import { generateRoute } from "./index";
 import {
@@ -21,6 +25,27 @@ export const START_RURAL: LatLng = { lat: 52.39225, lng: 21.34062 };
 /** Warsaw — Ochota / Filtry edge: still metro, less one-way maze than Śródmieście. */
 export const START_URBAN: LatLng = { lat: 52.2118, lng: 20.9815 };
 
+const APPROACH_DISTANCE_KM = 8;
+
+const DIRECTIONS: Direction[] = [
+  "N",
+  "NE",
+  "E",
+  "SE",
+  "S",
+  "SW",
+  "W",
+  "NW",
+];
+
+/** Base loop lengths matching sensible UI defaults per bike × profile. */
+const DISTANCE_KM: Record<BikeType, Record<RideProfile, number>> = {
+  gravel: { flow: 25, technical: 25, fast: 30 },
+  road: { flow: 20, technical: 18, fast: 25 },
+  mtb: { flow: 22, technical: 20, fast: 25 },
+  general: { flow: 25, technical: 25, fast: 25 },
+};
+
 export type LiveRouteScenario = {
   id: string;
   label: string;
@@ -29,140 +54,180 @@ export type LiveRouteScenario = {
   urban?: boolean;
 };
 
-/**
- * Full product matrix: every bike type × ride profile used in the UI.
- * Runs against whatever BRouter BROUTER_URL / local config points at.
- */
-export const LIVE_ROUTE_SCENARIOS: LiveRouteScenario[] = [
-  // Gravel
-  scenario("gravel-balans", "Gravel · Balans", {
-    start: START_RURAL,
-    bikeType: "gravel",
-    profile: "flow",
-    distanceKm: 25,
-    direction: "NE",
-    avoidAsphalt: true,
-  }),
-  scenario("gravel-eksploracyjny", "Gravel · Eksploracyjny", {
-    start: START_RURAL,
-    bikeType: "gravel",
-    profile: "technical",
-    distanceKm: 25,
-    direction: "N",
-    avoidAsphalt: true,
-  }),
-  scenario("gravel-express", "Gravel · Express", {
-    start: START_RURAL,
-    bikeType: "gravel",
-    profile: "fast",
-    distanceKm: 30,
-    direction: "E",
-    avoidAsphalt: true,
-  }),
-  // Szosa
-  scenario("road-szybki", "Szosa · Szybki", {
-    start: START_URBAN,
-    bikeType: "road",
-    profile: "fast",
-    distanceKm: 25,
-    direction: "W",
-    preferQuietRoutes: false,
-  }, true),
-  scenario("road-spokojny", "Szosa · Spokojny", {
-    start: START_URBAN,
-    bikeType: "road",
-    profile: "flow",
-    distanceKm: 20,
-    direction: "NW",
-    preferQuietRoutes: true,
-  }, true),
-  scenario("road-boczne", "Szosa · Boczne drogi", {
-    start: START_URBAN,
-    bikeType: "road",
-    profile: "technical",
-    distanceKm: 18,
-    direction: "SW",
-    preferQuietRoutes: true,
-  }, true),
-  // MTB
-  scenario("mtb-flow", "MTB · Flow", {
-    start: START_RURAL,
-    bikeType: "mtb",
-    profile: "flow",
-    distanceKm: 22,
-    direction: "SE",
-    avoidAsphalt: true,
-  }),
-  scenario("mtb-trail", "MTB · Trail", {
-    start: START_RURAL,
-    bikeType: "mtb",
-    profile: "technical",
-    distanceKm: 20,
-    direction: "S",
-    avoidAsphalt: true,
-  }),
-  scenario("mtb-xc", "MTB · XC", {
-    start: START_RURAL,
-    bikeType: "mtb",
-    profile: "fast",
-    distanceKm: 25,
-    direction: "NE",
-    avoidAsphalt: true,
-  }),
-  // Ogólny
-  scenario("general-turystyczny", "Ogólny · Turystyczny", {
-    start: START_RURAL,
-    bikeType: "general",
-    profile: "flow",
-    distanceKm: 25,
-    direction: "E",
-  }),
-  scenario("general-terenowy", "Ogólny · Terenowy", {
-    start: START_RURAL,
-    bikeType: "general",
-    profile: "technical",
-    distanceKm: 25,
-    direction: "N",
-    avoidAsphalt: true,
-  }),
-  scenario("general-asfalt", "Ogólny · Asfalt", {
-    start: START_RURAL,
-    bikeType: "general",
-    profile: "fast",
-    distanceKm: 25,
-    direction: "W",
-  }),
-];
+type ToggleCombo = {
+  avoidAsphalt: boolean;
+  preferQuietRoutes: boolean;
+  approachEnabled: boolean;
+};
 
-function scenario(
-  id: string,
-  label: string,
-  partial: {
-    start: LatLng;
-    bikeType: BikeType;
-    profile: RideProfile;
-    distanceKm: number;
-    direction: Direction;
-    avoidAsphalt?: boolean;
-    preferQuietRoutes?: boolean;
-  },
-  urban = false,
+function supportsAvoidAsphalt(bikeType: BikeType): boolean {
+  return bikeType === "gravel" || bikeType === "mtb";
+}
+
+function toggleCombos(bikeType: BikeType): ToggleCombo[] {
+  const avoidStates = supportsAvoidAsphalt(bikeType) ? [false, true] : [false];
+  const quietStates = [false, true];
+  const approachStates = [false, true];
+  const out: ToggleCombo[] = [];
+  for (const avoidAsphalt of avoidStates) {
+    for (const preferQuietRoutes of quietStates) {
+      for (const approachEnabled of approachStates) {
+        out.push({ avoidAsphalt, preferQuietRoutes, approachEnabled });
+      }
+    }
+  }
+  return out;
+}
+
+function scenarioId(
+  bikeType: BikeType,
+  profile: RideProfile,
+  toggles: ToggleCombo,
+): string {
+  const parts = [bikeType, profile];
+  if (toggles.avoidAsphalt) parts.push("avoid");
+  if (toggles.preferQuietRoutes) parts.push("quiet");
+  if (toggles.approachEnabled) parts.push("approach");
+  return parts.join("-");
+}
+
+function scenarioLabel(
+  bikeType: BikeType,
+  profile: RideProfile,
+  toggles: ToggleCombo,
+): string {
+  const bikeLabel =
+    bikeType === "road"
+      ? "Szosa"
+      : bikeType === "mtb"
+        ? "MTB"
+        : bikeType === "general"
+          ? "Ogólny"
+          : "Gravel";
+  const profileLabel =
+    getRideProfileLabel(bikeType, profile) ?? profile;
+  const flags: string[] = [];
+  if (toggles.avoidAsphalt) flags.push("unikaj asfaltu");
+  if (toggles.preferQuietRoutes) flags.push("spokojne");
+  if (toggles.approachEnabled) flags.push("dojazd");
+  return flags.length > 0
+    ? `${bikeLabel} · ${profileLabel} · ${flags.join(" · ")}`
+    : `${bikeLabel} · ${profileLabel}`;
+}
+
+function buildScenario(
+  bikeType: BikeType,
+  profile: RideProfile,
+  toggles: ToggleCombo,
+  index: number,
 ): LiveRouteScenario {
+  const urban = bikeType === "road";
+  const start = urban ? START_URBAN : START_RURAL;
+  let distanceKm = DISTANCE_KM[bikeType][profile];
+  // Keep approach runs closer to target length / wall-clock.
+  if (toggles.approachEnabled) {
+    distanceKm = Math.max(15, Math.round(distanceKm * 0.8));
+  }
+
+  const id = scenarioId(bikeType, profile, toggles);
+  const label = scenarioLabel(bikeType, profile, toggles);
+  const direction = DIRECTIONS[index % DIRECTIONS.length]!;
+
   return {
     id,
     label,
     urban,
     request: {
-      start: partial.start,
-      bikeType: partial.bikeType,
-      profile: partial.profile,
-      distanceKm: partial.distanceKm,
-      direction: partial.direction,
-      avoidAsphalt: partial.avoidAsphalt,
-      preferQuietRoutes: partial.preferQuietRoutes,
-      approachEnabled: false,
+      start,
+      bikeType,
+      profile,
+      distanceKm,
+      direction,
+      avoidAsphalt: supportsAvoidAsphalt(bikeType)
+        ? toggles.avoidAsphalt
+        : undefined,
+      preferQuietRoutes: toggles.preferQuietRoutes || undefined,
+      approachEnabled: toggles.approachEnabled || undefined,
+      approachDistanceKm: toggles.approachEnabled
+        ? APPROACH_DISTANCE_KM
+        : undefined,
     },
   };
+}
+
+/**
+ * Full product UI matrix: every bike × podprofil × toggles visible in the form.
+ *
+ * - Unikaj asfaltu: gravel + MTB only
+ * - Ścieżki i spokojne drogi: all bikes
+ * - Dojazd do pętli: all bikes (~8 km)
+ *
+ * Count: gravel 24 + mtb 24 + road 12 + general 12 = 72
+ */
+export function buildLiveRouteScenarios(): LiveRouteScenario[] {
+  const scenarios: LiveRouteScenario[] = [];
+  let index = 0;
+  for (const bikeType of Object.keys(RIDE_PROFILE_OPTIONS) as BikeType[]) {
+    for (const option of getRideProfileOptions(bikeType)) {
+      for (const toggles of toggleCombos(bikeType)) {
+        scenarios.push(buildScenario(bikeType, option.value, toggles, index));
+        index += 1;
+      }
+    }
+  }
+  return scenarios;
+}
+
+/**
+ * Compact smoke set: one row per bike × profile with typical default toggles
+ * (gravel/MTB avoid asphalt on; road quiet only on Spokojny/Boczne).
+ */
+export function buildCoreRouteScenarios(): LiveRouteScenario[] {
+  const cores: Array<{
+    bikeType: BikeType;
+    profile: RideProfile;
+    avoidAsphalt?: boolean;
+    preferQuietRoutes?: boolean;
+  }> = [
+    { bikeType: "gravel", profile: "flow", avoidAsphalt: true },
+    { bikeType: "gravel", profile: "technical", avoidAsphalt: true },
+    { bikeType: "gravel", profile: "fast", avoidAsphalt: true },
+    { bikeType: "road", profile: "fast" },
+    { bikeType: "road", profile: "flow", preferQuietRoutes: true },
+    { bikeType: "road", profile: "technical", preferQuietRoutes: true },
+    { bikeType: "mtb", profile: "flow", avoidAsphalt: true },
+    { bikeType: "mtb", profile: "technical", avoidAsphalt: true },
+    { bikeType: "mtb", profile: "fast", avoidAsphalt: true },
+    { bikeType: "general", profile: "flow" },
+    { bikeType: "general", profile: "technical", avoidAsphalt: true },
+    { bikeType: "general", profile: "fast" },
+  ];
+
+  return cores.map((core, index) =>
+    buildScenario(
+      core.bikeType,
+      core.profile,
+      {
+        avoidAsphalt: Boolean(core.avoidAsphalt),
+        preferQuietRoutes: Boolean(core.preferQuietRoutes),
+        approachEnabled: false,
+      },
+      index,
+    ),
+  );
+}
+
+/** Default: full UI matrix (72). Use LOOPFORGE_MATRIX=core for the 12 smoke rows. */
+export const LIVE_ROUTE_SCENARIOS: LiveRouteScenario[] =
+  buildLiveRouteScenarios();
+
+export const LIVE_ROUTE_SCENARIOS_CORE: LiveRouteScenario[] =
+  buildCoreRouteScenarios();
+
+export function resolveLiveRouteScenarios(
+  matrix: "full" | "core" = "full",
+): LiveRouteScenario[] {
+  return matrix === "core" ? LIVE_ROUTE_SCENARIOS_CORE : LIVE_ROUTE_SCENARIOS;
 }
 
 export type ScenarioRunResult = {
@@ -191,6 +256,7 @@ export async function runLiveRouteScenario(
   options: RunLiveRouteScenarioOptions = {},
 ): Promise<ScenarioRunResult> {
   const started = Date.now();
+  const approach = Boolean(scenario.request.approachEnabled);
   try {
     options.onPhase?.("generate");
     const route = await generateRoute(scenario.request, {
@@ -205,7 +271,7 @@ export async function runLiveRouteScenario(
     const auditOpts = {
       targetDistanceKm: scenario.request.distanceKm,
       actualDistanceKm: route.metrics.distanceKm,
-      allowApproachMirror: false,
+      allowApproachMirror: approach,
       geometryContext: {
         start: scenario.request.start,
         urban: scenario.urban,
@@ -215,20 +281,22 @@ export async function runLiveRouteScenario(
     options.onPhase?.("audit-geometry");
     const geometryAudit = auditRouteGeometry(coordinates, {
       ...auditOpts,
-      // Align with generator deliverable ceilings (relaxed / urban).
-      maxSpurShare: scenario.urban ? 0.14 : 0.08,
-      maxBacktrack: scenario.urban ? 0.2 : 0.09,
-      maxMirroredPrefixM: 800,
+      // Approach GPX is dojazd + loop + return: spur/backtrack of the full
+      // polyline are dominated by the intentional out-and-back. Loop quality
+      // was already gated inside generateRoute; here only continuity matters.
+      maxSpurShare: approach ? 1 : scenario.urban ? 0.14 : 0.08,
+      maxBacktrack: approach ? 1 : scenario.urban ? 0.2 : 0.09,
+      maxMirroredPrefixM: approach ? 25_000 : 800,
     });
     options.onPhase?.("audit-gpx");
     // Densified GPX (~5 m) wildly inflates spur/backtrack — only enforce
-    // continuity / mirrored out-and-back there.
+    // continuity (and allow dojazd mirror when approach is on).
     const gpxAudit = auditRouteGeometry(gpxCoords, {
       ...auditOpts,
       actualDistanceKm: undefined,
       maxSpurShare: 1,
       maxBacktrack: 1,
-      maxMirroredPrefixM: 800,
+      maxMirroredPrefixM: approach ? 25_000 : 800,
       failOnRemainingSpurs: false,
     });
 
@@ -274,7 +342,12 @@ export function scenarioDisplayName(scenario: LiveRouteScenario): string {
     scenario.request.bikeType,
     scenario.request.profile,
   );
-  return profile
+  const base = profile
     ? `${scenario.request.bikeType}/${profile}`
     : scenario.label;
+  const flags: string[] = [];
+  if (scenario.request.avoidAsphalt) flags.push("A");
+  if (scenario.request.preferQuietRoutes) flags.push("Q");
+  if (scenario.request.approachEnabled) flags.push("D");
+  return flags.length > 0 ? `${base} +${flags.join("")}` : base;
 }

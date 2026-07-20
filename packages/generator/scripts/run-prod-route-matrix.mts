@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
- * Generate every bike/profile loop against the configured BRouter (prefer
- * production via BROUTER_URL), then audit geometry + densified GPX.
+ * Full UI route matrix against the configured BRouter (prefer production via
+ * BROUTER_URL): every bike × podprofil × toggles (unikaj asfaltu / spokojne /
+ * dojazd), then audit geometry + densified GPX.
  *
  * Live progress + running scoreboard are printed as scenarios finish.
  *
- *   pnpm test:prod
+ *   pnpm test:prod                         # full matrix (~72)
+ *   LOOPFORGE_MATRIX=core pnpm test:prod   # smoke: 12 bike×profile defaults
  *   LOOPFORGE_SAVE_GPX=1 pnpm test:prod
- *   LOOPFORGE_SCENARIOS=gravel-balans,mtb-xc pnpm test:prod
+ *   LOOPFORGE_SCENARIOS=gravel-flow-avoid,road-fast-quiet pnpm test:prod
  *
  * Loads BROUTER_URL from apps/web/.env.local when not already set in the shell.
  */
@@ -21,7 +23,7 @@ import {
   isBrouterConfigured,
 } from "@loopforge/brouter";
 import {
-  LIVE_ROUTE_SCENARIOS,
+  resolveLiveRouteScenarios,
   runLiveRouteScenario,
   scenarioDisplayName,
   type ScenarioRunResult,
@@ -87,14 +89,14 @@ function printScoreboard(results: ScenarioRunResult[], title: string): void {
     `${c.bold}${title}${c.reset}  ${c.green}${passed} pass${c.reset} · ${c.red}${failed} fail${c.reset} · ${results.length} done`,
   );
   console.log(
-    `${c.dim}${pad("status", 6)} ${pad("scenario", 28)} ${pad("km", 6)} ${pad("gpx", 6)} time${c.reset}`,
+    `${c.dim}${pad("status", 6)} ${pad("scenario", 36)} ${pad("km", 6)} ${pad("gpx", 6)} time${c.reset}`,
   );
   for (const r of results) {
     const status = r.ok
       ? `${c.green}PASS${c.reset} `
       : `${c.red}FAIL${c.reset} `;
     console.log(
-      `${status} ${pad(scenarioDisplayName(r.scenario), 28)} ${pad(
+      `${status} ${pad(scenarioDisplayName(r.scenario), 36)} ${pad(
         r.distanceKm != null ? r.distanceKm.toFixed(1) : "-",
         6,
       )} ${pad(r.gpxPoints != null ? String(r.gpxPoints) : "-", 6)} ${fmtSec(r.durationMs)}`,
@@ -180,15 +182,20 @@ async function main(): Promise<void> {
   await ensureBrouterServer(config);
   console.log(`${c.green}OK${c.reset} ${c.dim}(${fmtSec(Date.now() - probeStarted)})${c.reset}`);
 
+  const matrixEnv = (process.env.LOOPFORGE_MATRIX ?? "full").toLowerCase();
+  const matrix: "full" | "core" = matrixEnv === "core" ? "core" : "full";
   const filter = process.env.LOOPFORGE_SCENARIOS?.split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  // Explicit id filter always resolves against the full UI catalog.
+  const catalog = resolveLiveRouteScenarios(filter?.length ? "full" : matrix);
+
   const scenarios = filter?.length
-    ? LIVE_ROUTE_SCENARIOS.filter((s) => filter.includes(s.id))
-    : LIVE_ROUTE_SCENARIOS;
+    ? catalog.filter((s) => filter.includes(s.id))
+    : catalog;
 
   if (scenarios.length === 0) {
-    console.error("No scenarios matched LOOPFORGE_SCENARIOS");
+    console.error("No scenarios matched LOOPFORGE_SCENARIOS / LOOPFORGE_MATRIX");
     process.exit(2);
   }
 
@@ -199,8 +206,18 @@ async function main(): Promise<void> {
   );
   if (saveGpx) mkdirSync(outDir, { recursive: true });
 
+  const idPreview =
+    scenarios.length <= 16
+      ? scenarios.map((s) => s.id).join(", ")
+      : `${scenarios
+          .slice(0, 8)
+          .map((s) => s.id)
+          .join(", ")} … +${scenarios.length - 8} more`;
   console.log(
-    `${c.dim}Scenariusze${c.reset}  ${scenarios.length}  ${c.dim}(${scenarios.map((s) => s.id).join(", ")})${c.reset}`,
+    `${c.dim}Matryca${c.reset}     ${filter?.length ? `filter → full` : matrix} (${catalog.length} w katalogu)`,
+  );
+  console.log(
+    `${c.dim}Scenariusze${c.reset}  ${scenarios.length}  ${c.dim}(${idPreview})${c.reset}`,
   );
   if (saveGpx) {
     console.log(`${c.dim}GPX →${c.reset}  ${outDir}`);
