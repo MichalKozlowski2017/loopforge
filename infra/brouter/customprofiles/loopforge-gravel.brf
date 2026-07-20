@@ -336,7 +336,7 @@ assign classifiermask
 
 ---context:node
 
-assign nobikeaccess switch bicycle= switch vehicle= access=no|private vehicle=no|private bicycle=no|private|dismount|use_sidepath
+assign nobikeaccess switch bicycle= switch vehicle= access=no|private vehicle=no|private bicycle=no|private|dismount
 assign nofootaccess switch foot= ( and access=no|private ( not bicycle=dismount ) ) foot=no|private
 
 assign barrierpenalty

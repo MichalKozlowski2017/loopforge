@@ -29,6 +29,8 @@ ssh "$VPS" "sudo mkdir -p '$REMOTE_CUSTOM' '$REMOTE_ROOT/customprofiles' && \
   sleep 2 && \
   curl -sf 'http://127.0.0.1:${BROUTER_PORT}/brouter?lonlats=21.0,52.2|21.01,52.2&profile=customprofiles/loopforge-approach&format=geojson' >/dev/null && \
   echo '✓ loopforge-approach profile OK' || echo '⚠ loopforge-approach health check failed' && \
+  curl -sf 'http://127.0.0.1:${BROUTER_PORT}/brouter?lonlats=21.0,52.2|21.01,52.2&profile=customprofiles/loopforge-road&format=geojson' >/dev/null && \
+  echo '✓ loopforge-road profile OK' || echo '⚠ loopforge-road health check failed' && \
   curl -sf 'http://127.0.0.1:${BROUTER_PORT}/brouter?lonlats=21.0,52.2|21.01,52.2&profile=customprofiles/loopforge-mtb&format=geojson' >/dev/null && \
   echo '✓ loopforge-mtb profile OK' || echo '⚠ loopforge-mtb health check failed'"
 

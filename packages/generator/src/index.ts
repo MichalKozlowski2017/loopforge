@@ -430,6 +430,33 @@ function pavedShareFromSegments(
   return totalM > 0 ? pavedM / totalM : 0;
 }
 
+/** Carriageways tagged bicycle=use_sidepath / no — riders should use the sidepath. */
+function badBikeAccessMeters(
+  segments: { tags: OsmTags; distanceM: number }[],
+): { useSidepathM: number; forbiddenM: number } {
+  let useSidepathM = 0;
+  let forbiddenM = 0;
+  for (const segment of segments) {
+    if (segment.distanceM <= 0) continue;
+    const bicycle = segment.tags.bicycle?.toLowerCase();
+    if (bicycle === "use_sidepath") useSidepathM += segment.distanceM;
+    if (bicycle === "no" || bicycle === "dismount") forbiddenM += segment.distanceM;
+  }
+  return { useSidepathM, forbiddenM };
+}
+
+const MAX_USE_SIDEPATH_M = 25;
+const MAX_BICYCLE_FORBIDDEN_M = 25;
+
+function hasBadBikeAccess(
+  segments: { tags: OsmTags; distanceM: number }[],
+): boolean {
+  const { useSidepathM, forbiddenM } = badBikeAccessMeters(segments);
+  return (
+    useSidepathM > MAX_USE_SIDEPATH_M || forbiddenM > MAX_BICYCLE_FORBIDDEN_M
+  );
+}
+
 const OFFROAD_CATEGORIES = new Set<SurfaceCategory>([
   "gravel",
   "compacted",
@@ -869,6 +896,17 @@ async function generateRouteWithEngine(
           variantTotal: variants,
         });
 
+        if (hasBadBikeAccess(refined.segments)) {
+          // Never keep carriageways tagged use_sidepath / bicycle=no as candidates.
+          if (process.env.LOOPFORGE_DEBUG_ACCESS === "1") {
+            const bad = badBikeAccessMeters(refined.segments);
+            console.warn(
+              `[loopforge] skip bad bike access: use_sidepath=${Math.round(bad.useSidepathM)}m forbidden=${Math.round(bad.forbiddenM)}m dist=${refined.distanceKm.toFixed(1)}km`,
+            );
+          }
+          continue;
+        }
+
         if (quality < bestFallbackScore) {
           bestFallbackScore = quality;
           bestFallback = refined;
@@ -975,7 +1013,13 @@ async function generateRouteWithEngine(
           (request.viaPoints?.length ?? 0) > 0 &&
           metrics.distanceError > 0.22;
 
-        if (tooSpurHeavy || wrongDirection || tooShortWithVias || tooShort || tooLong) {
+        if (
+          tooSpurHeavy ||
+          wrongDirection ||
+          tooShortWithVias ||
+          tooShort ||
+          tooLong
+        ) {
           if (quality < bestRejectedScore) {
             bestRejectedScore = quality;
             bestRejected = refined;
@@ -1231,7 +1275,8 @@ async function generateRouteWithEngine(
           !hasHardTeleportEdge(refined.coordinates) &&
           refined.coordinates.length >= 4 &&
           recoveryShareOk &&
-          recoveryGate
+          recoveryGate &&
+          !hasBadBikeAccess(refined.segments)
         ) {
           best = refined;
           usedRelaxedFallback = true;
@@ -1354,6 +1399,36 @@ async function generateRouteWithEngine(
     const urbanHint = baseUrban
       ? " W aglomeracji spróbuj krótszego dystansu albo startu za miastem."
       : "";
+    if (process.env.LOOPFORGE_DEBUG_ACCESS === "1") {
+      const sample = bestRejected ?? bestFallback;
+      if (sample) {
+        const m = loopQualityMetrics(
+          sample.coordinates,
+          request.distanceKm,
+          sample.distanceKm,
+          request.start,
+          request.direction,
+        );
+        const mirrorM = mirroredPrefixLengthM(sample.coordinates);
+        const geoOk = passesDeliverableGeometry(sample.coordinates, {
+          targetDistanceKm: request.distanceKm,
+          actualDistanceKm: sample.distanceKm,
+          start: request.start,
+          direction: request.direction,
+          approachMode: options?.approachCoordinates != null,
+          urban: baseUrban,
+          relaxed: true,
+          preferQuiet: Boolean(request.preferQuietRoutes),
+        });
+        console.warn(
+          `[loopforge] no best detail: dist=${sample.distanceKm.toFixed(1)} err=${m.distanceError.toFixed(3)} dir=${m.directionCoverage.toFixed(2)} spur=${(m.spurShare * 100).toFixed(1)}% back=${(m.backtrack * 100).toFixed(1)}% mirror=${Math.round(mirrorM)}m geoOk=${geoOk} minLoop=${minLoopKm.toFixed(1)}`,
+        );
+      } else {
+        console.warn(
+          `[loopforge] no best: rejected=null fallback=null lowOverlap=null`,
+        );
+      }
+    }
     throw new Error(
       `Nie udało się wygenerować trasy — spróbuj innego kierunku, krótszego dystansu lub wyłącz „unikaj asfaltu”.${urbanHint}`,
     );

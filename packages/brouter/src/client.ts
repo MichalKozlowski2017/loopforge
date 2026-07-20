@@ -18,9 +18,9 @@ const DIRECTION_BEARING: Record<Direction, number> = {
 const MTB_CUSTOM_PROFILE = "customprofiles/loopforge-mtb";
 const MTB_STOCK_PROFILE = "mtb";
 
-/** Paved, direct routing for the approach leg — uses stock fastbike (custom fastbike clones fail in customprofiles). */
-export const APPROACH_BROUTER_PROFILE = "fastbike";
-const APPROACH_FALLBACK_PROFILE = "trekking";
+/** Paved approach: custom road profile hard-bans use_sidepath / bicycle=no. */
+export const APPROACH_BROUTER_PROFILE = "customprofiles/loopforge-road";
+const APPROACH_FALLBACK_PROFILE = "safety";
 const BROUTER_FETCH_TIMEOUT_MS = 45_000;
 
 function isLocalBrouter(config: BrouterConfig): boolean {
@@ -59,10 +59,17 @@ const BIKE_PROFILE: Record<BikeType, string> = {
 const ROAD_CUSTOM_PROFILE = "customprofiles/loopforge-road";
 
 const ROAD_PROFILE: Record<RideProfile, string[]> = {
-  fast: [ROAD_CUSTOM_PROFILE, "fastbike"],
-  flow: [ROAD_CUSTOM_PROFILE, "fastbike-lowtraffic", "fastbike"],
+  fast: [ROAD_CUSTOM_PROFILE, "safety", "fastbike-lowtraffic", "fastbike"],
+  flow: [
+    ROAD_CUSTOM_PROFILE,
+    "safety",
+    "fastbike-verylowtraffic",
+    "fastbike-lowtraffic",
+    "fastbike",
+  ],
   technical: [
     ROAD_CUSTOM_PROFILE,
+    "safety",
     "fastbike-verylowtraffic",
     "fastbike-lowtraffic",
     "fastbike",
@@ -79,11 +86,13 @@ function profilesForRequest(
   }
   if (bikeType === "road") {
     if (preferQuietRoutes) {
+      // Prefer profiles that hard-ban / heavily penalize use_sidepath before
+      // stock fastbike* (soft sidepath via footaccess).
       return [
         ROAD_CUSTOM_PROFILE,
+        "safety",
         "fastbike-verylowtraffic",
         "fastbike-lowtraffic",
-        "safety",
         "fastbike",
       ];
     }
