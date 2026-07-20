@@ -32,9 +32,12 @@ function normalizeCoords(coords: number[][]): LngLat[] {
     );
 }
 
+/**
+ * Concatenate LineString features in order. Always keep going — skipping a
+ * mid-route gap used to truncate the draw animation to a short stub.
+ */
 function concatSegments(segments: LngLat[][]): LngLat[] {
   const coords: LngLat[] = [];
-  const MAX_JOIN_GAP_M = 15;
 
   for (const segment of segments) {
     if (segment.length === 0) continue;
@@ -44,12 +47,10 @@ function concatSegments(segments: LngLat[][]): LngLat[] {
     }
     const last = coords[coords.length - 1]!;
     const first = segment[0]!;
-    const gapM = haversineMeters(last, first);
-    if (gapM > MAX_JOIN_GAP_M) continue;
     if (last[0] === first[0] && last[1] === first[1]) {
       coords.push(...segment.slice(1));
     } else {
-      coords.push(...segment.slice(1));
+      coords.push(...segment);
     }
   }
   return coords;
@@ -180,19 +181,6 @@ function readReturnApproachDistanceKm(route: RouteFeature | null): number | null
   return typeof raw === "number" && raw > 0 ? raw : null;
 }
 
-function pathStartsNearHome(
-  path: LngLat[],
-  home: LngLat,
-  loopEntry: LatLng,
-): boolean {
-  if (path.length === 0) return false;
-  const entryPoint: LngLat = [loopEntry.lng, loopEntry.lat];
-  const start = path[0]!;
-  const dHome = haversineMeters(start, home);
-  const dEntry = haversineMeters(start, entryPoint);
-  return dHome + 120 < dEntry;
-}
-
 /**
  * When mapGeojson lacks loop segments, slice the merged route LineString at loop
  * entry and before the homeward return leg.
@@ -259,8 +247,10 @@ function approachEnabledForRoute(
 }
 
 /**
- * Path for the draw animation: loop only, matching the coloured loop segments on
- * the map (not the dojazd / powrót legs).
+ * Path for the draw animation: the same continuous polyline the map paints.
+ * Prefer route.geometry (full loop / sliced loop without dojazd), not coloured
+ * mapGeojson features — those can be style-split and previously truncated the
+ * reveal when a mid-route join gap skipped the rest of the path.
  */
 export function flattenLoopDrawPath(
   route: RouteFeature | null,
@@ -276,7 +266,6 @@ export function flattenLoopDrawPath(
     ? normalizeCoords(route.geometry.coordinates)
     : [];
   const hasApproach = approachEnabledForRoute(route, approachEnabled) && loopEntry;
-  const home = merged[0] ?? null;
   const routeForSlice =
     distanceHints &&
     (distanceHints.approachDistanceKm != null ||
@@ -296,35 +285,25 @@ export function flattenLoopDrawPath(
         }
       : route;
 
-  const loopFromMerged =
-    hasApproach && loopEntry && merged.length >= 2
-      ? extractLoopFromMergedRoute(merged, loopEntry, routeForSlice)
-      : null;
-
-  // With dojazd, always slice the merged LineString — mapGeojson tagging can vary
-  // by bike profile / engine and must not decide whether the approach animates.
-  if (loopFromMerged && loopFromMerged.length >= 2) {
-    return loopFromMerged;
+  // With dojazd, animate only the loop portion of the merged LineString.
+  if (hasApproach && loopEntry && merged.length >= 2) {
+    const loopFromMerged = extractLoopFromMergedRoute(
+      merged,
+      loopEntry,
+      routeForSlice,
+    );
+    if (loopFromMerged.length >= 2) return loopFromMerged;
   }
 
+  // No approach (or slice failed): draw the full continuous route polyline.
+  if (merged.length >= 2) return merged;
+
+  // Fallback when the Feature LineString is missing.
   if (mapGeojson?.features.length) {
     const loopFromMap = flattenLoopSegments(mapGeojson);
-    if (loopFromMap.length >= 2) {
-      if (
-        hasApproach &&
-        loopEntry &&
-        home &&
-        pathStartsNearHome(loopFromMap, home, loopEntry) &&
-        loopFromMerged &&
-        loopFromMerged.length >= 2
-      ) {
-        return loopFromMerged;
-      }
-      return loopFromMap;
-    }
+    if (loopFromMap.length >= 2) return loopFromMap;
   }
 
-  if (merged.length < 2) return merged;
   return merged;
 }
 
