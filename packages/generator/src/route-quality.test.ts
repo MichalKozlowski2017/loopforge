@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   auditGeneratedRoute,
   auditRouteGeometry,
+  measureOffPath,
   mirroredPrefixLengthM,
 } from "./route-quality";
 import {
@@ -108,6 +109,37 @@ describe("auditGeneratedRoute tags", () => {
     ]);
     expect(audit.ok).toBe(false);
     expect(audit.findings.some((f) => f.code === "BICYCLE_FORBIDDEN")).toBe(true);
+  });
+});
+
+describe("on-path / network snap", () => {
+  it("passes when display equals the BRouter network", () => {
+    const loop = rectLoop(0, 0, 3000, 2000);
+    const audit = auditRouteGeometry(loop, { networkCoordinates: loop });
+    expect(audit.ok, format(audit)).toBe(true);
+    expect(audit.metrics.offPathShare).toBeLessThan(0.01);
+  });
+
+  it("fails an air-chord that leaves the network", () => {
+    const network = rectLoop(0, 0, 2000, 1500);
+    // Chop a corner: connect opposite corners with a diagonal shortcut.
+    const shortcut: [number, number][] = [
+      network[0]!,
+      network[Math.floor(network.length / 2)]!,
+      network[network.length - 1]!,
+    ];
+    const off = measureOffPath(shortcut, network, {
+      maxPointDistanceM: 35,
+      sampleSpacingM: 20,
+    });
+    expect(off.offPathM).toBeGreaterThan(80);
+    const audit = auditRouteGeometry(shortcut, {
+      networkCoordinates: network,
+      maxOffPathM: 80,
+      maxOffPathShare: 0.02,
+    });
+    expect(audit.ok).toBe(false);
+    expect(audit.findings.some((f) => f.code === "OFF_NETWORK")).toBe(true);
   });
 });
 

@@ -14,10 +14,16 @@ import {
 import { parseGpxTrackCoordinates } from "@loopforge/gpx";
 import { generateRoute } from "./index";
 import {
+  auditGeneratedRoute,
+  auditLongEdgesWithRouter,
   auditRouteGeometry,
   formatRouteQualityReport,
   type RouteQualityAudit,
 } from "./route-quality";
+import {
+  fetchRouteBetweenPoints,
+  getBrouterConfig,
+} from "@loopforge/brouter";
 
 /** Rural Mazowsze — gravel / MTB / general. */
 export const START_RURAL: LatLng = { lat: 52.39225, lng: 21.34062 };
@@ -84,7 +90,7 @@ function scenarioId(
   profile: RideProfile,
   toggles: ToggleCombo,
 ): string {
-  const parts = [bikeType, profile];
+  const parts: string[] = [bikeType, profile];
   if (toggles.avoidAsphalt) parts.push("avoid");
   if (toggles.preferQuietRoutes) parts.push("quiet");
   if (toggles.approachEnabled) parts.push("approach");
@@ -244,12 +250,14 @@ export type ScenarioRunResult = {
 
 export type RunLiveRouteScenarioOptions = {
   onProgress?: (progress: RouteGenerationProgress) => void;
-  onPhase?: (phase: "generate" | "audit-geometry" | "audit-gpx") => void;
+  onPhase?: (
+    phase: "generate" | "audit-geometry" | "audit-gpx" | "audit-onpath",
+  ) => void;
 };
 
 /**
- * Generate one loop on the configured BRouter, then audit both the polyline
- * and densified GPX independently.
+ * Generate one loop on the configured BRouter, then audit geometry, access
+ * tags, on-network snap, densified GPX, and long-edge BRouter re-checks.
  */
 export async function runLiveRouteScenario(
   scenario: LiveRouteScenario,
@@ -267,30 +275,40 @@ export async function runLiveRouteScenario(
       number,
     ][];
     const gpxCoords = parseGpxTrackCoordinates(route.gpx);
+    const segments = route.segments ?? [];
+    const network =
+      route.networkCoordinates && route.networkCoordinates.length >= 2
+        ? route.networkCoordinates
+        : coordinates;
 
     const auditOpts = {
       targetDistanceKm: scenario.request.distanceKm,
-      actualDistanceKm: route.metrics.distanceKm,
+      actualDistanceKm: route.metrics.loopDistanceKm ?? route.metrics.distanceKm,
       allowApproachMirror: approach,
       geometryContext: {
         start: scenario.request.start,
         urban: scenario.urban,
       },
+      networkCoordinates: network,
+      maxPointDistanceM: scenario.urban ? 40 : 35,
     };
 
     options.onPhase?.("audit-geometry");
-    const geometryAudit = auditRouteGeometry(coordinates, {
+    const geometryAudit = auditGeneratedRoute(coordinates, segments, {
       ...auditOpts,
       // Approach GPX is dojazd + loop + return: spur/backtrack of the full
       // polyline are dominated by the intentional out-and-back. Loop quality
-      // was already gated inside generateRoute; here only continuity matters.
+      // was already gated inside generateRoute; here continuity + on-path matter.
       maxSpurShare: approach ? 1 : scenario.urban ? 0.14 : 0.08,
       maxBacktrack: approach ? 1 : scenario.urban ? 0.2 : 0.09,
       maxMirroredPrefixM: approach ? 25_000 : 800,
+      maxOffPathShare: 0.025,
+      maxOffPathM: scenario.urban ? 120 : 80,
     });
+
     options.onPhase?.("audit-gpx");
     // Densified GPX (~5 m) wildly inflates spur/backtrack — only enforce
-    // continuity (and allow dojazd mirror when approach is on).
+    // continuity + on-path (and allow dojazd mirror when approach is on).
     const gpxAudit = auditRouteGeometry(gpxCoords, {
       ...auditOpts,
       actualDistanceKm: undefined,
@@ -298,24 +316,57 @@ export async function runLiveRouteScenario(
       maxBacktrack: 1,
       maxMirroredPrefixM: approach ? 25_000 : 800,
       failOnRemainingSpurs: false,
+      maxOffPathShare: 0.03,
+      maxOffPathM: scenario.urban ? 150 : 100,
     });
 
-    const ok = geometryAudit.ok && gpxAudit.ok && gpxCoords.length >= 50;
+    options.onPhase?.("audit-onpath");
+    const brouterConfig = getBrouterConfig();
+    const edgeFindings = brouterConfig
+      ? await auditLongEdgesWithRouter(
+          coordinates,
+          async (from, to) => {
+            const leg = await fetchRouteBetweenPoints(brouterConfig, {
+              from,
+              to,
+              bikeType: scenario.request.bikeType,
+              rideProfile: scenario.request.profile,
+              skipGpx: true,
+            });
+            return leg.coordinates;
+          },
+          {
+            minEdgeM: scenario.urban ? 55 : 70,
+            maxEdges: 6,
+          },
+        )
+      : [];
+
+    const geometryWithEdges: RouteQualityAudit = {
+      ...geometryAudit,
+      findings: [...geometryAudit.findings, ...edgeFindings],
+      ok:
+        geometryAudit.ok &&
+        edgeFindings.every((f) => f.severity !== "error"),
+    };
+
+    const ok =
+      geometryWithEdges.ok && gpxAudit.ok && gpxCoords.length >= 50;
 
     return {
       scenario,
       ok,
       distanceKm: route.metrics.distanceKm,
       gpxPoints: gpxCoords.length,
-      geometryAudit,
+      geometryAudit: geometryWithEdges,
       gpxAudit,
       durationMs: Date.now() - started,
       gpx: route.gpx,
       error: ok
         ? undefined
         : [
-            !geometryAudit.ok
-              ? `geometry:\n${formatRouteQualityReport(geometryAudit)}`
+            !geometryWithEdges.ok
+              ? `geometry:\n${formatRouteQualityReport(geometryWithEdges)}`
               : null,
             !gpxAudit.ok
               ? `gpx:\n${formatRouteQualityReport(gpxAudit)}`

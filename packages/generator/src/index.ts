@@ -304,6 +304,9 @@ function buildGeneratedRoute(
     },
     gpx: options.gpx ?? buildGpx(name, displayCoordinates, start),
     createdAt: new Date().toISOString(),
+    segments: options.segments.length > 0 ? options.segments : undefined,
+    // On-network reference = BRouter dense path before navigation prune.
+    networkCoordinates: denseCoordinates,
   };
 }
 
@@ -1893,8 +1896,11 @@ function routingEnginePreference(): "auto" | "pgrouting" | "brouter" {
 export { prepareCoordinatesForNavigation } from "./prune-spurs";
 export {
   auditGeneratedRoute,
+  auditLongEdgesWithRouter,
   auditRouteGeometry,
+  distanceToPolylineM,
   formatRouteQualityReport,
+  measureOffPath,
   mirroredPrefixLengthM,
   segmentAccessIssues,
   type RouteQualityAudit,

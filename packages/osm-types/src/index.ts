@@ -135,6 +135,13 @@ export interface GeneratedRoute {
   metrics: RouteMetrics;
   gpx: string;
   createdAt: string;
+  /** BRouter OSM-tagged length slices — used by quality audits. */
+  segments?: { tags: OsmTags; distanceM: number }[];
+  /**
+   * Pre-prune BRouter polyline (on-network reference). Display geometry should
+   * stay within a few meters of this path; air-chords diverge from it.
+   */
+  networkCoordinates?: [number, number][];
 }
 
 export interface StoredRoute extends GeneratedRoute {

@@ -135,13 +135,15 @@ function createProgressPrinter(scenarioLabel: string, index: number, total: numb
         `${progressBar(progress.progress)} ${progress.phase}${variant}: ${progress.message}${detail}`,
       );
     },
-    onPhase(phase: "generate" | "audit-geometry" | "audit-gpx") {
+    onPhase(phase: "generate" | "audit-geometry" | "audit-gpx" | "audit-onpath") {
       if (phase === "generate") {
         writeStatus(`${progressBar(0)} generate: start`, true);
       } else if (phase === "audit-geometry") {
-        writeStatus(`${progressBar(92)} audit: geometria trasy`, true);
+        writeStatus(`${progressBar(90)} audit: geometria + tagi + sieć`, true);
+      } else if (phase === "audit-gpx") {
+        writeStatus(`${progressBar(94)} audit: GPX`, true);
       } else {
-        writeStatus(`${progressBar(96)} audit: GPX`, true);
+        writeStatus(`${progressBar(97)} audit: długie krawędzie vs BRouter`, true);
       }
     },
     finish(result: ScenarioRunResult) {

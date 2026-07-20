@@ -1,12 +1,5 @@
-import type {
-  BikeType,
-  Direction,
-  LatLng,
-  OsmTags,
-  RideProfile,
-  RouteMapGeoJson,
-} from "@loopforge/osm-types";
-import { getSurfaceStyle } from "@loopforge/osm-types";
+import type { BikeType, Direction, LatLng, OsmTags, RideProfile, RouteMapGeoJson } from "@loopforge/osm-types";
+import { getSurfaceStyle, parseOsmTagString } from "@loopforge/osm-types";
 import type { BrouterConfig } from "./config";
 import { buildColoredGeoJsonFromRoute, buildColoredGeoJson, buildRouteMapGeoJson, pickDensestRouteCoordinates } from "./colored-geojson";
 import { ensureBrouterServer, restartBrouterServer } from "./server";
@@ -403,19 +396,7 @@ interface BrouterGeoJson {
 }
 
 function parseWayTags(raw: string): OsmTags {
-  const tags: OsmTags = {};
-  for (const part of raw.split(" ")) {
-    const eq = part.indexOf("=");
-    if (eq === -1) continue;
-    const key = part.slice(0, eq);
-    const value = part.slice(eq + 1);
-    if (key === "highway") tags.highway = value;
-    if (key === "surface") tags.surface = value;
-    if (key === "route") tags.route = value;
-    if (key === "tracktype") tags.tracktype = value;
-    if (key === "mtb:scale") tags["mtb:scale"] = value;
-  }
-  return tags;
+  return parseOsmTagString(raw) as OsmTags;
 }
 
 function parseSegmentsFromMessages(

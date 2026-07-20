@@ -319,6 +319,17 @@ export function mergeApproachAndLoop(
       score,
     },
     gpx: buildGpx(name, mergedCoordinates, userStart),
+    segments: [...approach.segments, ...loopSegments],
+    networkCoordinates: (() => {
+      const network: [number, number][] = [];
+      appendCoordinates(network, approach.coordinates);
+      appendCoordinates(
+        network,
+        loop.networkCoordinates ?? loop.geojson.geometry.coordinates,
+      );
+      appendCoordinates(network, returnApproach);
+      return network;
+    })(),
   };
 }
 
