@@ -5,12 +5,15 @@
  *
  * Live progress + running scoreboard are printed as scenarios finish.
  *
- *   BROUTER_URL=https://router.example.pl pnpm test:prod
- *   BROUTER_URL=… LOOPFORGE_SAVE_GPX=1 pnpm test:prod
+ *   pnpm test:prod
+ *   LOOPFORGE_SAVE_GPX=1 pnpm test:prod
  *   LOOPFORGE_SCENARIOS=gravel-balans,mtb-xc pnpm test:prod
+ *
+ * Loads BROUTER_URL from apps/web/.env.local when not already set in the shell.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { RouteGenerationProgress } from "@loopforge/osm-types";
 import {
   ensureBrouterServer,
@@ -23,6 +26,31 @@ import {
   scenarioDisplayName,
   type ScenarioRunResult,
 } from "../src/route-quality.scenarios.js";
+
+function loadEnvFile(path: string): void {
+  if (!existsSync(path)) return;
+  for (const raw of readFileSync(path, "utf8").split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+}
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+loadEnvFile(resolve(repoRoot, "apps/web/.env.local"));
+loadEnvFile(resolve(repoRoot, "apps/web/.env"));
+loadEnvFile(resolve(repoRoot, ".env.local"));
+loadEnvFile(resolve(repoRoot, ".env"));
 
 const ENABLE_COLOR = process.stdout.isTTY && !process.env.NO_COLOR;
 const c = {
