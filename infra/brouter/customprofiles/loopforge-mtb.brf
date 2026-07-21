@@ -255,21 +255,21 @@ assign any_cycleroute
 
   assign onewaypenalty =
          if ( badoneway ) then
-           if (
-             or cycleway=opposite|opposite_lane|opposite_track
-             or cycleway:left=opposite|opposite_lane|opposite_track
-                cycleway:right=opposite|opposite_lane|opposite_track
-             or and cycleway:left=lane|track|shared_lane|share_busway
-                    cycleway:left:oneway=no|-1
-             or and cycleway:right=lane|track|shared_lane|share_busway
-                    cycleway:right:oneway=no|-1
-             or and cycleway:both=lane|track|shared_lane|share_busway
-                    or cycleway:left:oneway=no|-1
-                       cycleway:right:oneway=no|-1
-                                                            ) then 0
-           else if oneway:bicycle=no                          then 0
+         (
+           if      cycleway=opposite|opposite_lane|opposite_track then 0
+           else if cycleway:left=opposite|opposite_lane|opposite_track then 0
+           else if cycleway:right=opposite|opposite_lane|opposite_track then 0
+           else if and cycleway:left=lane|track|shared_lane|share_busway
+                       cycleway:left:oneway=no|-1 then 0
+           else if and cycleway:right=lane|track|shared_lane|share_busway
+                       cycleway:right:oneway=no|-1 then 0
+           else if and cycleway:both=lane|track|shared_lane|share_busway
+                       cycleway:left:oneway=no|-1 then 0
+           else if and cycleway:both=lane|track|shared_lane|share_busway
+                       cycleway:right:oneway=no|-1 then 0
+           else if oneway:bicycle=no then 0
            else 10000
-
+         )
          else 0.0
 
   # bend /wayaccess
