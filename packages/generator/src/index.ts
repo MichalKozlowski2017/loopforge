@@ -325,12 +325,28 @@ const MAX_SPUR_SHARE_RELAXED_URBAN = 0.14;
 const MAX_SPUR_SHARE_RELAXED_QUIET_URBAN = 0.15;
 const MAX_BACKTRACK_RELAXED_URBAN = 0.2;
 const MAX_BACKTRACK_RELAXED_QUIET_URBAN = 0.22;
+/**
+ * Approach loops start mid-corridor; dense grids often produce higher spur than
+ * home-based loops. Merged-route audits already ignore spur on dojazd+loop+powrót.
+ */
+const MAX_SPUR_SHARE_RELAXED_APPROACH_URBAN = 0.65;
+const MAX_BACKTRACK_RELAXED_APPROACH_URBAN = 0.45;
+const MAX_SPUR_SHARE_RELAXED_APPROACH = 0.8;
+const MAX_BACKTRACK_RELAXED_APPROACH = 0.45;
+/** Approach loops may overshoot more — entry is mid-corridor, not home. */
+const MAX_LOOP_SHARE_APPROACH_URBAN = 1.7;
+const MAX_LOOP_SHARE_APPROACH = 1.55;
+const MAX_DISTANCE_ERROR_APPROACH_RELAXED = 0.55;
 const MAX_BACKTRACK_URBAN = 0.065;
 /** Loop-only tracks must not mirror start/end for more than this (meters). */
 const MAX_MIRRORED_PREFIX_M = 500;
 const MAX_MIRRORED_PREFIX_RELAXED_M = 800;
 const MAX_SCALE_PASSES = 4;
 const SCALE_TARGET_DISTANCE_ERROR = 0.12;
+
+function approachMaxLoopShare(urban: boolean): number {
+  return urban ? MAX_LOOP_SHARE_APPROACH_URBAN : MAX_LOOP_SHARE_APPROACH;
+}
 
 function passesDeliverableGeometry(
   coordinates: [number, number][],
@@ -357,19 +373,28 @@ function passesDeliverableGeometry(
   );
 
   const quietUrban = Boolean(options.preferQuiet && options.urban);
+  const approachRelaxed = Boolean(options.approachMode && options.relaxed);
   const maxSpur = options.relaxed
-    ? options.urban
-      ? quietUrban
-        ? MAX_SPUR_SHARE_RELAXED_QUIET_URBAN
-        : MAX_SPUR_SHARE_RELAXED_URBAN
-      : MAX_SPUR_SHARE_RELAXED
+    ? approachRelaxed
+      ? options.urban
+        ? MAX_SPUR_SHARE_RELAXED_APPROACH_URBAN
+        : MAX_SPUR_SHARE_RELAXED_APPROACH
+      : options.urban
+        ? quietUrban
+          ? MAX_SPUR_SHARE_RELAXED_QUIET_URBAN
+          : MAX_SPUR_SHARE_RELAXED_URBAN
+        : MAX_SPUR_SHARE_RELAXED
     : MAX_SPUR_SHARE;
   const maxBacktrack = options.relaxed
-    ? options.urban
-      ? quietUrban
-        ? MAX_BACKTRACK_RELAXED_QUIET_URBAN
-        : MAX_BACKTRACK_RELAXED_URBAN
-      : MAX_BACKTRACK_RELAXED
+    ? approachRelaxed
+      ? options.urban
+        ? MAX_BACKTRACK_RELAXED_APPROACH_URBAN
+        : MAX_BACKTRACK_RELAXED_APPROACH
+      : options.urban
+        ? quietUrban
+          ? MAX_BACKTRACK_RELAXED_QUIET_URBAN
+          : MAX_BACKTRACK_RELAXED_URBAN
+        : MAX_BACKTRACK_RELAXED
     : options.urban
       ? MAX_BACKTRACK_URBAN
       : MAX_BACKTRACK;
@@ -991,11 +1016,23 @@ async function generateRouteWithEngine(
           metrics.distanceError > maxDistanceError;
         const tooLong = refined.distanceKm > maxLoopKm;
 
-        const maxBacktrackStrict = baseUrban ? MAX_BACKTRACK_URBAN : MAX_BACKTRACK;
+        const approachMode = options?.approachCoordinates != null;
+        const maxSpurStrict = approachMode
+          ? (baseUrban
+              ? MAX_SPUR_SHARE_RELAXED_APPROACH_URBAN
+              : MAX_SPUR_SHARE_RELAXED_APPROACH) * 0.75
+          : MAX_SPUR_SHARE;
+        const maxBacktrackStrict = approachMode
+          ? (baseUrban
+              ? MAX_BACKTRACK_RELAXED_APPROACH_URBAN
+              : MAX_BACKTRACK_RELAXED_APPROACH) * 0.75
+          : baseUrban
+            ? MAX_BACKTRACK_URBAN
+            : MAX_BACKTRACK;
         const tooSpurHeavy =
-          metrics.spurShare > MAX_SPUR_SHARE ||
+          metrics.spurShare > maxSpurStrict ||
           metrics.backtrack > maxBacktrackStrict ||
-          (!options?.approachCoordinates &&
+          (!approachMode &&
             mirroredPrefixLengthM(refined.coordinates) > MAX_MIRRORED_PREFIX_M);
         const wrongDirection = metrics.directionCoverage < 0.38;
 
@@ -1133,11 +1170,16 @@ async function generateRouteWithEngine(
         )
       : 0;
     const hasVias = (request.viaPoints?.length ?? 0) > 0;
-    const rejectedDistanceLimit = maxAcceptableDistanceError(
-      request.distanceKm,
-      true,
-      baseUrban,
-    );
+    const rejectedDistanceLimit = options?.approachCoordinates
+      ? Math.max(
+          maxAcceptableDistanceError(request.distanceKm, true, baseUrban),
+          MAX_DISTANCE_ERROR_APPROACH_RELAXED,
+        )
+      : maxAcceptableDistanceError(
+          request.distanceKm,
+          true,
+          baseUrban,
+        );
     if (
       rejectedMetrics.directionCoverage >= 0.38 &&
       rejectedMetrics.distanceError < rejectedDistanceLimit &&
@@ -1174,11 +1216,16 @@ async function generateRouteWithEngine(
           options.approachCoordinates,
         )
       : 0;
-    const fallbackDistanceLimit = maxAcceptableDistanceError(
-      request.distanceKm,
-      true,
-      baseUrban,
-    );
+    const fallbackDistanceLimit = options?.approachCoordinates
+      ? Math.max(
+          maxAcceptableDistanceError(request.distanceKm, true, baseUrban),
+          MAX_DISTANCE_ERROR_APPROACH_RELAXED,
+        )
+      : maxAcceptableDistanceError(
+          request.distanceKm,
+          true,
+          baseUrban,
+        );
     if (
       fallbackMetrics.directionCoverage >= 0.32 &&
       fallbackMetrics.distanceError < fallbackDistanceLimit &&
@@ -1216,18 +1263,24 @@ async function generateRouteWithEngine(
         );
         const viaCoords =
           request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
+        // Later recovery variants drop homeStart shift — it can force
+        // mirrored out-and-backs when the approach corridor eats the graph.
+        const recoveryHome =
+          options?.homeStart && variant < 3
+            ? { homeStart: options.homeStart }
+            : undefined;
         const waypoints = buildLoopWaypointsWithVia(
           request.start,
           request.distanceKm,
           request.direction,
           variant,
           // Urban recovery previously overshot (34–50 km for a 25 km target).
-          baseUrban ? 0.88 : 1.15,
+          baseUrban ? 0.88 : variant >= 3 ? 1.05 : 1.15,
           shape,
           false,
           jitter,
           viaCoords,
-          options?.homeStart ? { homeStart: options.homeStart } : undefined,
+          recoveryHome,
           recoveryPrefs,
         );
         const routed = await fetchLoopRouteResilient(fetchRoute, {
@@ -1236,12 +1289,14 @@ async function generateRouteWithEngine(
           waypoints,
           rideProfile: request.profile,
           avoidAsphalt: false,
-          preferQuietRoutes:
-            request.bikeType === "road" || Boolean(request.preferQuietRoutes),
+          // Don't force quiet on road recovery when building a loop after
+          // approach — quiet + sidepath bans inflate spur/backtrack.
+          preferQuietRoutes: Boolean(request.preferQuietRoutes),
           urbanRouting: true,
           skipGpx: true,
         });
         if (hasHardTeleportEdge(routed.coordinates)) continue;
+        const recoveryQuiet = Boolean(request.preferQuietRoutes);
         const { refined, metrics } = applySpurRefinement(
           routed,
           request.distanceKm,
@@ -1252,15 +1307,15 @@ async function generateRouteWithEngine(
           options?.approachCoordinates,
           (request.viaPoints?.length ?? 0) > 0,
           recoveryPrefs,
-          request.bikeType === "road" || Boolean(request.preferQuietRoutes),
+          recoveryQuiet,
         );
-        const recoveryQuiet =
-          request.bikeType === "road" || Boolean(request.preferQuietRoutes);
         const recoveryShareOk =
           refined.distanceKm >= request.distanceKm * 0.45 &&
           refined.distanceKm <=
             request.distanceKm *
-              maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
+              (options?.approachCoordinates
+                ? approachMaxLoopShare(baseUrban)
+                : maxLoopShareOfTarget(request.distanceKm, true, baseUrban));
         const recoveryGate = passesDeliverableGeometry(refined.coordinates, {
           targetDistanceKm: request.distanceKm,
           actualDistanceKm: refined.distanceKm,
@@ -1298,10 +1353,12 @@ async function generateRouteWithEngine(
   }
 
   if (!best && bestLowOverlap) {
+    const lowOverlapMaxShare = options?.approachCoordinates
+      ? approachMaxLoopShare(baseUrban)
+      : maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
     if (
       bestLowOverlap.distanceKm <=
-        request.distanceKm *
-          maxLoopShareOfTarget(request.distanceKm, true, baseUrban) &&
+        request.distanceKm * lowOverlapMaxShare &&
       !hasHardTeleportEdge(bestLowOverlap.coordinates) &&
       passesDeliverableGeometry(bestLowOverlap.coordinates, {
         targetDistanceKm: request.distanceKm,
@@ -1327,7 +1384,9 @@ async function generateRouteWithEngine(
     bestFallback.distanceKm >= request.distanceKm * 0.35 &&
     bestFallback.distanceKm <=
       request.distanceKm *
-        maxLoopShareOfTarget(request.distanceKm, true, baseUrban) &&
+        (options?.approachCoordinates
+          ? approachMaxLoopShare(baseUrban)
+          : maxLoopShareOfTarget(request.distanceKm, true, baseUrban)) &&
     passesDeliverableGeometry(bestFallback.coordinates, {
       targetDistanceKm: request.distanceKm,
       actualDistanceKm: bestFallback.distanceKm,
@@ -1345,7 +1404,9 @@ async function generateRouteWithEngine(
 
   // Prefer any real routed loop that still clears geometry quality gates.
   if (!best) {
-    const maxShare = maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
+    const maxShare = options?.approachCoordinates
+      ? approachMaxLoopShare(baseUrban)
+      : maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
     const approachMode = options?.approachCoordinates != null;
     const candidates = [bestRejected, bestFallback, bestLowOverlap].filter(
       (c): c is RoutedLoopResult =>
@@ -1453,7 +1514,7 @@ async function generateRouteWithEngine(
   const distanceErrorLimit = usedRelaxedFallback
     ? Math.max(
         maxAcceptableDistanceError(request.distanceKm, true, baseUrban),
-        0.45,
+        approachMode ? MAX_DISTANCE_ERROR_APPROACH_RELAXED : 0.45,
       )
     : maxAcceptableDistanceError(request.distanceKm, false, baseUrban);
 
@@ -1508,7 +1569,9 @@ async function generateRouteWithEngine(
     finalMetrics.distanceError > distanceErrorLimit ||
     best.distanceKm < minLoopKmFinal
   ) {
-    const maxShare = maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
+    const maxShare = approachMode
+      ? approachMaxLoopShare(baseUrban)
+      : maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
     // Keep imperfect distance only when geometry is still rideable.
     if (
       best.coordinates.length >= 4 &&

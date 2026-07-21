@@ -264,8 +264,8 @@ assign costfactor
     multiply noforestpenalty multiply noisepenalty
     multiply trafficpenalty multiply townpenalty
     multiply hikingpenalty multiply mtbpenalty
-    multiply switch bicycle=use_sidepath 10000 1
-    multiply switch nobikeaccess 6 1
+    multiply switch bicycle=use_sidepath|no|dismount 10000 1
+    multiply switch nobikeaccess 10000 1
     multiply tracktypepenalty
     switch or highway=motorway|motorway_link motorroad=yes      10000
     switch    and nobikeaccess nofootaccess                     10000
