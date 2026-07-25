@@ -331,11 +331,11 @@ const MAX_BACKTRACK_RELAXED_APPROACH_URBAN = 0.45;
 const MAX_SPUR_SHARE_RELAXED_APPROACH = 0.8;
 const MAX_BACKTRACK_RELAXED_APPROACH = 0.45;
 /**
- * Last-resort distance share only — geometry still capped at audit ceilings.
- * (Previously spur/back/mirror here were far above audit → FAIL route quality.)
+ * Last-resort distance share — still close to target. Old 2.1–2.6× allowed
+ * 80 km requests to ship as 140–160 km loops.
  */
-const MAX_LOOP_SHARE_EMERGENCY = 2.15;
-const MAX_LOOP_SHARE_EMERGENCY_ROAD = 2.65;
+const MAX_LOOP_SHARE_EMERGENCY = 1.35;
+const MAX_LOOP_SHARE_EMERGENCY_ROAD = 1.4;
 /** Approach loops may overshoot more — entry is mid-corridor, not home. */
 const MAX_LOOP_SHARE_APPROACH_URBAN = 1.7;
 const MAX_LOOP_SHARE_APPROACH = 1.55;
@@ -410,12 +410,8 @@ function passesDeliverableGeometry(
 
   if (!options.approachMode) {
     const mirroredM = mirroredPrefixLengthM(coordinates);
-    // 5% of route length — same budget as route-quality audit.
-    const maxMirror = maxMirroredPrefixBudgetM(
-      options.actualDistanceKm > 0
-        ? options.actualDistanceKm
-        : options.targetDistanceKm,
-    );
+    // Match prod audit: 5% of *requested* distance (GPX audit uses target too).
+    const maxMirror = maxMirroredPrefixBudgetM(options.targetDistanceKm);
     if (mirroredM > maxMirror) return false;
   }
 
@@ -870,7 +866,10 @@ async function generateRouteWithEngine(
     }
 
     try {
-      const scales: number[] = [1.0];
+        // Prefer starting a bit compact in metro so short targets don't explode.
+        const scales: number[] = [
+          baseUrban && request.distanceKm <= 25 ? 0.88 : 1.0,
+        ];
       let variantDone = false;
       let variantUrbanEscalated = baseUrban;
 
@@ -911,15 +910,18 @@ async function generateRouteWithEngine(
 
         const viaCoords =
           request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
-        // Later variants drop quiet / avoid-asphalt — those prefs inflate
-        // spur, mirror, and bicycle=no traps that fail the quality audit.
-        const softenAccessPrefs = variant >= 2 || Date.now() > deadlineMs - 25_000;
-        const routeAvoidAsphalt = softenAccessPrefs
+        // Drop quiet/avoid from variant 1+ (and near deadline). Variant 0 keeps
+        // user prefs; later passes prioritize a deliverable loop.
+        const softenAccess =
+          variant >= 1 || Date.now() > deadlineMs - 28_000;
+        const routeAvoidAsphalt = softenAccess
           ? false
           : Boolean(request.avoidAsphalt);
-        const routePreferQuiet = softenAccessPrefs
+        const routePreferQuiet = softenAccess
           ? false
           : Boolean(request.preferQuietRoutes);
+        // homeStart shift often forces mirrored out-and-backs — drop early.
+        const useHomeStart = Boolean(options?.homeStart) && variant < 2;
         const waypoints = buildLoopWaypointsWithVia(
           request.start,
           request.distanceKm,
@@ -930,7 +932,9 @@ async function generateRouteWithEngine(
           routeAvoidAsphalt,
           jitter,
           viaCoords,
-          options?.homeStart ? { homeStart: options.homeStart } : undefined,
+          useHomeStart && options?.homeStart
+            ? { homeStart: options.homeStart }
+            : undefined,
           loopPrefs,
         );
         const routed = await fetchLoopRouteResilient(fetchRoute, {
@@ -1052,31 +1056,26 @@ async function generateRouteWithEngine(
           Date.now() < deadlineMs - 6_000
         ) {
           const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
-          const severeOvershoot = refined.distanceKm > request.distanceKm * 1.45;
+          const severeOvershoot = refined.distanceKm > request.distanceKm * 1.35;
           const metroish = baseUrban || variantUrbanEscalated;
-          // Road + metro overshoots often need a hard pull — floor 0.62 left
-          // 50 km loops for 20 km targets when sidepath islands force detours.
+          // Pull hard on overshoot for all bikes — gravel/express was shipping 1.7–2×.
           const shrinkPull = severeOvershoot
             ? 1
             : metroish
-              ? 0.92
+              ? 0.95
               : request.bikeType === "road"
-                ? 0.85
-                : 0.7;
+                ? 0.9
+                : 0.82;
           const minDrop = severeOvershoot
-            ? metroish || request.bikeType === "road"
-              ? 0.14
-              : 0.1
+            ? 0.14
             : metroish
-              ? 0.08
-              : 0.05;
+              ? 0.1
+              : 0.07;
           const floor = severeOvershoot
-            ? request.bikeType === "road" || metroish
-              ? 0.4
-              : 0.52
+            ? 0.38
             : metroish
-              ? 0.58
-              : 0.72;
+              ? 0.55
+              : 0.65;
           const shrink = 1 - (1 - ratio) * shrinkPull;
           const nextScale = Math.max(
             floor,
@@ -1357,20 +1356,18 @@ async function generateRouteWithEngine(
         // Later recovery variants drop homeStart shift — it can force
         // mirrored out-and-backs when the approach corridor eats the graph.
         const recoveryHome =
-          options?.homeStart && variant < 3
+          options?.homeStart && variant < 1
             ? { homeStart: options.homeStart }
             : undefined;
-        // Road recovery: start tighter — metro overshoots dominated previous runs.
+        // Recovery always starts compact — overshoot was shipping 1.5–2× targets.
         const recoveryScale =
           request.bikeType === "road"
             ? baseUrban
-              ? [0.55, 0.68, 0.82, 0.95, 1.08][variant]!
-              : [0.7, 0.85, 1.0, 1.12, 1.22][variant]!
+              ? [0.5, 0.62, 0.75, 0.9, 1.05][variant]!
+              : [0.62, 0.78, 0.92, 1.05, 1.15][variant]!
             : baseUrban
-              ? 0.88
-              : variant >= 3
-                ? 1.05
-                : 1.15;
+              ? [0.7, 0.82, 0.95, 1.05, 1.12][variant]!
+              : [0.78, 0.9, 1.0, 1.1, 1.18][variant]!;
         const waypoints = buildLoopWaypointsWithVia(
           request.start,
           request.distanceKm,
@@ -1699,7 +1696,7 @@ async function generateRouteWithEngine(
   const distanceErrorLimit = usedRelaxedFallback
     ? Math.max(
         maxAcceptableDistanceError(request.distanceKm, true, baseUrban),
-        approachMode ? MAX_DISTANCE_ERROR_APPROACH_RELAXED : 0.45,
+        approachMode ? MAX_DISTANCE_ERROR_APPROACH_RELAXED : 0,
       )
     : maxAcceptableDistanceError(request.distanceKm, false, baseUrban);
 
@@ -1862,6 +1859,27 @@ async function generateRouteWithEngine(
     throw new Error(
       `Nie udało się wygenerować czystej pętli (ślepe zaułki / jazda pod prąd). Spróbuj innego kierunku lub krótszego dystansu.${urbanHint}`,
     );
+  }
+
+  // Hard distance ceiling — never ship 1.5–2× requests (gravel express etc.).
+  const maxShipShare = approachMode
+    ? approachMaxLoopShare(baseUrban)
+    : emergencyMaxLoopShare(request.bikeType);
+  if (finalized.distanceKm > request.distanceKm * maxShipShare) {
+    throw new Error(
+      `Trasa wyszła za długa (${finalized.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km) — spróbuj innego kierunku lub krótszego dystansu.`,
+    );
+  }
+
+  // Mirror on the exact polyline we ship (same coords as GPX densify input).
+  if (!approachMode) {
+    const mirrorM = mirroredPrefixLengthM(finalized.coordinates);
+    const mirrorBudget = maxMirroredPrefixBudgetM(request.distanceKm);
+    if (mirrorM > mirrorBudget) {
+      throw new Error(
+        `Nie udało się wygenerować czystej pętli (powrót tą samą drogą ~${Math.round(mirrorM)} m). Spróbuj innego kierunku lub krótszego dystansu.`,
+      );
+    }
   }
 
   // Always keep pruned geometry — restoring pre-prune reintroduces dead-end stubs.
