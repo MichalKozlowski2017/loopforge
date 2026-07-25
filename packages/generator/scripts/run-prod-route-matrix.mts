@@ -7,8 +7,14 @@
  * Live: one updating status line + one result line per scenario.
  * Full table only at the end.
  *
- *   pnpm test:prod                         # full matrix (~72)
+ *   pnpm test:prod                         # full toggle matrix (~72)
  *   LOOPFORGE_MATRIX=core pnpm test:prod   # smoke: 12 bike×profile defaults
+ *   LOOPFORGE_MATRIX=stress pnpm test:prod # geo stress: 12 × 3 starts × 3 dist (~108)
+ *   LOOPFORGE_MATRIX=stress-full pnpm test:prod  # all toggles × starts × dist (~648)
+ *   LOOPFORGE_STRESS_DISTANCES=20,35,60 LOOPFORGE_STRESS_STARTS=3
+ *   LOOPFORGE_STRESS_PLACES=mixed|pool|random   # default mixed (named + random PL)
+ *   LOOPFORGE_STRESS_SEED=1|random              # random = new seed each run
+ *   LOOPFORGE_MAX_GEN_MS=120000                 # fail if a single run exceeds this
  *   LOOPFORGE_SAVE_GPX=1 pnpm test:prod
  *   LOOPFORGE_SCENARIOS=gravel-flow-avoid,road-fast-quiet pnpm test:prod
  *
@@ -24,9 +30,11 @@ import {
   isBrouterConfigured,
 } from "@loopforge/brouter";
 import {
+  maxGenerationMsFromEnv,
   resolveLiveRouteScenarios,
   runLiveRouteScenario,
   scenarioDisplayName,
+  type LiveRouteMatrix,
   type ScenarioRunResult,
 } from "../src/route-quality.scenarios.js";
 
@@ -70,7 +78,7 @@ const c = {
 
 const COL = {
   status: 6,
-  scenario: 34,
+  scenario: 48,
   km: 6,
   quality: 26,
   time: 7,
@@ -160,6 +168,8 @@ function printHeader(opts: {
   scenarioCount: number;
   idPreview: string;
   saveGpxDir?: string;
+  maxGenMs?: number;
+  placesPreview?: string;
 }): void {
   console.log("");
   console.log(`${c.bold}${c.cyan}╭  Loopforge route matrix${c.reset}`);
@@ -170,6 +180,14 @@ function printHeader(opts: {
   console.log(
     `${c.dim}│${c.reset}  Scenariusze ${c.bold}${opts.scenarioCount}${c.reset}  ${c.dim}${opts.idPreview}${c.reset}`,
   );
+  if (opts.placesPreview) {
+    console.log(`${c.dim}│${c.reset}  Starty      ${opts.placesPreview}`);
+  }
+  if (opts.maxGenMs != null) {
+    console.log(
+      `${c.dim}│${c.reset}  SLA         max ${Math.round(opts.maxGenMs / 1000)}s / scenariusz`,
+    );
+  }
   if (opts.saveGpxDir) {
     console.log(`${c.dim}│${c.reset}  GPX →       ${opts.saveGpxDir}`);
   }
@@ -357,11 +375,20 @@ async function main(): Promise<void> {
   );
 
   const matrixEnv = (process.env.LOOPFORGE_MATRIX ?? "full").toLowerCase();
-  const matrix: "full" | "core" = matrixEnv === "core" ? "core" : "full";
+  const matrix: LiveRouteMatrix =
+    matrixEnv === "core"
+      ? "core"
+      : matrixEnv === "stress"
+        ? "stress"
+        : matrixEnv === "stress-full"
+          ? "stress-full"
+          : "full";
   const filter = process.env.LOOPFORGE_SCENARIOS?.split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const catalog = resolveLiveRouteScenarios(filter?.length ? "full" : matrix);
+  const catalog = resolveLiveRouteScenarios(
+    filter?.length ? "full" : matrix,
+  );
 
   const scenarios = filter?.length
     ? catalog.filter((s) => filter.includes(s.id))
@@ -372,6 +399,7 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
+  const maxGenMs = maxGenerationMsFromEnv();
   const saveGpx = process.env.LOOPFORGE_SAVE_GPX === "1";
   const outDir = resolve(
     process.cwd(),
@@ -387,6 +415,17 @@ async function main(): Promise<void> {
           .map((s) => s.id)
           .join(", ")} … +${scenarios.length - 6}`;
 
+  const placeLabels = [
+    ...new Map(
+      scenarios
+        .filter((s) => s.placeId)
+        .map((s) => {
+          const place = s.label.split(" · ").slice(-2, -1)[0] ?? s.placeId!;
+          return [s.placeId!, place] as const;
+        }),
+    ).values(),
+  ];
+
   printHeader({
     baseUrl: config.baseUrl,
     matrixLabel: filter?.length ? "filter → full" : matrix,
@@ -394,6 +433,12 @@ async function main(): Promise<void> {
     scenarioCount: scenarios.length,
     idPreview,
     saveGpxDir: saveGpx ? outDir : undefined,
+    maxGenMs,
+    placesPreview:
+      placeLabels.length > 0
+        ? placeLabels.slice(0, 6).join(" · ") +
+          (placeLabels.length > 6 ? ` … +${placeLabels.length - 6}` : "")
+        : undefined,
   });
 
   const results: ScenarioRunResult[] = [];

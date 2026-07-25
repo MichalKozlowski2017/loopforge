@@ -7,6 +7,7 @@ import {
 import {
   resolveLiveRouteScenarios,
   runLiveRouteScenario,
+  type LiveRouteMatrix,
 } from "./route-quality.scenarios";
 
 const config = isBrouterConfigured() ? getBrouterConfig() : null;
@@ -19,6 +20,7 @@ const config = isBrouterConfigured() ? getBrouterConfig() : null;
  *
  * Subset / smoke:
  *   LOOPFORGE_MATRIX=core LOOPFORGE_LIVE_ROUTES=1 pnpm test:live
+ *   LOOPFORGE_MATRIX=stress LOOPFORGE_LIVE_ROUTES=1 pnpm test:live
  *   LOOPFORGE_SCENARIOS=gravel-flow-avoid,road-fast LOOPFORGE_LIVE_ROUTES=1 pnpm test:live
  *
  * Prefer the CLI for a readable report:
@@ -27,7 +29,14 @@ const config = isBrouterConfigured() ? getBrouterConfig() : null;
 const enabled = process.env.LOOPFORGE_LIVE_ROUTES === "1" && config != null;
 
 const matrixEnv = (process.env.LOOPFORGE_MATRIX ?? "full").toLowerCase();
-const matrix: "full" | "core" = matrixEnv === "core" ? "core" : "full";
+const matrix: LiveRouteMatrix =
+  matrixEnv === "core"
+    ? "core"
+    : matrixEnv === "stress"
+      ? "stress"
+      : matrixEnv === "stress-full"
+        ? "stress-full"
+        : "full";
 const filter = process.env.LOOPFORGE_SCENARIOS?.split(",")
   .map((s) => s.trim())
   .filter(Boolean);

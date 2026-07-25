@@ -16,6 +16,10 @@ import { pruneDeadEndSpurs } from "./prune-spurs";
 import {
   buildCoreRouteScenarios,
   buildLiveRouteScenarios,
+  buildStressRouteScenarios,
+  pickStressStarts,
+  STRESS_DISTANCES_KM,
+  STRESS_START_POOL,
 } from "./route-quality.scenarios";
 
 describe("auditRouteGeometry", () => {
@@ -176,5 +180,56 @@ describe("live route scenario matrix", () => {
     const core = buildCoreRouteScenarios();
     expect(core).toHaveLength(12);
     expect(core.every((s) => !s.request.approachEnabled)).toBe(true);
+  });
+
+  it("stress matrix expands core × starts × distances (108)", () => {
+    const stress = buildStressRouteScenarios({
+      startCount: 3,
+      distancesKm: [...STRESS_DISTANCES_KM],
+      seed: 1,
+    });
+    expect(stress).toHaveLength(12 * 3 * 3);
+    expect(new Set(stress.map((s) => s.id)).size).toBe(108);
+    expect(stress.every((s) => s.placeId)).toBe(true);
+    expect(
+      new Set(stress.map((s) => s.request.distanceKm)),
+    ).toEqual(new Set(STRESS_DISTANCES_KM));
+  });
+
+  it("stress-full expands all UI combos × starts × distances (648)", () => {
+    const full = buildStressRouteScenarios({
+      includeAllToggles: true,
+      startCount: 3,
+      distancesKm: [...STRESS_DISTANCES_KM],
+      seed: 1,
+    });
+    expect(full).toHaveLength(72 * 3 * 3);
+  });
+
+  it("pickStressStarts is deterministic for a seed", () => {
+    const a = pickStressStarts(3, 7).map((s) => s.id);
+    const b = pickStressStarts(3, 7).map((s) => s.id);
+    expect(a).toEqual(b);
+    expect(a).toHaveLength(3);
+    expect(STRESS_START_POOL.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("pickStressStarts random mode yields PL points", () => {
+    const starts = pickStressStarts(3, 42, STRESS_START_POOL, "random");
+    expect(starts).toHaveLength(3);
+    expect(starts.every((s) => s.id.startsWith("rnd-"))).toBe(true);
+    for (const s of starts) {
+      expect(s.start.lat).toBeGreaterThan(49);
+      expect(s.start.lat).toBeLessThan(55);
+      expect(s.start.lng).toBeGreaterThan(14);
+      expect(s.start.lng).toBeLessThan(25);
+    }
+  });
+
+  it("pickStressStarts mixed mode includes at least one named place", () => {
+    const starts = pickStressStarts(3, 99, STRESS_START_POOL, "mixed");
+    expect(starts).toHaveLength(3);
+    expect(starts.some((s) => !s.id.startsWith("rnd-"))).toBe(true);
+    expect(starts.some((s) => s.id.startsWith("rnd-"))).toBe(true);
   });
 });
