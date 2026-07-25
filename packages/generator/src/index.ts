@@ -313,18 +313,18 @@ function buildGeneratedRoute(
 const MIN_PRUNE_REMOVED_M = 5;
 const MAX_SPUR_SHARE = 0.035;
 const MAX_BACKTRACK = 0.04;
-/** Relaxed ceiling for fallbacks — still rejects garbage out-and-backs. */
-const MAX_SPUR_SHARE_RELAXED = 0.08;
-const MAX_BACKTRACK_RELAXED = 0.09;
 /**
  * Dense one-way grids inflate spur/backtrack (parallel reverse corridors).
  * Keep above typical urban road/fast fallbacks (~0.12 / ~0.18) but below
  * recovery trash (spur ≫ 0.4).
  */
-const MAX_SPUR_SHARE_RELAXED_URBAN = 0.14;
-const MAX_SPUR_SHARE_RELAXED_QUIET_URBAN = 0.15;
-const MAX_BACKTRACK_RELAXED_URBAN = 0.2;
-const MAX_BACKTRACK_RELAXED_QUIET_URBAN = 0.22;
+const MAX_SPUR_SHARE_RELAXED_URBAN = 0.18;
+const MAX_SPUR_SHARE_RELAXED_QUIET_URBAN = 0.24;
+const MAX_BACKTRACK_RELAXED_URBAN = 0.26;
+const MAX_BACKTRACK_RELAXED_QUIET_URBAN = 0.32;
+/** Sparse / non-metro networks need more room than the old 0.08/0.09 rural caps. */
+const MAX_SPUR_SHARE_RELAXED = 0.16;
+const MAX_BACKTRACK_RELAXED = 0.18;
 /**
  * Approach loops start mid-corridor; dense grids often produce higher spur than
  * home-based loops. Merged-route audits already ignore spur on dojazd+loop+powrót.
@@ -333,15 +333,28 @@ const MAX_SPUR_SHARE_RELAXED_APPROACH_URBAN = 0.65;
 const MAX_BACKTRACK_RELAXED_APPROACH_URBAN = 0.45;
 const MAX_SPUR_SHARE_RELAXED_APPROACH = 0.8;
 const MAX_BACKTRACK_RELAXED_APPROACH = 0.45;
+/**
+ * Absolute last resort — prefer an imperfect rideable loop over gen-fail.
+ * Still rejects pure out-and-backs (spur/back ≫ 0.7) and long mirrors.
+ */
+const MAX_SPUR_SHARE_EMERGENCY = 0.58;
+const MAX_BACKTRACK_EMERGENCY = 0.42;
+const MAX_MIRRORED_PREFIX_EMERGENCY_M = 2_000;
+const MAX_LOOP_SHARE_EMERGENCY = 2.15;
+const MAX_LOOP_SHARE_EMERGENCY_ROAD = 2.65;
 /** Approach loops may overshoot more — entry is mid-corridor, not home. */
 const MAX_LOOP_SHARE_APPROACH_URBAN = 1.7;
 const MAX_LOOP_SHARE_APPROACH = 1.55;
 const MAX_DISTANCE_ERROR_APPROACH_RELAXED = 0.55;
-const MAX_BACKTRACK_URBAN = 0.065;
+const MAX_BACKTRACK_URBAN = 0.08;
 /** Loop-only tracks must not mirror start/end for more than this (meters). */
 const MAX_MIRRORED_PREFIX_M = 500;
-const MAX_MIRRORED_PREFIX_RELAXED_M = 800;
-const MAX_SCALE_PASSES = 4;
+const MAX_MIRRORED_PREFIX_RELAXED_M = 1200;
+/** Wall-clock budgets — fail/accept faster than the old 95–130s stalls. */
+const GENERATION_DEADLINE_URBAN_MS = 70_000;
+const GENERATION_DEADLINE_RURAL_MS = 50_000;
+const GENERATION_DEADLINE_ROAD_MS = 65_000;
+const MAX_SCALE_PASSES = 5;
 const SCALE_TARGET_DISTANCE_ERROR = 0.12;
 
 function approachMaxLoopShare(urban: boolean): number {
@@ -359,6 +372,8 @@ function passesDeliverableGeometry(
     urban: boolean;
     relaxed: boolean;
     preferQuiet?: boolean;
+    /** Ship imperfect loops rather than fail — still bans teleports. */
+    emergency?: boolean;
   },
 ): boolean {
   if (coordinates.length < 4) return false;
@@ -371,6 +386,18 @@ function passesDeliverableGeometry(
     options.start,
     options.direction,
   );
+
+  if (options.emergency) {
+    if (metrics.spurShare > MAX_SPUR_SHARE_EMERGENCY) return false;
+    if (metrics.backtrack > MAX_BACKTRACK_EMERGENCY) return false;
+    if (
+      !options.approachMode &&
+      mirroredPrefixLengthM(coordinates) > MAX_MIRRORED_PREFIX_EMERGENCY_M
+    ) {
+      return false;
+    }
+    return true;
+  }
 
   const quietUrban = Boolean(options.preferQuiet && options.urban);
   const approachRelaxed = Boolean(options.approachMode && options.relaxed);
@@ -411,6 +438,12 @@ function passesDeliverableGeometry(
   }
 
   return true;
+}
+
+function emergencyMaxLoopShare(bikeType: GenerateRouteRequest["bikeType"]): number {
+  return bikeType === "road"
+    ? MAX_LOOP_SHARE_EMERGENCY_ROAD
+    : MAX_LOOP_SHARE_EMERGENCY;
 }
 
 function geometryPenalty(
@@ -471,15 +504,26 @@ function badBikeAccessMeters(
 }
 
 const MAX_USE_SIDEPATH_M = 25;
+/** Soft ceiling — over this we prefer cleaner candidates but may last-resort. */
 const MAX_BICYCLE_FORBIDDEN_M = 25;
+const MAX_BICYCLE_FORBIDDEN_DIRTY_M = 400;
+
+function hasHardSidepathAccess(
+  segments: { tags: OsmTags; distanceM: number }[],
+): boolean {
+  return badBikeAccessMeters(segments).useSidepathM > MAX_USE_SIDEPATH_M;
+}
+
+function hasForbiddenBikeAccess(
+  segments: { tags: OsmTags; distanceM: number }[],
+): boolean {
+  return badBikeAccessMeters(segments).forbiddenM > MAX_BICYCLE_FORBIDDEN_M;
+}
 
 function hasBadBikeAccess(
   segments: { tags: OsmTags; distanceM: number }[],
 ): boolean {
-  const { useSidepathM, forbiddenM } = badBikeAccessMeters(segments);
-  return (
-    useSidepathM > MAX_USE_SIDEPATH_M || forbiddenM > MAX_BICYCLE_FORBIDDEN_M
-  );
+  return hasHardSidepathAccess(segments) || hasForbiddenBikeAccess(segments);
 }
 
 const OFFROAD_CATEGORIES = new Set<SurfaceCategory>([
@@ -783,13 +827,20 @@ async function generateRouteWithEngine(
   const baseUrban = useUrbanRouting(request.start, request.distanceKm);
   const geoCtx = { start: request.start };
   const deadlineMs =
-    Date.now() + (baseUrban ? 130_000 : 95_000);
+    Date.now() +
+    (request.bikeType === "road"
+      ? GENERATION_DEADLINE_ROAD_MS
+      : baseUrban
+        ? GENERATION_DEADLINE_URBAN_MS
+        : GENERATION_DEADLINE_RURAL_MS);
   let best: RoutedLoopResult | null = null;
   let bestScore = Infinity;
   let bestRejected: RoutedLoopResult | null = null;
   let bestRejectedScore = Infinity;
   let bestFallback: RoutedLoopResult | null = null;
   let bestFallbackScore = Infinity;
+  let bestDirtyFallback: RoutedLoopResult | null = null;
+  let bestDirtyFallbackScore = Infinity;
   let bestLowOverlap: RoutedLoopResult | null = null;
   let bestLowOverlapShare = Infinity;
   let bestApproachOverlap = Infinity;
@@ -817,7 +868,27 @@ async function generateRouteWithEngine(
   });
 
   for (const variant of jitter.variantOrder) {
+    // Once we have any accept-worthy loop and the clock is tight, stop searching.
     if (Date.now() > deadlineMs && best) break;
+    if (
+      !best &&
+      bestFallback &&
+      Date.now() > deadlineMs - 18_000 &&
+      passesDeliverableGeometry(bestFallback.coordinates, {
+        targetDistanceKm: request.distanceKm,
+        actualDistanceKm: bestFallback.distanceKm,
+        start: request.start,
+        direction: request.direction,
+        approachMode: options?.approachCoordinates != null,
+        urban: baseUrban,
+        relaxed: true,
+        preferQuiet: Boolean(request.preferQuietRoutes),
+      })
+    ) {
+      best = bestFallback;
+      usedRelaxedFallback = true;
+      break;
+    }
 
     try {
       const scales: number[] = [1.0];
@@ -921,12 +992,30 @@ async function generateRouteWithEngine(
           variantTotal: variants,
         });
 
-        if (hasBadBikeAccess(refined.segments)) {
-          // Never keep carriageways tagged use_sidepath / bicycle=no as candidates.
+        if (hasHardSidepathAccess(refined.segments)) {
+          // Never keep carriageways tagged use_sidepath as candidates.
           if (process.env.LOOPFORGE_DEBUG_ACCESS === "1") {
             const bad = badBikeAccessMeters(refined.segments);
             console.warn(
-              `[loopforge] skip bad bike access: use_sidepath=${Math.round(bad.useSidepathM)}m forbidden=${Math.round(bad.forbiddenM)}m dist=${refined.distanceKm.toFixed(1)}km`,
+              `[loopforge] skip use_sidepath: ${Math.round(bad.useSidepathM)}m dist=${refined.distanceKm.toFixed(1)}km`,
+            );
+          }
+          continue;
+        }
+
+        if (hasForbiddenBikeAccess(refined.segments)) {
+          const bad = badBikeAccessMeters(refined.segments);
+          // Short bicycle=no stretches: keep as dirty last-resort only.
+          if (
+            bad.forbiddenM <= MAX_BICYCLE_FORBIDDEN_DIRTY_M &&
+            quality < bestDirtyFallbackScore
+          ) {
+            bestDirtyFallbackScore = quality;
+            bestDirtyFallback = refined;
+          }
+          if (process.env.LOOPFORGE_DEBUG_ACCESS === "1") {
+            console.warn(
+              `[loopforge] dirty forbidden access: ${Math.round(bad.forbiddenM)}m dist=${refined.distanceKm.toFixed(1)}km`,
             );
           }
           continue;
@@ -982,11 +1071,31 @@ async function generateRouteWithEngine(
           Date.now() < deadlineMs - 6_000
         ) {
           const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
-          // Metro grids often ignore mild shrinks (same arterial loop) —
-          // pull harder so we don't stall ~20% over target.
-          const shrinkPull = baseUrban || variantUrbanEscalated ? 0.92 : 0.7;
-          const minDrop = baseUrban || variantUrbanEscalated ? 0.08 : 0.05;
-          const floor = baseUrban || variantUrbanEscalated ? 0.62 : 0.72;
+          const severeOvershoot = refined.distanceKm > request.distanceKm * 1.45;
+          const metroish = baseUrban || variantUrbanEscalated;
+          // Road + metro overshoots often need a hard pull — floor 0.62 left
+          // 50 km loops for 20 km targets when sidepath islands force detours.
+          const shrinkPull = severeOvershoot
+            ? 1
+            : metroish
+              ? 0.92
+              : request.bikeType === "road"
+                ? 0.85
+                : 0.7;
+          const minDrop = severeOvershoot
+            ? metroish || request.bikeType === "road"
+              ? 0.14
+              : 0.1
+            : metroish
+              ? 0.08
+              : 0.05;
+          const floor = severeOvershoot
+            ? request.bikeType === "road" || metroish
+              ? 0.4
+              : 0.52
+            : metroish
+              ? 0.58
+              : 0.72;
           const shrink = 1 - (1 - ratio) * shrinkPull;
           const nextScale = Math.max(
             floor,
@@ -1269,13 +1378,23 @@ async function generateRouteWithEngine(
           options?.homeStart && variant < 3
             ? { homeStart: options.homeStart }
             : undefined;
+        // Road recovery: start tighter — metro overshoots dominated previous runs.
+        const recoveryScale =
+          request.bikeType === "road"
+            ? baseUrban
+              ? [0.55, 0.68, 0.82, 0.95, 1.08][variant]!
+              : [0.7, 0.85, 1.0, 1.12, 1.22][variant]!
+            : baseUrban
+              ? 0.88
+              : variant >= 3
+                ? 1.05
+                : 1.15;
         const waypoints = buildLoopWaypointsWithVia(
           request.start,
           request.distanceKm,
           request.direction,
           variant,
-          // Urban recovery previously overshot (34–50 km for a 25 km target).
-          baseUrban ? 0.88 : variant >= 3 ? 1.05 : 1.15,
+          recoveryScale,
           shape,
           false,
           jitter,
@@ -1316,6 +1435,10 @@ async function generateRouteWithEngine(
               (options?.approachCoordinates
                 ? approachMaxLoopShare(baseUrban)
                 : maxLoopShareOfTarget(request.distanceKm, true, baseUrban));
+        const recoveryEmergencyShareOk =
+          refined.distanceKm >= request.distanceKm * 0.35 &&
+          refined.distanceKm <=
+            request.distanceKm * emergencyMaxLoopShare(request.bikeType);
         const recoveryGate = passesDeliverableGeometry(refined.coordinates, {
           targetDistanceKm: request.distanceKm,
           actualDistanceKm: refined.distanceKm,
@@ -1326,12 +1449,26 @@ async function generateRouteWithEngine(
           relaxed: true,
           preferQuiet: recoveryQuiet,
         });
+        const recoveryEmergencyGate = passesDeliverableGeometry(
+          refined.coordinates,
+          {
+            targetDistanceKm: request.distanceKm,
+            actualDistanceKm: refined.distanceKm,
+            start: request.start,
+            direction: request.direction,
+            approachMode: options?.approachCoordinates != null,
+            urban: baseUrban,
+            relaxed: true,
+            preferQuiet: recoveryQuiet,
+            emergency: true,
+          },
+        );
         if (
           !hasHardTeleportEdge(refined.coordinates) &&
           refined.coordinates.length >= 4 &&
-          recoveryShareOk &&
-          recoveryGate &&
-          !hasBadBikeAccess(refined.segments)
+          ((recoveryShareOk && recoveryGate) ||
+            (recoveryEmergencyShareOk && recoveryEmergencyGate)) &&
+          !hasHardSidepathAccess(refined.segments)
         ) {
           best = refined;
           usedRelaxedFallback = true;
@@ -1408,13 +1545,19 @@ async function generateRouteWithEngine(
       ? approachMaxLoopShare(baseUrban)
       : maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
     const approachMode = options?.approachCoordinates != null;
-    const candidates = [bestRejected, bestFallback, bestLowOverlap].filter(
+    const candidates = [
+      bestRejected,
+      bestFallback,
+      bestLowOverlap,
+      bestDirtyFallback,
+    ].filter(
       (c): c is RoutedLoopResult =>
         !!c &&
         c.coordinates.length >= 4 &&
         c.distanceKm >= request.distanceKm * 0.35 &&
         c.distanceKm <= request.distanceKm * maxShare &&
         !hasHardTeleportEdge(c.coordinates) &&
+        !hasHardSidepathAccess(c.segments) &&
         passesDeliverableGeometry(c.coordinates, {
           targetDistanceKm: request.distanceKm,
           actualDistanceKm: c.distanceKm,
@@ -1456,6 +1599,67 @@ async function generateRouteWithEngine(
       }
     }
   }
+
+  // Prefer shipping an imperfect loop over a hard gen-fail (road islands / sparse graph).
+  if (!best) {
+    const maxShare = emergencyMaxLoopShare(request.bikeType);
+    const approachMode = options?.approachCoordinates != null;
+    const emergencyPool = [
+      bestRejected,
+      bestFallback,
+      bestLowOverlap,
+      bestDirtyFallback,
+    ].filter(
+      (c): c is RoutedLoopResult =>
+        !!c &&
+        c.coordinates.length >= 4 &&
+        c.distanceKm >= request.distanceKm * 0.32 &&
+        c.distanceKm <= request.distanceKm * maxShare &&
+        !hasHardTeleportEdge(c.coordinates) &&
+        !hasHardSidepathAccess(c.segments) &&
+        passesDeliverableGeometry(c.coordinates, {
+          targetDistanceKm: request.distanceKm,
+          actualDistanceKm: c.distanceKm,
+          start: request.start,
+          direction: request.direction,
+          approachMode,
+          urban: baseUrban,
+          relaxed: true,
+          preferQuiet: Boolean(request.preferQuietRoutes),
+          emergency: true,
+        }),
+    );
+    if (emergencyPool.length > 0) {
+      emergencyPool.sort(
+        (a, b) =>
+          geometryPenalty(
+            a.coordinates,
+            request.distanceKm,
+            a.distanceKm,
+            request.start,
+            request.direction,
+            approachMode,
+          ) -
+          geometryPenalty(
+            b.coordinates,
+            request.distanceKm,
+            b.distanceKm,
+            request.start,
+            request.direction,
+            approachMode,
+          ),
+      );
+      best = emergencyPool[0]!;
+      usedRelaxedFallback = true;
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          "[loopforge] emergency candidate:",
+          `${best.distanceKm.toFixed(1)} km`,
+        );
+      }
+    }
+  }
+
   if (!best) {
     const urbanHint = baseUrban
       ? " W aglomeracji spróbuj krótszego dystansu albo startu za miastem."
@@ -1572,6 +1776,7 @@ async function generateRouteWithEngine(
     const maxShare = approachMode
       ? approachMaxLoopShare(baseUrban)
       : maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
+    const emergencyShare = emergencyMaxLoopShare(request.bikeType);
     // Keep imperfect distance only when geometry is still rideable.
     if (
       best.coordinates.length >= 4 &&
@@ -1597,12 +1802,38 @@ async function generateRouteWithEngine(
           `err=${finalMetrics.distanceError.toFixed(2)}`,
         );
       }
+    } else if (
+      best.coordinates.length >= 4 &&
+      best.distanceKm >= request.distanceKm * 0.32 &&
+      best.distanceKm <= request.distanceKm * emergencyShare &&
+      !hasHardSidepathAccess(best.segments) &&
+      passesDeliverableGeometry(best.coordinates, {
+        targetDistanceKm: request.distanceKm,
+        actualDistanceKm: best.distanceKm,
+        start: request.start,
+        direction: request.direction,
+        approachMode,
+        urban: baseUrban,
+        relaxed: true,
+        preferQuiet: Boolean(request.preferQuietRoutes),
+        emergency: true,
+      })
+    ) {
+      usedRelaxedFallback = true;
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          "[loopforge] accepting emergency loop:",
+          `${best.distanceKm.toFixed(1)} km`,
+          `dir=${finalMetrics.directionCoverage.toFixed(2)}`,
+          `err=${finalMetrics.distanceError.toFixed(2)}`,
+        );
+      }
     } else {
       const urbanHint = baseUrban
         ? " W mieście 50 km bywa trudne — spróbuj 35 km albo start za granicą aglomeracji."
         : "";
       throw new Error(
-        best.distanceKm > request.distanceKm * maxShare
+        best.distanceKm > request.distanceKm * emergencyShare
           ? `Trasa wyszła za długa (${best.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km) — spróbuj innego kierunku lub krótszego dystansu.`
           : hasViaPoints && finalMetrics.distanceError > distanceErrorLimit
             ? `Trasa z punktami przejazdu wyszła za krótka (${best.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km) — dodaj punkty bliżej obwodu pętli lub zmniejsz dystans.`
@@ -1618,8 +1849,8 @@ async function generateRouteWithEngine(
     request.direction,
   );
 
-  if (
-    !passesDeliverableGeometry(finalized.coordinates, {
+  const finalizedGeoOk =
+    passesDeliverableGeometry(finalized.coordinates, {
       targetDistanceKm: request.distanceKm,
       actualDistanceKm: finalized.distanceKm,
       start: request.start,
@@ -1627,9 +1858,22 @@ async function generateRouteWithEngine(
       approachMode,
       urban: baseUrban,
       relaxed: true,
+      preferQuiet: Boolean(request.preferQuietRoutes),
+    }) ||
+    (usedRelaxedFallback &&
+      passesDeliverableGeometry(finalized.coordinates, {
+        targetDistanceKm: request.distanceKm,
+        actualDistanceKm: finalized.distanceKm,
+        start: request.start,
+        direction: request.direction,
+        approachMode,
+        urban: baseUrban,
+        relaxed: true,
         preferQuiet: Boolean(request.preferQuietRoutes),
-    })
-  ) {
+        emergency: true,
+      }));
+
+  if (!finalizedGeoOk) {
     const urbanHint = baseUrban
       ? " W aglomeracji spróbuj krótszego dystansu albo startu za miastem."
       : "";

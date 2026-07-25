@@ -9,12 +9,12 @@
  *
  *   pnpm test:prod                         # full toggle matrix (~72)
  *   LOOPFORGE_MATRIX=core pnpm test:prod   # smoke: 12 bike×profile defaults
- *   LOOPFORGE_MATRIX=stress pnpm test:prod # geo stress: 12 × 3 starts × 3 dist (~108)
+ *   LOOPFORGE_MATRIX=stress pnpm test:prod # geo stress: mixed PL starts × 20/35/60 (~108)
  *   LOOPFORGE_MATRIX=stress-full pnpm test:prod  # all toggles × starts × dist (~648)
+ *   LOOPFORGE_STRESS_PLACES=mixed|pool|random   # default mixed (named + random near cities)
  *   LOOPFORGE_STRESS_DISTANCES=20,35,60 LOOPFORGE_STRESS_STARTS=3
- *   LOOPFORGE_STRESS_PLACES=mixed|pool|random   # default mixed (named + random PL)
- *   LOOPFORGE_STRESS_SEED=1|random              # random = new seed each run
- *   LOOPFORGE_MAX_GEN_MS=120000                 # fail if a single run exceeds this
+ *   LOOPFORGE_STRESS_SEED=1|random
+ *   LOOPFORGE_MAX_GEN_MS=90000                  # fail if a single run exceeds this
  *   LOOPFORGE_SAVE_GPX=1 pnpm test:prod
  *   LOOPFORGE_SCENARIOS=gravel-flow-avoid,road-fast-quiet pnpm test:prod
  *

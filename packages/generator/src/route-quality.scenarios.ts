@@ -124,23 +124,34 @@ const POLAND_OUTLINE: Array<[number, number]> = [
 ];
 
 /** Soft hubs used to bias random PL samples toward inhabited / rideable areas. */
-const POLAND_RANDOM_HUBS: Array<{ lat: number; lng: number; jitterDeg: number }> = [
-  { lat: 52.25, lng: 21.0, jitterDeg: 0.9 }, // Mazowsze
-  { lat: 50.05, lng: 19.95, jitterDeg: 0.7 }, // Małopolska
-  { lat: 51.1, lng: 17.05, jitterDeg: 0.7 }, // Dolny Śląsk
-  { lat: 54.35, lng: 18.65, jitterDeg: 0.55 }, // Trójmiasto / Kaszuby
-  { lat: 52.4, lng: 16.9, jitterDeg: 0.7 }, // Wielkopolska
-  { lat: 51.75, lng: 19.45, jitterDeg: 0.6 }, // Łódzkie
-  { lat: 50.25, lng: 19.0, jitterDeg: 0.55 }, // Śląsk
-  { lat: 53.15, lng: 23.15, jitterDeg: 0.7 }, // Podlasie
-  { lat: 53.78, lng: 20.5, jitterDeg: 0.75 }, // Warmia-Mazury
-  { lat: 51.25, lng: 22.55, jitterDeg: 0.65 }, // Lubelskie
-  { lat: 50.05, lng: 22.0, jitterDeg: 0.65 }, // Podkarpacie
-  { lat: 53.45, lng: 14.55, jitterDeg: 0.55 }, // Zachodniopomorskie
-  { lat: 52.0, lng: 15.5, jitterDeg: 0.65 }, // Lubuskie
-  { lat: 50.85, lng: 20.6, jitterDeg: 0.55 }, // Świętokrzyskie
-  { lat: 53.05, lng: 18.55, jitterDeg: 0.55 }, // Kujawy
-  { lat: 49.55, lng: 20.0, jitterDeg: 0.45 }, // Podhale / Beskidy
+const POLAND_RANDOM_HUBS: Array<{
+  lat: number;
+  lng: number;
+  jitterDeg: number;
+  weight: number;
+}> = [
+  // Cities / dense fabric (higher weight, tight jitter)
+  { lat: 52.23, lng: 21.01, jitterDeg: 0.22, weight: 4 }, // Warszawa
+  { lat: 50.06, lng: 19.94, jitterDeg: 0.18, weight: 3 }, // Kraków
+  { lat: 51.11, lng: 17.04, jitterDeg: 0.18, weight: 3 }, // Wrocław
+  { lat: 54.37, lng: 18.61, jitterDeg: 0.2, weight: 3 }, // Gdańsk
+  { lat: 52.41, lng: 16.93, jitterDeg: 0.18, weight: 3 }, // Poznań
+  { lat: 51.77, lng: 19.46, jitterDeg: 0.18, weight: 2 }, // Łódź
+  { lat: 50.26, lng: 19.02, jitterDeg: 0.16, weight: 2 }, // Katowice
+  { lat: 51.25, lng: 22.57, jitterDeg: 0.16, weight: 2 }, // Lublin
+  { lat: 53.13, lng: 23.16, jitterDeg: 0.16, weight: 2 }, // Białystok
+  { lat: 53.43, lng: 14.55, jitterDeg: 0.16, weight: 2 }, // Szczecin
+  { lat: 53.12, lng: 18.01, jitterDeg: 0.16, weight: 2 }, // Bydgoszcz
+  { lat: 53.01, lng: 18.6, jitterDeg: 0.14, weight: 1 }, // Toruń
+  { lat: 53.78, lng: 20.49, jitterDeg: 0.18, weight: 2 }, // Olsztyn
+  { lat: 50.04, lng: 22.0, jitterDeg: 0.16, weight: 1 }, // Rzeszów
+  { lat: 50.87, lng: 20.63, jitterDeg: 0.14, weight: 1 }, // Kielce
+  // Rideable countryside (lower weight)
+  { lat: 52.4, lng: 21.35, jitterDeg: 0.35, weight: 1 }, // Mazowsze E
+  { lat: 53.8, lng: 21.55, jitterDeg: 0.3, weight: 1 }, // Mazury
+  { lat: 54.25, lng: 18.1, jitterDeg: 0.28, weight: 1 }, // Kaszuby
+  { lat: 50.8, lng: 16.3, jitterDeg: 0.28, weight: 1 }, // Sudety foothills
+  { lat: 49.9, lng: 19.0, jitterDeg: 0.25, weight: 1 }, // Beskid
 ];
 
 const DIRECTIONS: Direction[] = [
@@ -363,8 +374,17 @@ export function randomPolandStart(
   rand: () => number,
   maxAttempts = 40,
 ): LatLng {
+  const totalWeight = POLAND_RANDOM_HUBS.reduce((s, h) => s + h.weight, 0);
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const hub = POLAND_RANDOM_HUBS[Math.floor(rand() * POLAND_RANDOM_HUBS.length)]!;
+    let pick = rand() * totalWeight;
+    let hub = POLAND_RANDOM_HUBS[0]!;
+    for (const candidate of POLAND_RANDOM_HUBS) {
+      pick -= candidate.weight;
+      if (pick <= 0) {
+        hub = candidate;
+        break;
+      }
+    }
     const lat = hub.lat + (rand() * 2 - 1) * hub.jitterDeg;
     const lng = hub.lng + (rand() * 2 - 1) * hub.jitterDeg;
     if (pointInPoland(lat, lng)) return { lat, lng };
@@ -592,7 +612,7 @@ export function resolveLiveRouteScenarios(
 
 /** Max wall-clock for a single scenario before it counts as FAIL (ms). */
 export function maxGenerationMsFromEnv(): number {
-  return parsePositiveInt(process.env.LOOPFORGE_MAX_GEN_MS, 120_000);
+  return parsePositiveInt(process.env.LOOPFORGE_MAX_GEN_MS, 90_000);
 }
 
 export type ScenarioRunResult = {
