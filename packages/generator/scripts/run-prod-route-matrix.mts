@@ -12,6 +12,7 @@
  *   LOOPFORGE_MATRIX=stress pnpm test:prod # geo stress: mixed PL starts × 20/35/60 (~108)
  *   LOOPFORGE_MATRIX=stress-full pnpm test:prod  # all toggles × starts × dist (~648)
  *   LOOPFORGE_STRESS_PLACES=mixed|pool|random   # default mixed (named + random near cities)
+ *   LOOPFORGE_STRESS_INCLUDE_EDGE=1             # add sparse/mountain starts (harsh overnight)
  *   LOOPFORGE_STRESS_DISTANCES=20,35,60 LOOPFORGE_STRESS_STARTS=3
  *   LOOPFORGE_STRESS_SEED=1|random
  *   LOOPFORGE_MAX_GEN_MS=90000                  # fail if a single run exceeds this

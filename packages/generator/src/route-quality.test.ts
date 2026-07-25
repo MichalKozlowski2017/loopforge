@@ -20,6 +20,7 @@ import {
   pickStressStarts,
   STRESS_DISTANCES_KM,
   STRESS_START_POOL,
+  STRESS_START_POOL_EDGE,
 } from "./route-quality.scenarios";
 
 describe("auditRouteGeometry", () => {
@@ -214,6 +215,35 @@ describe("live route scenario matrix", () => {
     expect(STRESS_START_POOL.length).toBeGreaterThanOrEqual(3);
   });
 
+  it("default stress pools exclude sparse edge places", () => {
+    const edgeIds = new Set(STRESS_START_POOL_EDGE.map((s) => s.id));
+    expect(STRESS_START_POOL.some((s) => edgeIds.has(s.id))).toBe(false);
+
+    for (const mode of ["mixed", "pool", "random"] as const) {
+      const starts = pickStressStarts(3, 42, STRESS_START_POOL, mode);
+      expect(starts.every((s) => !edgeIds.has(s.id))).toBe(true);
+    }
+  });
+
+  it("pickStressStarts spreads starts ~40km apart when possible", () => {
+    const starts = pickStressStarts(3, 11, STRESS_START_POOL, "random");
+    expect(starts).toHaveLength(3);
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const km = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+      const dLat = toRad(b.lat - a.lat);
+      const dLng = toRad(b.lng - a.lng);
+      const h =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(a.lat)) *
+          Math.cos(toRad(b.lat)) *
+          Math.sin(dLng / 2) ** 2;
+      return 2 * 6371 * Math.asin(Math.sqrt(h));
+    };
+    expect(km(starts[0]!.start, starts[1]!.start)).toBeGreaterThanOrEqual(35);
+    expect(km(starts[0]!.start, starts[2]!.start)).toBeGreaterThanOrEqual(35);
+    expect(km(starts[1]!.start, starts[2]!.start)).toBeGreaterThanOrEqual(35);
+  });
+
   it("pickStressStarts random mode yields PL points", () => {
     const starts = pickStressStarts(3, 42, STRESS_START_POOL, "random");
     expect(starts).toHaveLength(3);
@@ -226,10 +256,26 @@ describe("live route scenario matrix", () => {
     }
   });
 
-  it("pickStressStarts mixed mode includes at least one named place", () => {
+  it("pickStressStarts mixed mode prefers named places (~⅔)", () => {
     const starts = pickStressStarts(3, 99, STRESS_START_POOL, "mixed");
     expect(starts).toHaveLength(3);
-    expect(starts.some((s) => !s.id.startsWith("rnd-"))).toBe(true);
-    expect(starts.some((s) => s.id.startsWith("rnd-"))).toBe(true);
+    const named = starts.filter((s) => !s.id.startsWith("rnd-"));
+    const random = starts.filter((s) => s.id.startsWith("rnd-"));
+    expect(named.length).toBeGreaterThanOrEqual(2);
+    expect(random.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("includeEdge adds sparse starts to stress matrix pool picks", () => {
+    const withEdge = buildStressRouteScenarios({
+      startCount: 8,
+      distancesKm: [20],
+      seed: 3,
+      placesMode: "pool",
+      includeEdge: true,
+    });
+    const placeIds = new Set(withEdge.map((s) => s.placeId));
+    expect(
+      STRESS_START_POOL_EDGE.some((edge) => placeIds.has(edge.id)),
+    ).toBe(true);
   });
 });

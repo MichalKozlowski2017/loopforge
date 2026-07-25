@@ -46,8 +46,8 @@ export type StressStart = {
 export type StressPlacesMode = "pool" | "random" | "mixed";
 
 /**
- * Named Polish starts spanning cities, coast, lakes, mountains, and rural fabric.
- * Stress matrix shuffles this pool (and/or adds fully random PL points).
+ * Default stress starts: dense / rideable fabric (metro districts + solid
+ * powiat towns). Sparse mountains / parks live in STRESS_START_POOL_EDGE.
  */
 export const STRESS_START_POOL: StressStart[] = [
   { id: "waw-ochota", label: "Warszawa Ochota", start: START_URBAN },
@@ -62,27 +62,43 @@ export const STRESS_START_POOL: StressStart[] = [
   { id: "lodz-polesie", label: "Łódź Polesie", start: { lat: 51.7765, lng: 19.4285 } },
   { id: "kat-ligota", label: "Katowice Ligota", start: { lat: 50.2315, lng: 18.9755 } },
   { id: "lublin-slawin", label: "Lublin Sławin", start: { lat: 51.2655, lng: 22.5135 } },
-  { id: "bialystok-antoniuk", label: "Białystok Antoniuk", start: { lat: 53.1475, lng: 23.1345 } },
   { id: "szczecin-pogodno", label: "Szczecin Pogodno", start: { lat: 53.4375, lng: 14.5255 } },
   { id: "bydgoszcz-fordon", label: "Bydgoszcz Fordon", start: { lat: 53.1565, lng: 18.1455 } },
   { id: "torun-bielany", label: "Toruń Bielany", start: { lat: 53.0285, lng: 18.5755 } },
-  { id: "olsztyn-kortowo", label: "Olsztyn Kortowo", start: { lat: 53.7465, lng: 20.4565 } },
   { id: "rzeszow-baranowka", label: "Rzeszów Baranówka", start: { lat: 50.0525, lng: 21.9785 } },
   { id: "kielce-swietokrzyskie", label: "Kielce", start: { lat: 50.8705, lng: 20.6275 } },
   { id: "beskid-andrychow", label: "Beskid Andrychów", start: { lat: 49.8558, lng: 19.3392 } },
-  { id: "zakopane-gubalowka", label: "Zakopane Gubałówka", start: { lat: 49.3105, lng: 19.9485 } },
-  { id: "bieszczady-ujscie", label: "Bieszczady Ustrzyki Dln.", start: { lat: 49.4305, lng: 22.5935 } },
-  { id: "sudety-kudowa", label: "Sudety Kudowa-Zdrój", start: { lat: 50.4385, lng: 16.2435 } },
   { id: "pomorze-kartuzy", label: "Pomorze Kartuzy", start: { lat: 54.3342, lng: 18.2015 } },
   { id: "kaszuby-stezyca", label: "Kaszuby Stężyca", start: { lat: 54.2035, lng: 17.9485 } },
-  { id: "mazury-mikolajki", label: "Mazury Mikołajki", start: { lat: 53.8025, lng: 21.5705 } },
-  { id: "podlasie-bialowieza", label: "Podlasie Białowieża", start: { lat: 52.7005, lng: 23.8705 } },
-  { id: "lubuskie-miedzyrzecz", label: "Lubuskie Międzyrzecz", start: { lat: 52.4455, lng: 15.5785 } },
   { id: "wielkopolska-gniezno", label: "Wielkopolska Gniezno", start: { lat: 52.5355, lng: 17.5955 } },
   { id: "opolskie-nysa", label: "Opolskie Nysa", start: { lat: 50.4735, lng: 17.3335 } },
   { id: "swietokrzyski-checiny", label: "Świętokrzyskie Chęciny", start: { lat: 50.8005, lng: 20.4625 } },
   { id: "jura-ojcow", label: "Jura Ojców", start: { lat: 50.2155, lng: 19.8255 } },
 ];
+
+/**
+ * Sparse / mountain / park-edge starts — opt-in via LOOPFORGE_STRESS_INCLUDE_EDGE=1.
+ * Default stress should not land here (kills pass rate without product signal).
+ */
+export const STRESS_START_POOL_EDGE: StressStart[] = [
+  { id: "bialystok-antoniuk", label: "Białystok Antoniuk", start: { lat: 53.1475, lng: 23.1345 } },
+  { id: "olsztyn-kortowo", label: "Olsztyn Kortowo", start: { lat: 53.7465, lng: 20.4565 } },
+  { id: "zakopane-gubalowka", label: "Zakopane Gubałówka", start: { lat: 49.3105, lng: 19.9485 } },
+  { id: "bieszczady-ujscie", label: "Bieszczady Ustrzyki Dln.", start: { lat: 49.4305, lng: 22.5935 } },
+  { id: "sudety-kudowa", label: "Sudety Kudowa-Zdrój", start: { lat: 50.4385, lng: 16.2435 } },
+  { id: "mazury-mikolajki", label: "Mazury Mikołajki", start: { lat: 53.8025, lng: 21.5705 } },
+  { id: "podlasie-bialowieza", label: "Podlasie Białowieża", start: { lat: 52.7005, lng: 23.8705 } },
+  { id: "lubuskie-miedzyrzecz", label: "Lubuskie Międzyrzecz", start: { lat: 52.4455, lng: 15.5785 } },
+];
+
+/** Active named pool for stress (rideable ± edge). */
+export function resolveStressStartPool(
+  includeEdge = false,
+): StressStart[] {
+  return includeEdge
+    ? [...STRESS_START_POOL, ...STRESS_START_POOL_EDGE]
+    : [...STRESS_START_POOL];
+}
 
 /** Coarse Poland outline [lng, lat] — reject random samples outside the country. */
 const POLAND_OUTLINE: Array<[number, number]> = [
@@ -123,36 +139,34 @@ const POLAND_OUTLINE: Array<[number, number]> = [
   [14.12, 53.95],
 ];
 
-/** Soft hubs used to bias random PL samples toward inhabited / rideable areas. */
+/**
+ * Tight city-core hubs for random PL samples — stay inside rideable fabric.
+ * Jitter ~0.06–0.10° (~7–11 km), no sparse countryside / Podlasie / Mazury.
+ */
 const POLAND_RANDOM_HUBS: Array<{
   lat: number;
   lng: number;
   jitterDeg: number;
   weight: number;
 }> = [
-  // Cities / dense fabric (higher weight, tight jitter)
-  { lat: 52.23, lng: 21.01, jitterDeg: 0.22, weight: 4 }, // Warszawa
-  { lat: 50.06, lng: 19.94, jitterDeg: 0.18, weight: 3 }, // Kraków
-  { lat: 51.11, lng: 17.04, jitterDeg: 0.18, weight: 3 }, // Wrocław
-  { lat: 54.37, lng: 18.61, jitterDeg: 0.2, weight: 3 }, // Gdańsk
-  { lat: 52.41, lng: 16.93, jitterDeg: 0.18, weight: 3 }, // Poznań
-  { lat: 51.77, lng: 19.46, jitterDeg: 0.18, weight: 2 }, // Łódź
-  { lat: 50.26, lng: 19.02, jitterDeg: 0.16, weight: 2 }, // Katowice
-  { lat: 51.25, lng: 22.57, jitterDeg: 0.16, weight: 2 }, // Lublin
-  { lat: 53.13, lng: 23.16, jitterDeg: 0.16, weight: 2 }, // Białystok
-  { lat: 53.43, lng: 14.55, jitterDeg: 0.16, weight: 2 }, // Szczecin
-  { lat: 53.12, lng: 18.01, jitterDeg: 0.16, weight: 2 }, // Bydgoszcz
-  { lat: 53.01, lng: 18.6, jitterDeg: 0.14, weight: 1 }, // Toruń
-  { lat: 53.78, lng: 20.49, jitterDeg: 0.18, weight: 2 }, // Olsztyn
-  { lat: 50.04, lng: 22.0, jitterDeg: 0.16, weight: 1 }, // Rzeszów
-  { lat: 50.87, lng: 20.63, jitterDeg: 0.14, weight: 1 }, // Kielce
-  // Rideable countryside (lower weight)
-  { lat: 52.4, lng: 21.35, jitterDeg: 0.35, weight: 1 }, // Mazowsze E
-  { lat: 53.8, lng: 21.55, jitterDeg: 0.3, weight: 1 }, // Mazury
-  { lat: 54.25, lng: 18.1, jitterDeg: 0.28, weight: 1 }, // Kaszuby
-  { lat: 50.8, lng: 16.3, jitterDeg: 0.28, weight: 1 }, // Sudety foothills
-  { lat: 49.9, lng: 19.0, jitterDeg: 0.25, weight: 1 }, // Beskid
+  { lat: 52.23, lng: 21.01, jitterDeg: 0.1, weight: 4 }, // Warszawa
+  { lat: 50.06, lng: 19.94, jitterDeg: 0.08, weight: 3 }, // Kraków
+  { lat: 51.11, lng: 17.04, jitterDeg: 0.08, weight: 3 }, // Wrocław
+  { lat: 54.37, lng: 18.61, jitterDeg: 0.09, weight: 3 }, // Gdańsk
+  { lat: 52.41, lng: 16.93, jitterDeg: 0.08, weight: 3 }, // Poznań
+  { lat: 51.77, lng: 19.46, jitterDeg: 0.08, weight: 2 }, // Łódź
+  { lat: 50.26, lng: 19.02, jitterDeg: 0.07, weight: 2 }, // Katowice
+  { lat: 51.25, lng: 22.57, jitterDeg: 0.07, weight: 2 }, // Lublin
+  { lat: 53.43, lng: 14.55, jitterDeg: 0.07, weight: 2 }, // Szczecin
+  { lat: 53.12, lng: 18.01, jitterDeg: 0.07, weight: 2 }, // Bydgoszcz
+  { lat: 53.01, lng: 18.6, jitterDeg: 0.06, weight: 1 }, // Toruń
+  { lat: 50.04, lng: 22.0, jitterDeg: 0.07, weight: 1 }, // Rzeszów
+  { lat: 50.87, lng: 20.63, jitterDeg: 0.06, weight: 1 }, // Kielce
+  { lat: 52.4, lng: 21.34, jitterDeg: 0.08, weight: 1 }, // Tłuszcz / Mazowsze E
 ];
+
+/** Keep stress starts geographically spread (avoid 2× same metro). */
+const MIN_STRESS_START_SEPARATION_KM = 40;
 
 const DIRECTIONS: Direction[] = [
   "N",
@@ -333,6 +347,11 @@ function parsePlacesMode(raw: string | undefined): StressPlacesMode {
   return "mixed";
 }
 
+function parseTruthyEnv(raw: string | undefined): boolean {
+  const v = raw?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 /** `random` / `now` → time-based seed; otherwise positive int (default 1). */
 export function parseStressSeed(raw: string | undefined, fallback = 1): number {
   const v = raw?.trim().toLowerCase();
@@ -367,8 +386,7 @@ function formatRandomStart(start: LatLng, index: number): StressStart {
 }
 
 /**
- * Seeded random point inside Poland, biased toward regional hubs so samples
- * land near roads more often than pure bbox noise.
+ * Seeded random point inside Poland, jittered tightly around rideable city hubs.
  */
 export function randomPolandStart(
   rand: () => number,
@@ -393,6 +411,28 @@ export function randomPolandStart(
   return { ...START_RURAL };
 }
 
+function haversineKm(a: LatLng, b: LatLng): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6_371 * Math.asin(Math.sqrt(h));
+}
+
+function isFarEnoughFrom(
+  candidate: LatLng,
+  existing: StressStart[],
+  minKm = MIN_STRESS_START_SEPARATION_KM,
+): boolean {
+  return existing.every(
+    (place) => haversineKm(candidate, place.start) >= minKm,
+  );
+}
+
 function shuffleInPlace<T>(items: T[], rand: () => number): T[] {
   for (let i = items.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));
@@ -404,9 +444,11 @@ function shuffleInPlace<T>(items: T[], rand: () => number): T[] {
 /**
  * Pick stress starts for the geo matrix.
  *
- * - `pool` — shuffle named Polish places
- * - `random` — fully random points across PL (hub-biased)
- * - `mixed` (default) — ~⅓ named + rest random PL
+ * - `pool` — shuffle named Polish places (rideable by default)
+ * - `random` — tight jitter around rideable city hubs
+ * - `mixed` (default) — mostly named + a little city jitter (~⅔ named at count=3)
+ *
+ * Enforces ~40 km separation so one seed cannot cluster in the same metro.
  */
 export function pickStressStarts(
   count = 3,
@@ -418,14 +460,36 @@ export function pickStressStarts(
   const n = Math.max(1, count);
 
   if (mode === "pool") {
-    return shuffleInPlace([...pool], rand).slice(0, Math.min(n, pool.length));
+    const shuffled = shuffleInPlace([...pool], rand);
+    const out: StressStart[] = [];
+    for (const place of shuffled) {
+      if (out.length >= n) break;
+      if (!isFarEnoughFrom(place.start, out)) continue;
+      out.push(place);
+    }
+    // If separation culls too hard, fill without the distance gate.
+    for (const place of shuffled) {
+      if (out.length >= n) break;
+      if (out.some((p) => p.id === place.id)) continue;
+      out.push(place);
+    }
+    return out;
   }
 
   if (mode === "random") {
     const out: StressStart[] = [];
     const seen = new Set<string>();
     let guard = 0;
-    while (out.length < n && guard < n * 20) {
+    while (out.length < n && guard < n * 40) {
+      guard += 1;
+      const start = formatRandomStart(randomPolandStart(rand), out.length);
+      if (seen.has(start.id)) continue;
+      if (!isFarEnoughFrom(start.start, out)) continue;
+      seen.add(start.id);
+      out.push(start);
+    }
+    // Soft fill if separation could not be satisfied.
+    while (out.length < n && guard < n * 80) {
       guard += 1;
       const start = formatRandomStart(randomPolandStart(rand), out.length);
       if (seen.has(start.id)) continue;
@@ -435,16 +499,32 @@ export function pickStressStarts(
     return out;
   }
 
-  // mixed: at least one named place when count≥2, rest random across PL
-  const namedCount = n <= 1 ? 0 : Math.max(1, Math.round(n / 3));
-  const named = shuffleInPlace([...pool], rand).slice(
-    0,
-    Math.min(namedCount, pool.length),
-  );
-  const out: StressStart[] = [...named];
+  // mixed: ~⅔ named when count≥2 (2 named + 1 random for the default 3).
+  const namedCount = n <= 1 ? 0 : Math.max(1, Math.round((n * 2) / 3));
+  const shuffledNamed = shuffleInPlace([...pool], rand);
+  const out: StressStart[] = [];
+  for (const place of shuffledNamed) {
+    if (out.length >= namedCount) break;
+    if (!isFarEnoughFrom(place.start, out)) continue;
+    out.push(place);
+  }
+  for (const place of shuffledNamed) {
+    if (out.length >= namedCount) break;
+    if (out.some((p) => p.id === place.id)) continue;
+    out.push(place);
+  }
+
   const seen = new Set(out.map((s) => s.id));
   let guard = 0;
-  while (out.length < n && guard < n * 20) {
+  while (out.length < n && guard < n * 40) {
+    guard += 1;
+    const start = formatRandomStart(randomPolandStart(rand), out.length);
+    if (seen.has(start.id)) continue;
+    if (!isFarEnoughFrom(start.start, out)) continue;
+    seen.add(start.id);
+    out.push(start);
+  }
+  while (out.length < n && guard < n * 80) {
     guard += 1;
     const start = formatRandomStart(randomPolandStart(rand), out.length);
     if (seen.has(start.id)) continue;
@@ -519,6 +599,8 @@ export type StressMatrixOptions = {
   seed?: number;
   /** How to choose starts: named pool, random PL, or mix (default). */
   placesMode?: StressPlacesMode;
+  /** Include sparse / mountain edge starts (LOOPFORGE_STRESS_INCLUDE_EDGE=1). */
+  includeEdge?: boolean;
 };
 
 /**
@@ -527,7 +609,7 @@ export type StressMatrixOptions = {
  * Default (`stress`): 12 core bike×profile rows × 3 starts × 3 distances = 108.
  * Full (`stress-full`): all 72 UI combos × 3 × 3 = 648 (overnight).
  *
- * Starts default to `mixed` (named PL towns + random points across Poland).
+ * Starts default to `mixed` (named rideable towns + tight city jitter).
  */
 export function buildStressRouteScenarios(
   options: StressMatrixOptions = {},
@@ -537,12 +619,8 @@ export function buildStressRouteScenarios(
   const distancesKm = options.distancesKm ?? [...STRESS_DISTANCES_KM];
   const seed = options.seed ?? 1;
   const placesMode = options.placesMode ?? "mixed";
-  const starts = pickStressStarts(
-    startCount,
-    seed,
-    STRESS_START_POOL,
-    placesMode,
-  );
+  const pool = resolveStressStartPool(Boolean(options.includeEdge));
+  const starts = pickStressStarts(startCount, seed, pool, placesMode);
   const bases = includeAllToggles
     ? buildLiveRouteScenarios()
     : buildCoreRouteScenarios();
@@ -591,6 +669,7 @@ function stressOptionsFromEnv(): StressMatrixOptions {
     distancesKm: parseDistanceList(process.env.LOOPFORGE_STRESS_DISTANCES),
     seed: parseStressSeed(process.env.LOOPFORGE_STRESS_SEED, 1),
     placesMode: parsePlacesMode(process.env.LOOPFORGE_STRESS_PLACES),
+    includeEdge: parseTruthyEnv(process.env.LOOPFORGE_STRESS_INCLUDE_EDGE),
   };
 }
 
