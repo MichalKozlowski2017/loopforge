@@ -314,17 +314,14 @@ const MIN_PRUNE_REMOVED_M = 5;
 const MAX_SPUR_SHARE = 0.035;
 const MAX_BACKTRACK = 0.04;
 /**
- * Dense one-way grids inflate spur/backtrack (parallel reverse corridors).
- * Keep above typical urban road/fast fallbacks (~0.12 / ~0.18) but below
- * recovery trash (spur ≫ 0.4).
+ * Relaxed ceilings must match prod matrix audit limits so we never ship a
+ * loop that later fails SPUR/BACKTRACK/MIRRORED in test:prod.
+ * Audit (non-approach): urban 0.14 / 0.20 / 800m; rural 0.08 / 0.09 / 800m.
  */
-const MAX_SPUR_SHARE_RELAXED_URBAN = 0.18;
-const MAX_SPUR_SHARE_RELAXED_QUIET_URBAN = 0.24;
-const MAX_BACKTRACK_RELAXED_URBAN = 0.26;
-const MAX_BACKTRACK_RELAXED_QUIET_URBAN = 0.32;
-/** Sparse / non-metro networks need more room than the old 0.08/0.09 rural caps. */
-const MAX_SPUR_SHARE_RELAXED = 0.16;
-const MAX_BACKTRACK_RELAXED = 0.18;
+const MAX_SPUR_SHARE_RELAXED_URBAN = 0.14;
+const MAX_BACKTRACK_RELAXED_URBAN = 0.2;
+const MAX_SPUR_SHARE_RELAXED = 0.08;
+const MAX_BACKTRACK_RELAXED = 0.09;
 /**
  * Approach loops start mid-corridor; dense grids often produce higher spur than
  * home-based loops. Merged-route audits already ignore spur on dojazd+loop+powrót.
@@ -334,12 +331,9 @@ const MAX_BACKTRACK_RELAXED_APPROACH_URBAN = 0.45;
 const MAX_SPUR_SHARE_RELAXED_APPROACH = 0.8;
 const MAX_BACKTRACK_RELAXED_APPROACH = 0.45;
 /**
- * Absolute last resort — prefer an imperfect rideable loop over gen-fail.
- * Still rejects pure out-and-backs (spur/back ≫ 0.7) and long mirrors.
+ * Last-resort distance share only — geometry still capped at audit ceilings.
+ * (Previously spur/back/mirror here were far above audit → FAIL route quality.)
  */
-const MAX_SPUR_SHARE_EMERGENCY = 0.58;
-const MAX_BACKTRACK_EMERGENCY = 0.42;
-const MAX_MIRRORED_PREFIX_EMERGENCY_M = 2_000;
 const MAX_LOOP_SHARE_EMERGENCY = 2.15;
 const MAX_LOOP_SHARE_EMERGENCY_ROAD = 2.65;
 /** Approach loops may overshoot more — entry is mid-corridor, not home. */
@@ -349,7 +343,8 @@ const MAX_DISTANCE_ERROR_APPROACH_RELAXED = 0.55;
 const MAX_BACKTRACK_URBAN = 0.08;
 /** Loop-only tracks must not mirror start/end for more than this (meters). */
 const MAX_MIRRORED_PREFIX_M = 500;
-const MAX_MIRRORED_PREFIX_RELAXED_M = 1200;
+/** Match audit maxMirroredPrefixM (800) — never accept longer out-and-backs. */
+const MAX_MIRRORED_PREFIX_RELAXED_M = 800;
 /** Wall-clock budgets — fail/accept faster than the old 95–130s stalls. */
 const GENERATION_DEADLINE_URBAN_MS = 70_000;
 const GENERATION_DEADLINE_RURAL_MS = 50_000;
@@ -372,7 +367,10 @@ function passesDeliverableGeometry(
     urban: boolean;
     relaxed: boolean;
     preferQuiet?: boolean;
-    /** Ship imperfect loops rather than fail — still bans teleports. */
+    /**
+     * Wider distance share only — spur/back/mirror still use relaxed audit caps.
+     * Kept so callers can opt into emergency distance without shipping trash geometry.
+     */
     emergency?: boolean;
   },
 ): boolean {
@@ -387,19 +385,8 @@ function passesDeliverableGeometry(
     options.direction,
   );
 
-  if (options.emergency) {
-    if (metrics.spurShare > MAX_SPUR_SHARE_EMERGENCY) return false;
-    if (metrics.backtrack > MAX_BACKTRACK_EMERGENCY) return false;
-    if (
-      !options.approachMode &&
-      mirroredPrefixLengthM(coordinates) > MAX_MIRRORED_PREFIX_EMERGENCY_M
-    ) {
-      return false;
-    }
-    return true;
-  }
-
-  const quietUrban = Boolean(options.preferQuiet && options.urban);
+  // Geometry ceilings always match audit (emergency only relaxes distance share
+  // at the call site). Quiet no longer gets a softer spur/back budget.
   const approachRelaxed = Boolean(options.approachMode && options.relaxed);
   const maxSpur = options.relaxed
     ? approachRelaxed
@@ -407,9 +394,7 @@ function passesDeliverableGeometry(
         ? MAX_SPUR_SHARE_RELAXED_APPROACH_URBAN
         : MAX_SPUR_SHARE_RELAXED_APPROACH
       : options.urban
-        ? quietUrban
-          ? MAX_SPUR_SHARE_RELAXED_QUIET_URBAN
-          : MAX_SPUR_SHARE_RELAXED_URBAN
+        ? MAX_SPUR_SHARE_RELAXED_URBAN
         : MAX_SPUR_SHARE_RELAXED
     : MAX_SPUR_SHARE;
   const maxBacktrack = options.relaxed
@@ -418,9 +403,7 @@ function passesDeliverableGeometry(
         ? MAX_BACKTRACK_RELAXED_APPROACH_URBAN
         : MAX_BACKTRACK_RELAXED_APPROACH
       : options.urban
-        ? quietUrban
-          ? MAX_BACKTRACK_RELAXED_QUIET_URBAN
-          : MAX_BACKTRACK_RELAXED_URBAN
+        ? MAX_BACKTRACK_RELAXED_URBAN
         : MAX_BACKTRACK_RELAXED
     : options.urban
       ? MAX_BACKTRACK_URBAN
@@ -504,9 +487,8 @@ function badBikeAccessMeters(
 }
 
 const MAX_USE_SIDEPATH_M = 25;
-/** Soft ceiling — over this we prefer cleaner candidates but may last-resort. */
+/** Match route-quality audit — never ship more than this of bicycle=no|dismount. */
 const MAX_BICYCLE_FORBIDDEN_M = 25;
-const MAX_BICYCLE_FORBIDDEN_DIRTY_M = 400;
 
 function hasHardSidepathAccess(
   segments: { tags: OsmTags; distanceM: number }[],
@@ -839,8 +821,6 @@ async function generateRouteWithEngine(
   let bestRejectedScore = Infinity;
   let bestFallback: RoutedLoopResult | null = null;
   let bestFallbackScore = Infinity;
-  let bestDirtyFallback: RoutedLoopResult | null = null;
-  let bestDirtyFallbackScore = Infinity;
   let bestLowOverlap: RoutedLoopResult | null = null;
   let bestLowOverlapShare = Infinity;
   let bestApproachOverlap = Infinity;
@@ -932,6 +912,15 @@ async function generateRouteWithEngine(
 
         const viaCoords =
           request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
+        // Later variants drop quiet / avoid-asphalt — those prefs inflate
+        // spur, mirror, and bicycle=no traps that fail the quality audit.
+        const softenAccessPrefs = variant >= 2 || Date.now() > deadlineMs - 25_000;
+        const routeAvoidAsphalt = softenAccessPrefs
+          ? false
+          : Boolean(request.avoidAsphalt);
+        const routePreferQuiet = softenAccessPrefs
+          ? false
+          : Boolean(request.preferQuietRoutes);
         const waypoints = buildLoopWaypointsWithVia(
           request.start,
           request.distanceKm,
@@ -939,7 +928,7 @@ async function generateRouteWithEngine(
           variant,
           scale,
           shape,
-          request.avoidAsphalt ?? false,
+          routeAvoidAsphalt,
           jitter,
           viaCoords,
           options?.homeStart ? { homeStart: options.homeStart } : undefined,
@@ -950,8 +939,8 @@ async function generateRouteWithEngine(
           bikeType: request.bikeType,
           waypoints,
           rideProfile: request.profile,
-          avoidAsphalt: request.avoidAsphalt,
-          preferQuietRoutes: request.preferQuietRoutes,
+          avoidAsphalt: routeAvoidAsphalt,
+          preferQuietRoutes: routePreferQuiet,
           urbanRouting: baseUrban || variantUrbanEscalated,
           skipGpx: true,
         });
@@ -969,11 +958,11 @@ async function generateRouteWithEngine(
           request.start,
           request.direction,
           shape,
-          request.avoidAsphalt,
+          routeAvoidAsphalt,
           options?.approachCoordinates,
           (request.viaPoints?.length ?? 0) > 0,
           loopPrefs,
-          request.preferQuietRoutes ?? false,
+          routePreferQuiet,
         );
 
         if (
@@ -1004,18 +993,11 @@ async function generateRouteWithEngine(
         }
 
         if (hasForbiddenBikeAccess(refined.segments)) {
-          const bad = badBikeAccessMeters(refined.segments);
-          // Short bicycle=no stretches: keep as dirty last-resort only.
-          if (
-            bad.forbiddenM <= MAX_BICYCLE_FORBIDDEN_DIRTY_M &&
-            quality < bestDirtyFallbackScore
-          ) {
-            bestDirtyFallbackScore = quality;
-            bestDirtyFallback = refined;
-          }
+          // Never ship bicycle=no|dismount — audit fails at >25 m.
           if (process.env.LOOPFORGE_DEBUG_ACCESS === "1") {
+            const bad = badBikeAccessMeters(refined.segments);
             console.warn(
-              `[loopforge] dirty forbidden access: ${Math.round(bad.forbiddenM)}m dist=${refined.distanceKm.toFixed(1)}km`,
+              `[loopforge] skip forbidden access: ${Math.round(bad.forbiddenM)}m dist=${refined.distanceKm.toFixed(1)}km`,
             );
           }
           continue;
@@ -1408,14 +1390,12 @@ async function generateRouteWithEngine(
           waypoints,
           rideProfile: request.profile,
           avoidAsphalt: false,
-          // Don't force quiet on road recovery when building a loop after
-          // approach — quiet + sidepath bans inflate spur/backtrack.
-          preferQuietRoutes: Boolean(request.preferQuietRoutes),
+          // Recovery must clear audit — quiet/avoid inflate spur and forbidden.
+          preferQuietRoutes: false,
           urbanRouting: true,
           skipGpx: true,
         });
         if (hasHardTeleportEdge(routed.coordinates)) continue;
-        const recoveryQuiet = Boolean(request.preferQuietRoutes);
         const { refined, metrics } = applySpurRefinement(
           routed,
           request.distanceKm,
@@ -1426,7 +1406,7 @@ async function generateRouteWithEngine(
           options?.approachCoordinates,
           (request.viaPoints?.length ?? 0) > 0,
           recoveryPrefs,
-          recoveryQuiet,
+          false,
         );
         const recoveryShareOk =
           refined.distanceKm >= request.distanceKm * 0.45 &&
@@ -1447,7 +1427,7 @@ async function generateRouteWithEngine(
           approachMode: options?.approachCoordinates != null,
           urban: baseUrban,
           relaxed: true,
-          preferQuiet: recoveryQuiet,
+          preferQuiet: false,
         });
         const recoveryEmergencyGate = passesDeliverableGeometry(
           refined.coordinates,
@@ -1459,7 +1439,7 @@ async function generateRouteWithEngine(
             approachMode: options?.approachCoordinates != null,
             urban: baseUrban,
             relaxed: true,
-            preferQuiet: recoveryQuiet,
+            preferQuiet: false,
             emergency: true,
           },
         );
@@ -1468,7 +1448,8 @@ async function generateRouteWithEngine(
           refined.coordinates.length >= 4 &&
           ((recoveryShareOk && recoveryGate) ||
             (recoveryEmergencyShareOk && recoveryEmergencyGate)) &&
-          !hasHardSidepathAccess(refined.segments)
+          !hasHardSidepathAccess(refined.segments) &&
+          !hasForbiddenBikeAccess(refined.segments)
         ) {
           best = refined;
           usedRelaxedFallback = true;
@@ -1549,7 +1530,6 @@ async function generateRouteWithEngine(
       bestRejected,
       bestFallback,
       bestLowOverlap,
-      bestDirtyFallback,
     ].filter(
       (c): c is RoutedLoopResult =>
         !!c &&
@@ -1558,6 +1538,7 @@ async function generateRouteWithEngine(
         c.distanceKm <= request.distanceKm * maxShare &&
         !hasHardTeleportEdge(c.coordinates) &&
         !hasHardSidepathAccess(c.segments) &&
+        !hasForbiddenBikeAccess(c.segments) &&
         passesDeliverableGeometry(c.coordinates, {
           targetDistanceKm: request.distanceKm,
           actualDistanceKm: c.distanceKm,
@@ -1608,7 +1589,6 @@ async function generateRouteWithEngine(
       bestRejected,
       bestFallback,
       bestLowOverlap,
-      bestDirtyFallback,
     ].filter(
       (c): c is RoutedLoopResult =>
         !!c &&
@@ -1617,6 +1597,7 @@ async function generateRouteWithEngine(
         c.distanceKm <= request.distanceKm * maxShare &&
         !hasHardTeleportEdge(c.coordinates) &&
         !hasHardSidepathAccess(c.segments) &&
+        !hasForbiddenBikeAccess(c.segments) &&
         passesDeliverableGeometry(c.coordinates, {
           targetDistanceKm: request.distanceKm,
           actualDistanceKm: c.distanceKm,
@@ -1807,6 +1788,7 @@ async function generateRouteWithEngine(
       best.distanceKm >= request.distanceKm * 0.32 &&
       best.distanceKm <= request.distanceKm * emergencyShare &&
       !hasHardSidepathAccess(best.segments) &&
+      !hasForbiddenBikeAccess(best.segments) &&
       passesDeliverableGeometry(best.coordinates, {
         targetDistanceKm: request.distanceKm,
         actualDistanceKm: best.distanceKm,

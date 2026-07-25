@@ -93,7 +93,7 @@ const METRO_BBOXES: Array<{ name: string; minLat: number; maxLat: number; minLng
   { name: "Wrocław", minLat: 51.0, maxLat: 51.2, minLng: 16.85, maxLng: 17.2 },
   { name: "Poznań", minLat: 52.3, maxLat: 52.5, minLng: 16.75, maxLng: 17.05 },
   { name: "Łódź", minLat: 51.65, maxLat: 51.85, minLng: 19.35, maxLng: 19.6 },
-  { name: "Katowice", minLat: 50.2, maxLat: 50.35, minLng: 18.95, maxLng: 19.25 },
+  { name: "Katowice", minLat: 50.15, maxLat: 50.4, minLng: 18.9, maxLng: 19.3 },
 ];
 
 export function startInMetroArea(start: LatLng): boolean {
