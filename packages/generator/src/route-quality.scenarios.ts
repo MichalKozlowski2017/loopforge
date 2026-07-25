@@ -18,6 +18,7 @@ import {
   auditLongEdgesWithRouter,
   auditRouteGeometry,
   formatRouteQualityReport,
+  maxMirroredPrefixBudgetM,
   type RouteQualityAudit,
 } from "./route-quality";
 import {
@@ -763,7 +764,11 @@ export async function runLiveRouteScenario(
       // was already gated inside generateRoute; here continuity + on-path matter.
       maxSpurShare: approach ? 1 : scenario.urban ? 0.14 : 0.08,
       maxBacktrack: approach ? 1 : scenario.urban ? 0.2 : 0.09,
-      maxMirroredPrefixM: approach ? 25_000 : 800,
+      maxMirroredPrefixM: approach
+        ? 25_000
+        : maxMirroredPrefixBudgetM(
+            auditOpts.actualDistanceKm ?? scenario.request.distanceKm,
+          ),
       maxOffPathShare: 0.025,
       maxOffPathM: scenario.urban ? 120 : 80,
     });
@@ -776,7 +781,9 @@ export async function runLiveRouteScenario(
       actualDistanceKm: undefined,
       maxSpurShare: 1,
       maxBacktrack: 1,
-      maxMirroredPrefixM: approach ? 25_000 : 800,
+      maxMirroredPrefixM: approach
+        ? 25_000
+        : maxMirroredPrefixBudgetM(scenario.request.distanceKm),
       failOnRemainingSpurs: false,
       maxOffPathShare: 0.03,
       maxOffPathM: scenario.urban ? 150 : 100,

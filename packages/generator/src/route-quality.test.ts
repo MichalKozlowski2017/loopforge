@@ -4,6 +4,7 @@ import {
   auditRouteGeometry,
   measureOffPath,
   mirroredPrefixLengthM,
+  maxMirroredPrefixBudgetM,
 } from "./route-quality";
 import {
   approachCorridor,
@@ -93,6 +94,38 @@ describe("auditRouteGeometry", () => {
     expect(asWyjazd.findings.some((f) => f.code === "MIRRORED_OUT_AND_BACK")).toBe(
       false,
     );
+  });
+
+  it("allows mirrored prefix up to 5% of route length by default", () => {
+    expect(maxMirroredPrefixBudgetM(20)).toBe(1000);
+    expect(maxMirroredPrefixBudgetM(60)).toBe(3000);
+
+    const loop = rectLoop(0, 500, 3000, 2000);
+    const approach = approachCorridor(900);
+    const withApproach = withMirroredApproach(loop, approach);
+    const mirroredM = mirroredPrefixLengthM(withApproach);
+    expect(mirroredM).toBeGreaterThan(800);
+
+    // Budget from target 35 km = 1750 m → this ~1.3 km mirror passes.
+    const ok = auditRouteGeometry(withApproach, {
+      allowApproachMirror: false,
+      targetDistanceKm: 35,
+      failOnRemainingSpurs: false,
+    });
+    expect(
+      ok.findings.some((f) => f.code === "MIRRORED_OUT_AND_BACK"),
+      format(ok),
+    ).toBe(false);
+
+    // Budget from target 10 km = 500 m → same mirror fails.
+    const tight = auditRouteGeometry(withApproach, {
+      allowApproachMirror: false,
+      targetDistanceKm: 10,
+      failOnRemainingSpurs: false,
+    });
+    expect(
+      tight.findings.some((f) => f.code === "MIRRORED_OUT_AND_BACK"),
+    ).toBe(true);
   });
 });
 

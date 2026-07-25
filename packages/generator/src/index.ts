@@ -41,7 +41,7 @@ import {
   hasBrokenRouteGeometry,
   hasHardTeleportEdge,
 } from "./prune-spurs";
-import { mirroredPrefixLengthM } from "./route-quality";
+import { mirroredPrefixLengthM, maxMirroredPrefixBudgetM } from "./route-quality";
 import {
   maxAcceptableDistanceError,
   maxLoopShareOfTarget,
@@ -341,10 +341,6 @@ const MAX_LOOP_SHARE_APPROACH_URBAN = 1.7;
 const MAX_LOOP_SHARE_APPROACH = 1.55;
 const MAX_DISTANCE_ERROR_APPROACH_RELAXED = 0.55;
 const MAX_BACKTRACK_URBAN = 0.08;
-/** Loop-only tracks must not mirror start/end for more than this (meters). */
-const MAX_MIRRORED_PREFIX_M = 500;
-/** Match audit maxMirroredPrefixM (800) — never accept longer out-and-backs. */
-const MAX_MIRRORED_PREFIX_RELAXED_M = 800;
 /** Wall-clock budgets — fail/accept faster than the old 95–130s stalls. */
 const GENERATION_DEADLINE_URBAN_MS = 70_000;
 const GENERATION_DEADLINE_RURAL_MS = 50_000;
@@ -414,9 +410,12 @@ function passesDeliverableGeometry(
 
   if (!options.approachMode) {
     const mirroredM = mirroredPrefixLengthM(coordinates);
-    const maxMirror = options.relaxed
-      ? MAX_MIRRORED_PREFIX_RELAXED_M
-      : MAX_MIRRORED_PREFIX_M;
+    // 5% of route length — same budget as route-quality audit.
+    const maxMirror = maxMirroredPrefixBudgetM(
+      options.actualDistanceKm > 0
+        ? options.actualDistanceKm
+        : options.targetDistanceKm,
+    );
     if (mirroredM > maxMirror) return false;
   }
 
@@ -1124,7 +1123,8 @@ async function generateRouteWithEngine(
           metrics.spurShare > maxSpurStrict ||
           metrics.backtrack > maxBacktrackStrict ||
           (!approachMode &&
-            mirroredPrefixLengthM(refined.coordinates) > MAX_MIRRORED_PREFIX_M);
+            mirroredPrefixLengthM(refined.coordinates) >
+              maxMirroredPrefixBudgetM(refined.distanceKm));
         const wrongDirection = metrics.directionCoverage < 0.38;
 
         if (

@@ -120,6 +120,17 @@ export function mirroredPrefixLengthM(
   return lengthM;
 }
 
+/**
+ * Small same-road out-and-back at the loop ends is OK (one-ways, connectors).
+ * Budget = 5% of route length.
+ */
+export const MIRRORED_PREFIX_MAX_SHARE = 0.05;
+
+export function maxMirroredPrefixBudgetM(distanceKm: number): number {
+  if (!(distanceKm > 0) || !Number.isFinite(distanceKm)) return 400;
+  return distanceKm * 1000 * MIRRORED_PREFIX_MAX_SHARE;
+}
+
 function countRemainingSpurRanges(coordinates: [number, number][]): number {
   const sampled = downsampleCoordinates(coordinates, SPUR_DETECT_MAX_POINTS);
   return (
@@ -307,16 +318,20 @@ export function auditRouteGeometry(
   options: RouteQualityOptions = {},
 ): RouteQualityAudit {
   const findings: RouteQualityFinding[] = [];
-  const lengthM = coordinates.length >= 2 ? routeLengthM(coordinates) : 0;
-  const actualDistanceKm = options.actualDistanceKm ?? lengthM / 1000;
-  const targetDistanceKm = options.targetDistanceKm ?? actualDistanceKm;
   const maxSpurShare = options.maxSpurShare ?? 0.05;
   const maxBacktrack = options.maxBacktrack ?? 0.05;
-  const maxMirroredPrefixM = options.maxMirroredPrefixM ?? 400;
+  const lengthM = coordinates.length >= 2 ? routeLengthM(coordinates) : 0;
+  const actualDistanceKm = options.actualDistanceKm ?? lengthM / 1000;
+  const maxMirroredPrefixM =
+    options.maxMirroredPrefixM ??
+    maxMirroredPrefixBudgetM(
+      options.targetDistanceKm ?? actualDistanceKm,
+    );
   const failOnRemainingSpurs = options.failOnRemainingSpurs === true;
   const ctx = options.geometryContext ?? {};
 
   const maxEdgeM = coordinates.length >= 2 ? maxConsecutiveEdgeM(coordinates) : 0;
+  const targetDistanceKm = options.targetDistanceKm ?? actualDistanceKm;
   const metrics = loopQualityMetrics(
     coordinates,
     targetDistanceKm,
@@ -388,7 +403,7 @@ export function auditRouteGeometry(
     findings.push({
       code: "MIRRORED_OUT_AND_BACK",
       severity: "error",
-      message: `Początek i koniec pokrywają się na ~${Math.round(mirroredPrefixM)} m (out-and-back / niedocięty dojazd).`,
+      message: `Początek i koniec pokrywają się na ~${Math.round(mirroredPrefixM)} m (out-and-back / niedocięty dojazd; limit ~${Math.round(maxMirroredPrefixM)} m = 5% trasy).`,
       value: mirroredPrefixM,
       limit: maxMirroredPrefixM,
     });
