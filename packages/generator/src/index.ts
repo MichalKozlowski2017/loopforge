@@ -368,6 +368,29 @@ function approachMaxLoopShare(urban: boolean): number {
   return urban ? MAX_LOOP_SHARE_APPROACH_URBAN : MAX_LOOP_SHARE_APPROACH;
 }
 
+/** Mirror length after nav densify — matches GPX audit (sparse coords under-count). */
+function densifiedMirrorLengthM(
+  coordinates: [number, number][],
+  start: LatLng,
+): number {
+  if (coordinates.length < 4) return 0;
+  const nav = prepareCoordinatesForNavigation(coordinates, { start });
+  return mirroredPrefixLengthM(nav.length >= 4 ? nav : coordinates);
+}
+
+function exceedsMirrorBudget(
+  coordinates: [number, number][],
+  targetDistanceKm: number,
+  start: LatLng,
+  approachMode: boolean,
+): boolean {
+  if (approachMode) return false;
+  return (
+    densifiedMirrorLengthM(coordinates, start) >
+    maxMirroredPrefixBudgetM(targetDistanceKm)
+  );
+}
+
 function passesDeliverableGeometry(
   coordinates: [number, number][],
   options: {
@@ -424,11 +447,15 @@ function passesDeliverableGeometry(
   if (metrics.spurShare > maxSpur) return false;
   if (metrics.backtrack > maxBacktrack) return false;
 
-  if (!options.approachMode) {
-    const mirroredM = mirroredPrefixLengthM(coordinates);
-    // Match prod audit: 5% of *requested* distance (GPX audit uses target too).
-    const maxMirror = maxMirroredPrefixBudgetM(options.targetDistanceKm);
-    if (mirroredM > maxMirror) return false;
+  if (
+    exceedsMirrorBudget(
+      coordinates,
+      options.targetDistanceKm,
+      options.start,
+      options.approachMode,
+    )
+  ) {
+    return false;
   }
 
   return true;
@@ -889,8 +916,12 @@ async function generateRouteWithEngine(
         !hasHardSidepathAccess(c.segments) &&
         !hasForbiddenBikeAccess(c.segments) &&
         (options?.approachCoordinates != null ||
-          mirroredPrefixLengthM(c.coordinates) <=
-            maxMirroredPrefixBudgetM(request.distanceKm)) &&
+          !exceedsMirrorBudget(
+            c.coordinates,
+            request.distanceKm,
+            request.start,
+            false,
+          )) &&
         passesDeliverableGeometry(c.coordinates, {
           targetDistanceKm: request.distanceKm,
           actualDistanceKm: c.distanceKm,
@@ -1017,13 +1048,18 @@ async function generateRouteWithEngine(
 
         const viaCoords =
           request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
-        // Drop quiet/avoid early so we still ship a loop. Stress hotspot is
-        // road+quiet and gravel/MTB+avoid — soften from the first re-scale
-        // for every bike type, not only road.
+        // Drop quiet/avoid early. Road+quiet/avoid: never force prefs during
+        // search (one hard try burns the Kraków GEN_FAIL bucket). Other bikes:
+        // keep prefs only on the first scale of the first variant.
         const hardPrefs =
           Boolean(request.preferQuietRoutes) || Boolean(request.avoidAsphalt);
+        const firstVariant = jitter.variantOrder[0] ?? 0;
         const softenAccess = hardPrefs
-          ? variant >= 1 || si > 0 || Date.now() > deadlineMs - 40_000
+          ? request.bikeType === "road"
+            ? true
+            : variant !== firstVariant ||
+              si > 0 ||
+              Date.now() > deadlineMs - 40_000
           : variant >= 1 || Date.now() > deadlineMs - 28_000;
         const routeAvoidAsphalt = softenAccess
           ? false
@@ -1243,9 +1279,12 @@ async function generateRouteWithEngine(
         const tooSpurHeavy =
           metrics.spurShare > maxSpurStrict ||
           metrics.backtrack > maxBacktrackStrict ||
-          (!approachMode &&
-            mirroredPrefixLengthM(refined.coordinates) >
-              maxMirroredPrefixBudgetM(request.distanceKm));
+          exceedsMirrorBudget(
+            refined.coordinates,
+            request.distanceKm,
+            request.start,
+            approachMode,
+          );
         const wrongDirection = metrics.directionCoverage < 0.38;
 
         if (
@@ -2025,11 +2064,144 @@ async function generateRouteWithEngine(
     );
   }
 
-  // Hard distance floor — never ship half-length loops as "OK".
-  const minShipShare = usedRelaxedFallback
-    ? MIN_LOOP_SHARE_EMERGENCY
-    : MIN_LOOP_SHARE_SHIP;
+  // Hard distance floor — aligned with audit DIST_UNDERSHOOT (75%).
+  // Before failing, try a dedicated stretch rescue (no quiet/avoid).
+  const minShipShare = MIN_LOOP_SHARE_SHIP;
   if (finalized.distanceKm < request.distanceKm * minShipShare) {
+    const rescueDeadline = deadlineMs;
+    const rescueScales = [1.15, 1.3, 1.45, 1.6];
+    let rescued: RoutedLoopResult | null = null;
+    if (Date.now() < rescueDeadline && routedFetches < maxRoutedFetches + 2) {
+      reportProgress(onProgress, {
+        phase: "refining",
+        message: "Docinam kilometry",
+        detail: `Za krótko (${finalized.distanceKm.toFixed(1)} km) — jeszcze jedna próba poszerzenia`,
+        progress: 91,
+      });
+      const rescuePrefs = mergeLoopPrefs(
+        profilePrefs,
+        urbanWaypointAdjustments(request.distanceKm, true, baseUrban),
+      );
+      for (let ri = 0; ri < rescueScales.length; ri++) {
+        if (Date.now() > rescueDeadline) break;
+        if (routedFetches >= maxRoutedFetches + 2) break;
+        try {
+          const shape = loopShapeForVariant(
+            request.distanceKm,
+            ri % 5,
+            rescuePrefs,
+          );
+          const viaCoords =
+            request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
+          const waypoints = buildLoopWaypointsWithVia(
+            request.start,
+            request.distanceKm,
+            request.direction,
+            ri % 5,
+            rescueScales[ri]!,
+            shape,
+            false,
+            jitter,
+            viaCoords,
+            undefined,
+            rescuePrefs,
+          );
+          routedFetches += 1;
+          const routed = await fetchLoopRouteResilient(fetchRoute, {
+            start: request.start,
+            bikeType: request.bikeType,
+            waypoints,
+            rideProfile: request.profile,
+            avoidAsphalt: false,
+            preferQuietRoutes: false,
+            urbanRouting: true,
+            skipGpx: true,
+          });
+          if (hasHardTeleportEdge(routed.coordinates)) continue;
+          if (hasHardSidepathAccess(routed.segments)) continue;
+          if (hasForbiddenBikeAccess(routed.segments)) continue;
+          const { refined } = applySpurRefinement(
+            routed,
+            request.distanceKm,
+            request.start,
+            request.direction,
+            shape,
+            false,
+            options?.approachCoordinates,
+            (request.viaPoints?.length ?? 0) > 0,
+            rescuePrefs,
+            false,
+          );
+          const shareOk =
+            refined.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_SHIP &&
+            refined.distanceKm <=
+              request.distanceKm * emergencyMaxLoopShare(request.bikeType);
+          if (
+            shareOk &&
+            passesDeliverableGeometry(refined.coordinates, {
+              targetDistanceKm: request.distanceKm,
+              actualDistanceKm: refined.distanceKm,
+              start: request.start,
+              direction: request.direction,
+              approachMode,
+              urban: baseUrban,
+              relaxed: true,
+              preferQuiet: false,
+              emergency: true,
+            })
+          ) {
+            rescued = refined;
+            usedRelaxedFallback = true;
+            break;
+          }
+        } catch {
+          // try next rescue scale
+        }
+      }
+    }
+
+    if (rescued) {
+      best = rescued;
+      const reFinalized = finalizeLoopWithoutSpurs(
+        best,
+        request.start,
+        request.distanceKm,
+        request.direction,
+      );
+      if (
+        reFinalized.distanceKm >= request.distanceKm * minShipShare &&
+        passesDeliverableGeometry(reFinalized.coordinates, {
+          targetDistanceKm: request.distanceKm,
+          actualDistanceKm: reFinalized.distanceKm,
+          start: request.start,
+          direction: request.direction,
+          approachMode,
+          urban: baseUrban,
+          relaxed: true,
+          preferQuiet: false,
+          emergency: true,
+        }) &&
+        !exceedsMirrorBudget(
+          reFinalized.coordinates,
+          request.distanceKm,
+          request.start,
+          approachMode,
+        )
+      ) {
+        const output = reFinalized;
+        return {
+          route: buildGeneratedRoute(request, output.coordinates, {
+            placeholder: false,
+            elevationGainM: output.elevationGainM,
+            segments: output.segments,
+            mapGeojson: output.mapGeojson ?? undefined,
+            brouterMessages: output.brouterMessages,
+          }),
+          loopSegments: output.segments,
+        };
+      }
+    }
+
     throw new Error(
       `Trasa wyszła za krótka (${finalized.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km) — spróbuj innego kierunku lub większego dystansu.`,
     );
@@ -2037,20 +2209,17 @@ async function generateRouteWithEngine(
 
   // Mirror on densified nav polyline (same densify path as GPX) so audit and
   // ship gate agree — sparse coords under-counted reverse overlap.
-  if (!approachMode) {
-    const mirrorCoords = prepareCoordinatesForNavigation(
+  if (
+    exceedsMirrorBudget(
       finalized.coordinates,
-      { start: request.start },
+      request.distanceKm,
+      request.start,
+      approachMode,
+    )
+  ) {
+    throw new Error(
+      `Nie udało się wygenerować czystej pętli (powrót tą samą drogą ~${Math.round(densifiedMirrorLengthM(finalized.coordinates, request.start))} m). Spróbuj innego kierunku lub krótszego dystansu.`,
     );
-    const mirrorM = mirroredPrefixLengthM(
-      mirrorCoords.length >= 4 ? mirrorCoords : finalized.coordinates,
-    );
-    const mirrorBudget = maxMirroredPrefixBudgetM(request.distanceKm);
-    if (mirrorM > mirrorBudget) {
-      throw new Error(
-        `Nie udało się wygenerować czystej pętli (powrót tą samą drogą ~${Math.round(mirrorM)} m). Spróbuj innego kierunku lub krótszego dystansu.`,
-      );
-    }
   }
 
   // Always keep pruned geometry — restoring pre-prune reintroduces dead-end stubs.
