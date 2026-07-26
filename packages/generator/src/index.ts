@@ -358,8 +358,10 @@ const GENERATION_DEADLINE_RURAL_MS = 45_000;
 const GENERATION_DEADLINE_ROAD_MS = 65_000;
 const MAX_SCALE_PASSES = 5;
 /** Cap successful BRouter loop fetches so search cannot burn minutes. */
-const MAX_ROUTED_FETCHES_URBAN = 8;
-const MAX_ROUTED_FETCHES = 10;
+const MAX_ROUTED_FETCHES_URBAN = 10;
+const MAX_ROUTED_FETCHES = 12;
+/** Keep headroom for recovery stretch after the main search empties. */
+const RECOVERY_FETCH_RESERVE = 3;
 const SCALE_TARGET_DISTANCE_ERROR = 0.12;
 
 function approachMaxLoopShare(urban: boolean): number {
@@ -857,7 +859,15 @@ async function generateRouteWithEngine(
   const maxRoutedFetches = baseUrban
     ? MAX_ROUTED_FETCHES_URBAN
     : MAX_ROUTED_FETCHES;
-  const maxScalePasses = baseUrban ? 3 : MAX_SCALE_PASSES;
+  const mainSearchFetchCap = Math.max(
+    4,
+    maxRoutedFetches - RECOVERY_FETCH_RESERVE,
+  );
+  // Metro used to cap at 3 scale passes — undershoot then hit the 75% ship floor.
+  const maxScalePasses =
+    baseUrban || request.avoidAsphalt || request.preferQuietRoutes
+      ? Math.max(4, MAX_SCALE_PASSES - 1)
+      : MAX_SCALE_PASSES;
   const maxAttemptsEstimate = variants * maxScalePasses;
   const minLoopKm =
     request.distanceKm * minLoopShareOfTarget(request.distanceKm, baseUrban);
@@ -939,7 +949,7 @@ async function generateRouteWithEngine(
       tryPromoteRelaxedPool();
       break;
     }
-    if (routedFetches >= maxRoutedFetches) {
+    if (routedFetches >= mainSearchFetchCap) {
       tryPromoteRelaxedPool();
       break;
     }
@@ -967,7 +977,7 @@ async function generateRouteWithEngine(
           variantDone = true;
           break;
         }
-        if (routedFetches >= maxRoutedFetches) {
+        if (routedFetches >= mainSearchFetchCap) {
           tryPromoteRelaxedPool();
           variantDone = true;
           break;
@@ -1007,12 +1017,12 @@ async function generateRouteWithEngine(
 
         const viaCoords =
           request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
-        // Drop quiet/avoid early so we still ship a loop. Road+quiet/avoid is
-        // the stress-matrix GEN_FAIL hotspot — soften from the first re-scale.
+        // Drop quiet/avoid early so we still ship a loop. Stress hotspot is
+        // road+quiet and gravel/MTB+avoid — soften from the first re-scale
+        // for every bike type, not only road.
         const hardPrefs =
           Boolean(request.preferQuietRoutes) || Boolean(request.avoidAsphalt);
-        const roadHardPrefs = request.bikeType === "road" && hardPrefs;
-        const softenAccess = roadHardPrefs
+        const softenAccess = hardPrefs
           ? variant >= 1 || si > 0 || Date.now() > deadlineMs - 40_000
           : variant >= 1 || Date.now() > deadlineMs - 28_000;
         const routeAvoidAsphalt = softenAccess
@@ -1115,13 +1125,15 @@ async function generateRouteWithEngine(
 
         // Extend scale when loop is too short (common in dense urban grids).
         // Skip once we already have a shippable best — extra BRouter burns time.
+        // Use *route* avoid flag (after soften), not the raw user toggle — otherwise
+        // softened routing still stretches with the weak avoid=0.48 pull.
         if (
           !best &&
           refined.distanceKm < request.distanceKm * 0.98 &&
           metrics.distanceError > SCALE_TARGET_DISTANCE_ERROR &&
           scales.length < maxScalePasses &&
-          Date.now() < deadlineMs - 8_000 &&
-          routedFetches < maxRoutedFetches
+          Date.now() < deadlineMs - 5_000 &&
+          routedFetches < mainSearchFetchCap
         ) {
           const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
           const hasVias = (request.viaPoints?.length ?? 0) > 0;
@@ -1129,18 +1141,18 @@ async function generateRouteWithEngine(
             ratio > 1
               ? 1 +
                 (ratio - 1) *
-                  (hasVias ? 0.92 : request.avoidAsphalt ? 0.48 : 0.96)
+                  (hasVias ? 0.92 : routeAvoidAsphalt ? 0.72 : 0.98)
               : 0.98;
           const maxScale = baseUrban || variantUrbanEscalated
-            ? Math.min(1.78, 1.18 + request.distanceKm / 260)
+            ? Math.min(1.95, 1.22 + request.distanceKm / 220)
             : hasVias
-              ? Math.min(1.45, 1.12 + request.distanceKm / 350)
-              : request.avoidAsphalt
-                ? Math.min(1.28, 1.08 + request.distanceKm / 400)
-                : 1.55;
+              ? Math.min(1.55, 1.14 + request.distanceKm / 320)
+              : routeAvoidAsphalt
+                ? Math.min(1.55, 1.12 + request.distanceKm / 320)
+                : 1.7;
           const nextScale = Math.min(
             maxScale,
-            Math.max(scale + 0.06, scale * stretch),
+            Math.max(scale + 0.08, scale * stretch),
           );
           if (nextScale > scale + 0.03) {
             reportProgress(onProgress, {
@@ -1159,8 +1171,8 @@ async function generateRouteWithEngine(
           refined.distanceKm > request.distanceKm * 1.08 &&
           metrics.distanceError > SCALE_TARGET_DISTANCE_ERROR &&
           scales.length < maxScalePasses &&
-          Date.now() < deadlineMs - 8_000 &&
-          routedFetches < maxRoutedFetches
+          Date.now() < deadlineMs - 5_000 &&
+          routedFetches < mainSearchFetchCap
         ) {
           const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
           const severeOvershoot = refined.distanceKm > request.distanceKm * 1.4;
@@ -1498,15 +1510,16 @@ async function generateRouteWithEngine(
           options?.homeStart && variant < 1
             ? { homeStart: options.homeStart }
             : undefined;
-        // Recovery scales — compact enough to avoid 2×, room to reach target.
+        // Recovery scales — bias larger so we clear the 75% ship floor after
+        // avoid/quiet undershoots (stress GEN_FAIL pattern).
         const recoveryScale =
           request.bikeType === "road"
             ? baseUrban
-              ? [0.55, 0.7, 0.85, 1.0, 1.12][variant]!
-              : [0.7, 0.85, 1.0, 1.12, 1.22][variant]!
+              ? [0.85, 1.0, 1.15, 1.3, 1.45][variant]!
+              : [0.9, 1.05, 1.18, 1.3, 1.42][variant]!
             : baseUrban
-              ? [0.78, 0.9, 1.0, 1.1, 1.18][variant]!
-              : [0.85, 0.95, 1.05, 1.15, 1.22][variant]!;
+              ? [0.9, 1.05, 1.18, 1.32, 1.48][variant]!
+              : [0.95, 1.08, 1.2, 1.35, 1.48][variant]!;
         const waypoints = buildLoopWaypointsWithVia(
           request.start,
           request.distanceKm,
