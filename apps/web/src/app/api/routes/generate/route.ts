@@ -63,8 +63,15 @@ export async function POST(request: Request) {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      let closed = false;
       const send = (event: RouteGenerationStreamEvent) => {
-        controller.enqueue(sseChunk(event));
+        if (closed) return;
+        try {
+          controller.enqueue(sseChunk(event));
+        } catch {
+          // Client aborted (BodyStreamBuffer) — stop writing.
+          closed = true;
+        }
       };
 
       try {
@@ -106,7 +113,14 @@ export async function POST(request: Request) {
               : "Błąd generowania trasy",
         });
       } finally {
-        controller.close();
+        if (!closed) {
+          try {
+            controller.close();
+          } catch {
+            // already closed by client abort
+          }
+          closed = true;
+        }
       }
     },
   });

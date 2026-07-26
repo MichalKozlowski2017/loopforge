@@ -251,7 +251,8 @@ export default function HomePage() {
           Accept: "text/event-stream",
         },
         body: JSON.stringify(request),
-        signal: AbortSignal.timeout(120_000),
+        // Long MTB/gravel searches routinely exceed 2 min on cold BRouter.
+        signal: AbortSignal.timeout(180_000),
       });
 
       const generated = await consumeGenerationStream(response, (progress) => {
@@ -261,9 +262,17 @@ export default function HomePage() {
       setRoute(generated);
       setNotes("");
     } catch (err) {
-      if (err instanceof DOMException && err.name === "TimeoutError") {
+      const aborted =
+        (err instanceof DOMException &&
+          (err.name === "TimeoutError" || err.name === "AbortError")) ||
+        (err instanceof Error &&
+          (/BodyStreamBuffer was aborted/i.test(err.message) ||
+            /przerwane/i.test(err.message) ||
+            err.name === "TimeoutError" ||
+            err.name === "AbortError"));
+      if (aborted) {
         setError(
-          "Generowanie trwa zbyt długo (>2 min). Spróbuj krótszego dystansu lub odczekaj chwilę.",
+          "Generowanie trwa zbyt długo (>3 min) albo zostało przerwane. Spróbuj krótszego dystansu lub odczekaj chwilę.",
         );
       } else {
         setError(err instanceof Error ? err.message : "Nieznany błąd");

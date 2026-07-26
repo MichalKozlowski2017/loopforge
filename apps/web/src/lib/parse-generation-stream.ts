@@ -13,6 +13,21 @@ function parseSseChunk(chunk: string): RouteGenerationStreamEvent | null {
   return JSON.parse(dataLine.slice(6)) as RouteGenerationStreamEvent;
 }
 
+function isAbortError(err: unknown): boolean {
+  if (err instanceof DOMException) {
+    return err.name === "AbortError" || err.name === "TimeoutError";
+  }
+  if (err instanceof Error) {
+    return (
+      err.name === "AbortError" ||
+      err.name === "TimeoutError" ||
+      /BodyStreamBuffer was aborted/i.test(err.message) ||
+      /The operation was aborted/i.test(err.message)
+    );
+  }
+  return false;
+}
+
 export async function consumeGenerationStream(
   response: Response,
   onProgress: (progress: RouteGenerationProgress) => void,
@@ -33,27 +48,47 @@ export async function consumeGenerationStream(
   let buffer = "";
   let route: StoredRoute | null = null;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    let boundary = buffer.indexOf("\n\n");
-    while (boundary !== -1) {
-      const chunk = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-
-      const event = parseSseChunk(chunk);
-      if (event?.type === "progress") {
-        onProgress(event.progress);
-      } else if (event?.type === "complete") {
-        route = event.route;
-      } else if (event?.type === "error") {
-        throw new Error(event.error);
+  try {
+    while (true) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (err) {
+        if (isAbortError(err)) {
+          throw new DOMException(
+            "Generowanie przerwane (timeout lub anulowanie).",
+            "TimeoutError",
+          );
+        }
+        throw err;
       }
+      const { done, value } = chunk;
+      if (done) break;
 
-      boundary = buffer.indexOf("\n\n");
+      buffer += decoder.decode(value, { stream: true });
+
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary !== -1) {
+        const part = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+
+        const event = parseSseChunk(part);
+        if (event?.type === "progress") {
+          onProgress(event.progress);
+        } else if (event?.type === "complete") {
+          route = event.route;
+        } else if (event?.type === "error") {
+          throw new Error(event.error);
+        }
+
+        boundary = buffer.indexOf("\n\n");
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // already released / aborted
     }
   }
 
