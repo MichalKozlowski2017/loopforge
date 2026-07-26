@@ -244,10 +244,11 @@ export function findOpenPathBranchStubRanges(coordinates: Coord[]): SpurRange[] 
   if (coordinates.length < 5) return [];
 
   const ranges: SpurRange[] = [];
-  const maxStubM = 1500;
+  const totalM = totalPathLengthM(coordinates);
+  const maxStubM = Math.max(1_500, Math.min(4_000, totalM * 0.08));
   const minStubM = 12;
-  const rejoinM = 160;
-  const minTurnDeg = 16;
+  const rejoinM = 180;
+  const minTurnDeg = 14;
   const endReserve = 8;
 
   for (let j = 1; j < coordinates.length - 2; j++) {
@@ -302,7 +303,7 @@ function mergeSpurRanges(ranges: SpurRange[]): SpurRange[] {
 }
 
 /** Detection-only cap; actual remove uses context budget from geometrySafetyLimits. */
-const MAX_DETECT_STITCH_M = 120;
+const MAX_DETECT_STITCH_M = 180;
 
 /** Sharp hairpin at a dead-end tip (route turns ~180° within a stub). */
 export function findHairpinSpurRanges(coordinates: Coord[]): SpurRange[] {
@@ -523,15 +524,20 @@ function stitchBudgetAtJunction(
   coordinates: Coord[],
   beforeIdx: number,
   baseMaxStitchM: number,
+  stitchM = 0,
 ): number {
+  // True out-and-back rejoins at the same junction — always allow the cut.
+  if (stitchM > 0 && stitchM < 45) {
+    return Math.max(baseMaxStitchM, 160);
+  }
   const localMed = localMedianEdgeM(coordinates, beforeIdx);
   if (localMed > 0 && localMed < 28) {
-    return Math.min(110, Math.max(baseMaxStitchM, 100));
+    return Math.min(140, Math.max(baseMaxStitchM, 120));
   }
   if (localMed > 45) {
-    return Math.min(baseMaxStitchM, 70);
+    return Math.min(baseMaxStitchM, 85);
   }
-  return baseMaxStitchM;
+  return Math.max(baseMaxStitchM, 100);
 }
 
 function removeSpurRanges(
@@ -555,6 +561,7 @@ function removeSpurRanges(
         coordinates,
         before,
         baseMaxStitchM,
+        stitchM,
       );
       if (stitchM > maxStitchM) return null;
       return {
@@ -839,6 +846,7 @@ export function pruneDeadEndSpurs(
   }
 
   const afterM = totalPathLengthM(current);
+  const removedM = Math.max(0, beforeM - afterM);
   // Allow removing large dead-end appendages (common when BRouter pads distance).
   if (afterM < beforeM * 0.25) {
     return {
@@ -848,7 +856,20 @@ export function pruneDeadEndSpurs(
     };
   }
 
-  if (hasBrokenRouteGeometry(current, coordinates, context)) {
+  // Prefer a shorter clean loop over keeping mid-loop fingers.
+  // Only fully abort prune on hard teleports; soft geometry warnings are OK
+  // when we actually cut real out-and-back length.
+  if (hasHardTeleportEdge(current)) {
+    return {
+      coordinates,
+      removedRanges: [],
+      removedM: 0,
+    };
+  }
+  if (
+    hasBrokenRouteGeometry(current, coordinates, context) &&
+    removedM < 80
+  ) {
     return {
       coordinates,
       removedRanges: [],
@@ -859,7 +880,7 @@ export function pruneDeadEndSpurs(
   return {
     coordinates: current,
     removedRanges: mergeSpurRanges(allRanges),
-    removedM: Math.max(0, beforeM - afterM),
+    removedM,
   };
 }
 

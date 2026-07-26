@@ -449,9 +449,9 @@ function geometryPenalty(
     ? 0
     : mirroredPrefixLengthM(coordinates) / 1000;
   return (
-    metrics.distanceError +
-    metrics.spurShare * 28 +
-    metrics.backtrack * 22 +
+    metrics.distanceError * 0.55 +
+    metrics.spurShare * 48 +
+    metrics.backtrack * 30 +
     (1 - metrics.directionCoverage) * 1.4 +
     mirrorKm * 0.35
   );
@@ -675,14 +675,19 @@ function applySpurRefinement(
     );
     const qualityImproved =
       afterM.spurShare + afterM.backtrack <
-      beforeM.spurShare + beforeM.backtrack - 0.008;
-    // Always keep meaningful stub removal (long fingers), even if metrics are noisy.
-    const meaningfulCut = pruned.removedM >= 250;
-    if (
-      hasBrokenRouteGeometry(coordinates, routed.coordinates, geoCtx) &&
-      !qualityImproved &&
-      !meaningfulCut
-    ) {
+      beforeM.spurShare + beforeM.backtrack - 0.004;
+    // Prefer shorter clean loop over fingers — keep cuts from ~80 m up.
+    const meaningfulCut = pruned.removedM >= 80;
+    const hardBroken = hasHardTeleportEdge(pruned.coordinates);
+    const softBroken = hasBrokenRouteGeometry(
+      coordinates,
+      routed.coordinates,
+      geoCtx,
+    );
+    if (hardBroken) {
+      usePruned = false;
+      coordinates = routed.coordinates;
+    } else if (softBroken && !meaningfulCut && !qualityImproved) {
       usePruned = false;
       coordinates = routed.coordinates;
     } else if (!qualityImproved && !meaningfulCut) {
@@ -770,15 +775,19 @@ function finalizeLoopWithoutSpurs(
   );
   const qualityImproved =
     after.spurShare + after.backtrack <
-    before.spurShare + before.backtrack - 0.008;
-  const meaningfulCut = pruned.removedM >= 250;
+    before.spurShare + before.backtrack - 0.004;
+  const meaningfulCut = pruned.removedM >= 80;
+  const softBroken = hasBrokenRouteGeometry(
+    pruned.coordinates,
+    best.coordinates,
+    geoCtx,
+  );
 
-  if (
-    (hasBrokenRouteGeometry(pruned.coordinates, best.coordinates, geoCtx) &&
-      !qualityImproved &&
-      !meaningfulCut) ||
-    (!qualityImproved && !meaningfulCut)
-  ) {
+  // Always prefer cutting mid-loop fingers over keeping padded distance.
+  if (softBroken && !meaningfulCut && !qualityImproved) {
+    return best;
+  }
+  if (!qualityImproved && !meaningfulCut) {
     return best;
   }
 

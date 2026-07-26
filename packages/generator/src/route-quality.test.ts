@@ -71,6 +71,19 @@ describe("auditRouteGeometry", () => {
     expect(after.ok, format(after)).toBe(true);
   });
 
+  it("cuts short mid-loop fingers even when that shortens the route", () => {
+    const clean = rectLoop(0, 0, 3000, 2000);
+    const dirty = withDeadEndSpur(clean, Math.floor(clean.length / 2), 220);
+    const pruned = pruneDeadEndSpurs(dirty, { urban: true });
+    expect(pruned.removedM).toBeGreaterThan(150);
+    expect(pruned.coordinates.length).toBeLessThan(dirty.length);
+    const after = auditRouteGeometry(pruned.coordinates, {
+      allowApproachMirror: false,
+      failOnRemainingSpurs: false,
+    });
+    expect(after.metrics.spurShare).toBeLessThan(0.04);
+  });
+
   it("flags long mirrored out-and-back on loop-only tracks", () => {
     const loop = rectLoop(0, 500, 2000, 1500);
     const approach = approachCorridor(1200);

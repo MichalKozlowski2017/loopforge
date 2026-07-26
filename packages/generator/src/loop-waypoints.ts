@@ -794,9 +794,10 @@ export function scoreLoopQuality(
 
   return (
     overlap * 2.5 +
-    backtrack * 14 +
-    spurShare * 22 +
-    distanceError * 10 +
+    backtrack * 18 +
+    spurShare * 42 +
+    // Prefer a slightly short clean loop over padding with fingers.
+    distanceError * 5.5 +
     directionPenalty
   );
 }
