@@ -341,11 +341,17 @@ const MAX_LOOP_SHARE_APPROACH_URBAN = 1.7;
 const MAX_LOOP_SHARE_APPROACH = 1.55;
 const MAX_DISTANCE_ERROR_APPROACH_RELAXED = 0.55;
 const MAX_BACKTRACK_URBAN = 0.08;
-/** Wall-clock budgets — fail/accept faster than the old 95–130s stalls. */
-const GENERATION_DEADLINE_URBAN_MS = 70_000;
-const GENERATION_DEADLINE_RURAL_MS = 50_000;
-const GENERATION_DEADLINE_ROAD_MS = 65_000;
+/**
+ * Wall-clock budgets — hard stop even without a strict `best`.
+ * Client timeout is 3 min; we must ship or fail well before that.
+ */
+const GENERATION_DEADLINE_URBAN_MS = 55_000;
+const GENERATION_DEADLINE_RURAL_MS = 45_000;
+const GENERATION_DEADLINE_ROAD_MS = 55_000;
 const MAX_SCALE_PASSES = 5;
+/** Cap successful BRouter loop fetches so search cannot burn minutes. */
+const MAX_ROUTED_FETCHES_URBAN = 8;
+const MAX_ROUTED_FETCHES = 10;
 const SCALE_TARGET_DISTANCE_ERROR = 0.12;
 
 function approachMaxLoopShare(urban: boolean): number {
@@ -381,8 +387,8 @@ function passesDeliverableGeometry(
     options.direction,
   );
 
-  // Geometry ceilings always match audit (emergency only relaxes distance share
-  // at the call site). Quiet no longer gets a softer spur/back budget.
+  // Geometry ceilings always match audit. Quiet no longer gets a softer
+  // spur/back budget. Emergency only widens distance share at the call site.
   const approachRelaxed = Boolean(options.approachMode && options.relaxed);
   const maxSpur = options.relaxed
     ? approachRelaxed
@@ -830,10 +836,65 @@ async function generateRouteWithEngine(
   let bestApproachOverlap = Infinity;
   let usedRelaxedFallback = false;
   let attempt = 0;
-  const maxAttemptsEstimate = variants * MAX_SCALE_PASSES;
+  let routedFetches = 0;
+  const maxRoutedFetches = baseUrban
+    ? MAX_ROUTED_FETCHES_URBAN
+    : MAX_ROUTED_FETCHES;
+  const maxScalePasses = baseUrban ? 3 : MAX_SCALE_PASSES;
+  const maxAttemptsEstimate = variants * maxScalePasses;
   const minLoopKm =
     request.distanceKm * minLoopShareOfTarget(request.distanceKm, baseUrban);
   const { onProgress } = options ?? {};
+
+  const tryPromoteRelaxedPool = (): boolean => {
+    if (best) return true;
+    const maxShare = options?.approachCoordinates
+      ? approachMaxLoopShare(baseUrban)
+      : maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
+    const pool = [bestRejected, bestFallback, bestLowOverlap].filter(
+      (c): c is RoutedLoopResult =>
+        !!c &&
+        c.coordinates.length >= 4 &&
+        c.distanceKm >= request.distanceKm * 0.35 &&
+        c.distanceKm <= request.distanceKm * maxShare &&
+        !hasHardTeleportEdge(c.coordinates) &&
+        !hasHardSidepathAccess(c.segments) &&
+        !hasForbiddenBikeAccess(c.segments) &&
+        passesDeliverableGeometry(c.coordinates, {
+          targetDistanceKm: request.distanceKm,
+          actualDistanceKm: c.distanceKm,
+          start: request.start,
+          direction: request.direction,
+          approachMode: options?.approachCoordinates != null,
+          urban: baseUrban,
+          relaxed: true,
+          preferQuiet: Boolean(request.preferQuietRoutes),
+        }),
+    );
+    if (pool.length === 0) return false;
+    pool.sort(
+      (a, b) =>
+        geometryPenalty(
+          a.coordinates,
+          request.distanceKm,
+          a.distanceKm,
+          request.start,
+          request.direction,
+          options?.approachCoordinates != null,
+        ) -
+        geometryPenalty(
+          b.coordinates,
+          request.distanceKm,
+          b.distanceKm,
+          request.start,
+          request.direction,
+          options?.approachCoordinates != null,
+        ),
+    );
+    best = pool[0]!;
+    usedRelaxedFallback = true;
+    return true;
+  };
 
   reportProgress(onProgress, {
     phase: "planning",
@@ -852,25 +913,22 @@ async function generateRouteWithEngine(
   });
 
   for (const variant of jitter.variantOrder) {
-    // Once we have any accept-worthy loop and the clock is tight, stop searching.
-    if (Date.now() > deadlineMs && best) break;
+    // Hard wall-clock stop — promote the best deliverable pool immediately.
+    if (Date.now() > deadlineMs) {
+      tryPromoteRelaxedPool();
+      break;
+    }
+    if (routedFetches >= maxRoutedFetches) {
+      tryPromoteRelaxedPool();
+      break;
+    }
+    // Soft stop: once we have a deliverable fallback and clock is tight, ship it.
     if (
       !best &&
-      bestFallback &&
-      Date.now() > deadlineMs - 18_000 &&
-      passesDeliverableGeometry(bestFallback.coordinates, {
-        targetDistanceKm: request.distanceKm,
-        actualDistanceKm: bestFallback.distanceKm,
-        start: request.start,
-        direction: request.direction,
-        approachMode: options?.approachCoordinates != null,
-        urban: baseUrban,
-        relaxed: true,
-        preferQuiet: Boolean(request.preferQuietRoutes),
-      })
+      (bestFallback || bestRejected) &&
+      Date.now() > deadlineMs - 20_000 &&
+      tryPromoteRelaxedPool()
     ) {
-      best = bestFallback;
-      usedRelaxedFallback = true;
       break;
     }
 
@@ -883,7 +941,16 @@ async function generateRouteWithEngine(
       let variantUrbanEscalated = baseUrban;
 
       for (let si = 0; si < scales.length; si++) {
-        if (Date.now() > deadlineMs && best) break;
+        if (Date.now() > deadlineMs) {
+          tryPromoteRelaxedPool();
+          variantDone = true;
+          break;
+        }
+        if (routedFetches >= maxRoutedFetches) {
+          tryPromoteRelaxedPool();
+          variantDone = true;
+          break;
+        }
 
         const scale = scales[si]!;
         const loopPrefs = mergeLoopPrefs(
@@ -922,7 +989,7 @@ async function generateRouteWithEngine(
         // Drop quiet/avoid from variant 1+ (and near deadline). Variant 0 keeps
         // user prefs; later passes prioritize a deliverable loop.
         const softenAccess =
-          variant >= 1 || Date.now() > deadlineMs - 28_000;
+          variant >= 1 || Date.now() > deadlineMs - 22_000;
         const routeAvoidAsphalt = softenAccess
           ? false
           : Boolean(request.avoidAsphalt);
@@ -946,6 +1013,7 @@ async function generateRouteWithEngine(
             : undefined,
           loopPrefs,
         );
+        routedFetches += 1;
         const routed = await fetchLoopRouteResilient(fetchRoute, {
           start: request.start,
           bikeType: request.bikeType,
@@ -1021,11 +1089,14 @@ async function generateRouteWithEngine(
         }
 
         // Extend scale when loop is too short (common in dense urban grids).
+        // Skip once we already have a shippable best — extra BRouter burns time.
         if (
+          !best &&
           refined.distanceKm < request.distanceKm * 0.98 &&
           metrics.distanceError > SCALE_TARGET_DISTANCE_ERROR &&
-          scales.length < MAX_SCALE_PASSES &&
-          Date.now() < deadlineMs - 6_000
+          scales.length < maxScalePasses &&
+          Date.now() < deadlineMs - 8_000 &&
+          routedFetches < maxRoutedFetches
         ) {
           const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
           const hasVias = (request.viaPoints?.length ?? 0) > 0;
@@ -1059,10 +1130,12 @@ async function generateRouteWithEngine(
 
         // Shrink waypoints when loop is much longer than the target.
         if (
+          !best &&
           refined.distanceKm > request.distanceKm * 1.08 &&
           metrics.distanceError > SCALE_TARGET_DISTANCE_ERROR &&
-          scales.length < MAX_SCALE_PASSES &&
-          Date.now() < deadlineMs - 6_000
+          scales.length < maxScalePasses &&
+          Date.now() < deadlineMs - 8_000 &&
+          routedFetches < maxRoutedFetches
         ) {
           const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
           const severeOvershoot = refined.distanceKm > request.distanceKm * 1.4;
@@ -1114,24 +1187,28 @@ async function generateRouteWithEngine(
         const tooLong = refined.distanceKm > maxLoopKm;
 
         const approachMode = options?.approachCoordinates != null;
+        // Metro: primary accept uses audit-aligned spur/backtrack so dense
+        // grids ship instead of burning minutes chasing 3.5% spur.
         const maxSpurStrict = approachMode
           ? (baseUrban
               ? MAX_SPUR_SHARE_RELAXED_APPROACH_URBAN
               : MAX_SPUR_SHARE_RELAXED_APPROACH) * 0.75
-          : MAX_SPUR_SHARE;
+          : baseUrban
+            ? MAX_SPUR_SHARE_RELAXED_URBAN
+            : MAX_SPUR_SHARE;
         const maxBacktrackStrict = approachMode
           ? (baseUrban
               ? MAX_BACKTRACK_RELAXED_APPROACH_URBAN
               : MAX_BACKTRACK_RELAXED_APPROACH) * 0.75
           : baseUrban
-            ? MAX_BACKTRACK_URBAN
+            ? MAX_BACKTRACK_RELAXED_URBAN
             : MAX_BACKTRACK;
         const tooSpurHeavy =
           metrics.spurShare > maxSpurStrict ||
           metrics.backtrack > maxBacktrackStrict ||
           (!approachMode &&
             mirroredPrefixLengthM(refined.coordinates) >
-              maxMirroredPrefixBudgetM(refined.distanceKm));
+              maxMirroredPrefixBudgetM(request.distanceKm));
         const wrongDirection = metrics.directionCoverage < 0.38;
 
         if (
@@ -1158,6 +1235,14 @@ async function generateRouteWithEngine(
           if (quality < bestRejectedScore) {
             bestRejectedScore = quality;
             bestRejected = refined;
+          }
+          // Near deadline: accept a deliverable reject without more variants.
+          if (
+            Date.now() > deadlineMs - 15_000 &&
+            tryPromoteRelaxedPool()
+          ) {
+            variantDone = true;
+            break;
           }
           continue;
         }
@@ -1211,13 +1296,23 @@ async function generateRouteWithEngine(
           break;
         }
 
+        // Good-enough early exit — metro audit spur is enough to stop searching.
         if (
-          metrics.directionCoverage >= 0.55 &&
+          metrics.directionCoverage >= 0.45 &&
           metrics.distanceError <
             maxAcceptableDistanceError(request.distanceKm, false, baseUrban) &&
-          metrics.spurShare < 0.06 &&
+          metrics.spurShare <
+            (baseUrban ? MAX_SPUR_SHARE_RELAXED_URBAN : 0.06) &&
+          metrics.backtrack <
+            (baseUrban ? MAX_BACKTRACK_RELAXED_URBAN : 0.08) &&
           refined.distanceKm >= minLoopKm
         ) {
+          variantDone = true;
+          break;
+        }
+
+        // Already have a shippable best — don't burn more scale passes.
+        if (best && (si > 0 || Date.now() > deadlineMs - 25_000)) {
           variantDone = true;
           break;
         }
@@ -1246,11 +1341,21 @@ async function generateRouteWithEngine(
       ) {
         break;
       }
+
+      // After first deliverable metro loop, stop hunting for a prettier one.
+      if (best && baseUrban && Date.now() > deadlineMs - 30_000) {
+        break;
+      }
     } catch (error) {
       if (process.env.NODE_ENV !== "production") {
         console.warn("[loopforge] variant failed:", error);
       }
     }
+  }
+
+  // Deadline / fetch-cap may have left best empty — promote before recovery.
+  if (!best) {
+    tryPromoteRelaxedPool();
   }
 
   if (!best && bestRejected) {
@@ -1346,9 +1451,10 @@ async function generateRouteWithEngine(
     }
   }
 
-  if (!best) {
+  if (!best && Date.now() < deadlineMs && routedFetches < maxRoutedFetches) {
     for (const variant of [0, 1, 2, 3, 4]) {
       if (Date.now() > deadlineMs) break;
+      if (routedFetches >= maxRoutedFetches) break;
       try {
         const recoveryPrefs = mergeLoopPrefs(
           profilePrefs,
@@ -1389,6 +1495,7 @@ async function generateRouteWithEngine(
           recoveryHome,
           recoveryPrefs,
         );
+        routedFetches += 1;
         const routed = await fetchLoopRouteResilient(fetchRoute, {
           start: request.start,
           bikeType: request.bikeType,
