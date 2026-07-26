@@ -84,6 +84,18 @@ describe("auditRouteGeometry", () => {
     expect(after.metrics.spurShare).toBeLessThan(0.04);
   });
 
+  it("fails severe distance undershoot against target", () => {
+    const short = rectLoop(0, 0, 800, 600);
+    const audit = auditRouteGeometry(short, {
+      targetDistanceKm: 60,
+      actualDistanceKm: 28,
+      allowApproachMirror: false,
+      failOnRemainingSpurs: false,
+    });
+    expect(audit.ok).toBe(false);
+    expect(audit.findings.some((f) => f.code === "DIST_UNDERSHOOT")).toBe(true);
+  });
+
   it("flags long mirrored out-and-back on loop-only tracks", () => {
     const loop = rectLoop(0, 500, 2000, 1500);
     const approach = approachCorridor(1200);

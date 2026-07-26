@@ -62,6 +62,11 @@ export type RouteQualityOptions = {
   maxSpurShare?: number;
   /** Max allowed backtrack ratio (default 0.05). */
   maxBacktrack?: number;
+  /**
+   * Fail when actual length is below this share of targetDistanceKm (default 0.75).
+   * Set to 0 to disable. Approach audits that pass loopDistanceKm still apply.
+   */
+  minDistanceShare?: number;
   /** Fail when detector spur ranges remain (default false — corner false-positives). */
   failOnRemainingSpurs?: boolean;
   /** Max mirrored start/end overlap for loop-only tracks (default 400 m). */
@@ -386,6 +391,21 @@ export function auditRouteGeometry(
       message: `Jazda w przeciwnym kierunku po tym samym odcinku (backtrack ${(metrics.backtrack * 100).toFixed(1)}%).`,
       value: metrics.backtrack,
       limit: maxBacktrack,
+    });
+  }
+
+  const minDistanceShare = options.minDistanceShare ?? 0.75;
+  if (
+    options.targetDistanceKm != null &&
+    options.targetDistanceKm > 0 &&
+    actualDistanceKm < options.targetDistanceKm * minDistanceShare
+  ) {
+    findings.push({
+      code: "DIST_UNDERSHOOT",
+      severity: "error",
+      message: `Trasa za krótka: ${actualDistanceKm.toFixed(1)} km zamiast ~${options.targetDistanceKm} km (min ${Math.round(minDistanceShare * 100)}%).`,
+      value: actualDistanceKm,
+      limit: options.targetDistanceKm * minDistanceShare,
     });
   }
 

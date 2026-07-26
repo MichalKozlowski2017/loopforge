@@ -764,6 +764,7 @@ export async function runLiveRouteScenario(
       // was already gated inside generateRoute; here continuity + on-path matter.
       maxSpurShare: approach ? 1 : scenario.urban ? 0.14 : 0.08,
       maxBacktrack: approach ? 1 : scenario.urban ? 0.2 : 0.09,
+      minDistanceShare: approach ? 0 : 0.75,
       maxMirroredPrefixM: approach
         ? 25_000
         : maxMirroredPrefixBudgetM(scenario.request.distanceKm),
@@ -779,6 +780,7 @@ export async function runLiveRouteScenario(
       actualDistanceKm: undefined,
       maxSpurShare: 1,
       maxBacktrack: 1,
+      minDistanceShare: 0,
       maxMirroredPrefixM: approach
         ? 25_000
         : maxMirroredPrefixBudgetM(scenario.request.distanceKm),

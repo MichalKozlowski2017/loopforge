@@ -335,7 +335,14 @@ const MAX_BACKTRACK_RELAXED_APPROACH = 0.45;
  * 1.35× was too tight and spiked gen-fails in stress.
  */
 const MAX_LOOP_SHARE_EMERGENCY = 1.55;
-const MAX_LOOP_SHARE_EMERGENCY_ROAD = 1.6;
+/** Road+quiet needs a bit more room before hard GEN_FAIL. */
+const MAX_LOOP_SHARE_EMERGENCY_ROAD = 1.75;
+/**
+ * Never ship a loop far below the request (stress had 60→34 km PASS).
+ * Emergency floor is slightly softer but still blocks half-length disasters.
+ */
+const MIN_LOOP_SHARE_SHIP = 0.75;
+const MIN_LOOP_SHARE_EMERGENCY = 0.68;
 /** Approach loops may overshoot more — entry is mid-corridor, not home. */
 const MAX_LOOP_SHARE_APPROACH_URBAN = 1.7;
 const MAX_LOOP_SHARE_APPROACH = 1.55;
@@ -347,7 +354,8 @@ const MAX_BACKTRACK_URBAN = 0.08;
  */
 const GENERATION_DEADLINE_URBAN_MS = 55_000;
 const GENERATION_DEADLINE_RURAL_MS = 45_000;
-const GENERATION_DEADLINE_ROAD_MS = 55_000;
+/** Road+quiet burns more attempts — give a bit more clock than gravel/MTB. */
+const GENERATION_DEADLINE_ROAD_MS = 65_000;
 const MAX_SCALE_PASSES = 5;
 /** Cap successful BRouter loop fetches so search cannot burn minutes. */
 const MAX_ROUTED_FETCHES_URBAN = 8;
@@ -860,15 +868,19 @@ async function generateRouteWithEngine(
     const maxShare = options?.approachCoordinates
       ? approachMaxLoopShare(baseUrban)
       : maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
+    const minShare = MIN_LOOP_SHARE_EMERGENCY;
     const pool = [bestRejected, bestFallback, bestLowOverlap].filter(
       (c): c is RoutedLoopResult =>
         !!c &&
         c.coordinates.length >= 4 &&
-        c.distanceKm >= request.distanceKm * 0.35 &&
+        c.distanceKm >= request.distanceKm * minShare &&
         c.distanceKm <= request.distanceKm * maxShare &&
         !hasHardTeleportEdge(c.coordinates) &&
         !hasHardSidepathAccess(c.segments) &&
         !hasForbiddenBikeAccess(c.segments) &&
+        (options?.approachCoordinates != null ||
+          mirroredPrefixLengthM(c.coordinates) <=
+            maxMirroredPrefixBudgetM(request.distanceKm)) &&
         passesDeliverableGeometry(c.coordinates, {
           targetDistanceKm: request.distanceKm,
           actualDistanceKm: c.distanceKm,
@@ -995,10 +1007,14 @@ async function generateRouteWithEngine(
 
         const viaCoords =
           request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
-        // Drop quiet/avoid from variant 1+ (and near deadline). Variant 0 keeps
-        // user prefs; later passes prioritize a deliverable loop.
-        const softenAccess =
-          variant >= 1 || Date.now() > deadlineMs - 22_000;
+        // Drop quiet/avoid early so we still ship a loop. Road+quiet/avoid is
+        // the stress-matrix GEN_FAIL hotspot — soften from the first re-scale.
+        const hardPrefs =
+          Boolean(request.preferQuietRoutes) || Boolean(request.avoidAsphalt);
+        const roadHardPrefs = request.bikeType === "road" && hardPrefs;
+        const softenAccess = roadHardPrefs
+          ? variant >= 1 || si > 0 || Date.now() > deadlineMs - 40_000
+          : variant >= 1 || Date.now() > deadlineMs - 28_000;
         const routeAvoidAsphalt = softenAccess
           ? false
           : Boolean(request.avoidAsphalt);
@@ -1530,14 +1546,14 @@ async function generateRouteWithEngine(
           false,
         );
         const recoveryShareOk =
-          refined.distanceKm >= request.distanceKm * 0.45 &&
+          refined.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_EMERGENCY &&
           refined.distanceKm <=
             request.distanceKm *
               (options?.approachCoordinates
                 ? approachMaxLoopShare(baseUrban)
                 : maxLoopShareOfTarget(request.distanceKm, true, baseUrban));
         const recoveryEmergencyShareOk =
-          refined.distanceKm >= request.distanceKm * 0.35 &&
+          refined.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_EMERGENCY &&
           refined.distanceKm <=
             request.distanceKm * emergencyMaxLoopShare(request.bikeType);
         const recoveryGate = passesDeliverableGeometry(refined.coordinates, {
@@ -1620,7 +1636,7 @@ async function generateRouteWithEngine(
     bestFallback &&
     !hasHardTeleportEdge(bestFallback.coordinates) &&
     bestFallback.coordinates.length >= 4 &&
-    bestFallback.distanceKm >= request.distanceKm * 0.35 &&
+    bestFallback.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_EMERGENCY &&
     bestFallback.distanceKm <=
       request.distanceKm *
         (options?.approachCoordinates
@@ -1655,7 +1671,7 @@ async function generateRouteWithEngine(
       (c): c is RoutedLoopResult =>
         !!c &&
         c.coordinates.length >= 4 &&
-        c.distanceKm >= request.distanceKm * 0.35 &&
+        c.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_EMERGENCY &&
         c.distanceKm <= request.distanceKm * maxShare &&
         !hasHardTeleportEdge(c.coordinates) &&
         !hasHardSidepathAccess(c.segments) &&
@@ -1714,7 +1730,7 @@ async function generateRouteWithEngine(
       (c): c is RoutedLoopResult =>
         !!c &&
         c.coordinates.length >= 4 &&
-        c.distanceKm >= request.distanceKm * 0.32 &&
+        c.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_EMERGENCY &&
         c.distanceKm <= request.distanceKm * maxShare &&
         !hasHardTeleportEdge(c.coordinates) &&
         !hasHardSidepathAccess(c.segments) &&
@@ -1867,8 +1883,8 @@ async function generateRouteWithEngine(
   }
 
   const minLoopKmFinal = usedRelaxedFallback
-    ? request.distanceKm * 0.35
-    : minLoopKm;
+    ? request.distanceKm * MIN_LOOP_SHARE_EMERGENCY
+    : Math.max(minLoopKm, request.distanceKm * MIN_LOOP_SHARE_SHIP);
 
   if (
     finalMetrics.directionCoverage < minDirectionCoverage ||
@@ -1879,10 +1895,11 @@ async function generateRouteWithEngine(
       ? approachMaxLoopShare(baseUrban)
       : maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
     const emergencyShare = emergencyMaxLoopShare(request.bikeType);
-    // Keep imperfect distance only when geometry is still rideable.
+    // Keep imperfect distance only when geometry is still rideable — never
+    // below the emergency floor (blocks 60→34-style undershoots).
     if (
       best.coordinates.length >= 4 &&
-      best.distanceKm >= request.distanceKm * 0.35 &&
+      best.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_SHIP &&
       best.distanceKm <= request.distanceKm * maxShare &&
       passesDeliverableGeometry(best.coordinates, {
         targetDistanceKm: request.distanceKm,
@@ -1906,7 +1923,7 @@ async function generateRouteWithEngine(
       }
     } else if (
       best.coordinates.length >= 4 &&
-      best.distanceKm >= request.distanceKm * 0.32 &&
+      best.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_EMERGENCY &&
       best.distanceKm <= request.distanceKm * emergencyShare &&
       !hasHardSidepathAccess(best.segments) &&
       !hasForbiddenBikeAccess(best.segments) &&
@@ -1995,9 +2012,26 @@ async function generateRouteWithEngine(
     );
   }
 
-  // Mirror on the exact polyline we ship (same coords as GPX densify input).
+  // Hard distance floor — never ship half-length loops as "OK".
+  const minShipShare = usedRelaxedFallback
+    ? MIN_LOOP_SHARE_EMERGENCY
+    : MIN_LOOP_SHARE_SHIP;
+  if (finalized.distanceKm < request.distanceKm * minShipShare) {
+    throw new Error(
+      `Trasa wyszła za krótka (${finalized.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km) — spróbuj innego kierunku lub większego dystansu.`,
+    );
+  }
+
+  // Mirror on densified nav polyline (same densify path as GPX) so audit and
+  // ship gate agree — sparse coords under-counted reverse overlap.
   if (!approachMode) {
-    const mirrorM = mirroredPrefixLengthM(finalized.coordinates);
+    const mirrorCoords = prepareCoordinatesForNavigation(
+      finalized.coordinates,
+      { start: request.start },
+    );
+    const mirrorM = mirroredPrefixLengthM(
+      mirrorCoords.length >= 4 ? mirrorCoords : finalized.coordinates,
+    );
     const mirrorBudget = maxMirroredPrefixBudgetM(request.distanceKm);
     if (mirrorM > mirrorBudget) {
       throw new Error(
