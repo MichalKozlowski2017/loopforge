@@ -21,7 +21,7 @@ import {
   isRoutingReady,
   surfaceBreakdownFromSegments,
 } from "@loopforge/routing";
-import { buildGpx } from "@loopforge/gpx";
+import { buildGpx, densifyTrackForNavigation, GPX_NAV_MAX_EDGE_M } from "@loopforge/gpx";
 import { scoreRoute } from "@loopforge/scoring";
 import { buildLoopWaypointsWithVia } from "./via-points";
 import { validateViaPointsForRoute } from "./via-validation";
@@ -259,6 +259,22 @@ function buildGeneratedRoute(
       "Trasa ma przerwy w nawigacji (skróty przez mapę) — spróbuj innego kierunku lub krótszego dystansu.",
     );
   }
+  // Final GPX-identical mirror gate (densify 5 m). Catches cases sparse accept missed.
+  if (!request.approachEnabled && !options.placeholder) {
+    const gpxTrack = densifyTrackForNavigation(
+      displayCoordinates,
+      GPX_NAV_MAX_EDGE_M,
+    );
+    if (gpxTrack.length >= 4) {
+      const gpxMirrorM = mirroredPrefixLengthM(gpxTrack);
+      const mirrorBudget = maxMirroredPrefixBudgetM(distanceKm);
+      if (gpxMirrorM > mirrorBudget) {
+        throw new Error(
+          `Nie udało się wygenerować czystej pętli (powrót tą samą drogą ~${Math.round(gpxMirrorM)} m). Spróbuj innego kierunku lub krótszego dystansu.`,
+        );
+      }
+    }
+  }
   const syncedMapGeojson = buildRouteMapGeoJson(
     displayCoordinates,
     options.brouterMessages,
@@ -368,14 +384,17 @@ function approachMaxLoopShare(urban: boolean): number {
   return urban ? MAX_LOOP_SHARE_APPROACH_URBAN : MAX_LOOP_SHARE_APPROACH;
 }
 
-/** Mirror length after nav densify — matches GPX audit (sparse coords under-count). */
+/** Mirror length after the same densify path as buildGpx (default 5 m edges). */
 function densifiedMirrorLengthM(
   coordinates: [number, number][],
   start: LatLng,
 ): number {
   if (coordinates.length < 4) return 0;
-  const nav = prepareCoordinatesForNavigation(coordinates, { start });
-  return mirroredPrefixLengthM(nav.length >= 4 ? nav : coordinates);
+  // Match buildGeneratedRoute: prune stubs, then densify like GPX export.
+  const pruned = prepareCoordinatesForNavigation(coordinates, { start });
+  const base = pruned.length >= 4 ? pruned : coordinates;
+  const densified = densifyTrackForNavigation(base, GPX_NAV_MAX_EDGE_M);
+  return mirroredPrefixLengthM(densified.length >= 4 ? densified : base);
 }
 
 function exceedsMirrorBudget(
@@ -1654,6 +1673,106 @@ async function generateRouteWithEngine(
       } catch (error) {
         if (process.env.NODE_ENV !== "production") {
           console.warn("[loopforge] recovery variant failed:", error);
+        }
+      }
+    }
+  }
+
+  // Road 20/35 km: dedicated no-prefs recovery — main stress GEN_FAIL bucket.
+  if (
+    !best &&
+    request.bikeType === "road" &&
+    request.distanceKm <= 40 &&
+    Date.now() < deadlineMs &&
+    routedFetches < maxRoutedFetches + 3
+  ) {
+    const roadPrefs = mergeLoopPrefs(
+      profilePrefs,
+      urbanWaypointAdjustments(request.distanceKm, true, baseUrban),
+    );
+    const roadScales = [1.0, 1.2, 1.4, 1.55, 0.85, 1.7];
+    for (let ri = 0; ri < roadScales.length; ri++) {
+      if (Date.now() > deadlineMs) break;
+      if (routedFetches >= maxRoutedFetches + 3) break;
+      try {
+        const shape = loopShapeForVariant(
+          request.distanceKm,
+          ri % 5,
+          roadPrefs,
+        );
+        const viaCoords =
+          request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
+        const waypoints = buildLoopWaypointsWithVia(
+          request.start,
+          request.distanceKm,
+          request.direction,
+          ri % 5,
+          roadScales[ri]!,
+          shape,
+          false,
+          jitter,
+          viaCoords,
+          undefined,
+          roadPrefs,
+        );
+        routedFetches += 1;
+        const routed = await fetchLoopRouteResilient(fetchRoute, {
+          start: request.start,
+          bikeType: request.bikeType,
+          waypoints,
+          rideProfile: request.profile,
+          avoidAsphalt: false,
+          preferQuietRoutes: false,
+          urbanRouting: true,
+          skipGpx: true,
+        });
+        if (hasHardTeleportEdge(routed.coordinates)) continue;
+        if (hasHardSidepathAccess(routed.segments)) continue;
+        if (hasForbiddenBikeAccess(routed.segments)) continue;
+        const { refined, metrics } = applySpurRefinement(
+          routed,
+          request.distanceKm,
+          request.start,
+          request.direction,
+          shape,
+          false,
+          options?.approachCoordinates,
+          (request.viaPoints?.length ?? 0) > 0,
+          roadPrefs,
+          false,
+        );
+        const shareOk =
+          refined.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_SHIP &&
+          refined.distanceKm <=
+            request.distanceKm * emergencyMaxLoopShare(request.bikeType);
+        if (
+          shareOk &&
+          passesDeliverableGeometry(refined.coordinates, {
+            targetDistanceKm: request.distanceKm,
+            actualDistanceKm: refined.distanceKm,
+            start: request.start,
+            direction: request.direction,
+            approachMode: options?.approachCoordinates != null,
+            urban: baseUrban,
+            relaxed: true,
+            preferQuiet: false,
+            emergency: true,
+          })
+        ) {
+          best = refined;
+          usedRelaxedFallback = true;
+          if (process.env.NODE_ENV !== "production") {
+            console.warn(
+              "[loopforge] road-short recovery:",
+              `${refined.distanceKm.toFixed(1)} km`,
+              `dir=${metrics.directionCoverage.toFixed(2)}`,
+            );
+          }
+          break;
+        }
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[loopforge] road-short recovery failed:", error);
         }
       }
     }
