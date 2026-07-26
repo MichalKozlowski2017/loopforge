@@ -1214,6 +1214,7 @@ async function generateRouteWithEngine(
               `[loopforge] skip use_sidepath: ${Math.round(bad.useSidepathM)}m dist=${refined.distanceKm.toFixed(1)}km`,
             );
           }
+          if (routeAvoidAsphalt || routePreferQuiet) prefsOneShotDone = true;
           continue;
         }
 
@@ -1225,6 +1226,7 @@ async function generateRouteWithEngine(
               `[loopforge] skip forbidden access: ${Math.round(bad.forbiddenM)}m dist=${refined.distanceKm.toFixed(1)}km`,
             );
           }
+          if (routeAvoidAsphalt || routePreferQuiet) prefsOneShotDone = true;
           continue;
         }
 
@@ -1259,7 +1261,9 @@ async function generateRouteWithEngine(
               ? Math.min(1.55, 1.14 + request.distanceKm / 320)
               : routeAvoidAsphalt
                 ? Math.min(1.55, 1.12 + request.distanceKm / 320)
-                : 1.7;
+                : request.avoidAsphalt && request.distanceKm >= 50
+                  ? Math.min(2.15, 1.28 + request.distanceKm / 260)
+                  : 1.7;
           const nextScale = Math.min(
             maxScale,
             Math.max(scale + 0.08, scale * stretch),
@@ -1757,21 +1761,25 @@ async function generateRouteWithEngine(
     !best &&
     request.bikeType === "road" &&
     request.distanceKm <= 40 &&
-    Date.now() < deadlineMs + 25_000 &&
-    routedFetches < maxRoutedFetches + 6
+    Date.now() < deadlineMs + 30_000 &&
+    routedFetches < maxRoutedFetches + 8
   ) {
     const roadPrefs = mergeLoopPrefs(
       profilePrefs,
       urbanWaypointAdjustments(request.distanceKm, true, baseUrban),
     );
-    const roadDirs = recoveryDirectionOrder(request.direction).slice(0, 5);
-    const roadScales = [1.0, 1.25, 1.45, 0.9, 1.6, 1.75, 1.1];
+    const roadDirs = recoveryDirectionOrder(request.direction).slice(0, 6);
+    // Undershoot islands (e.g. 12 km clean @20 target) need oversized cones first.
+    const roadScales =
+      request.distanceKm <= 25
+        ? [1.5, 1.75, 2.0, 1.25, 2.25, 1.0, 2.5, 0.9]
+        : [1.2, 1.45, 1.7, 1.0, 1.9, 2.1, 0.9];
     let roadSlot = 0;
-    const roadAttempts = Math.min(10, roadDirs.length * 2);
-    const roadDeadline = deadlineMs + 25_000;
+    const roadAttempts = Math.min(12, roadDirs.length * 2);
+    const roadDeadline = deadlineMs + 30_000;
     for (let ri = 0; ri < roadAttempts; ri++) {
       if (Date.now() > roadDeadline) break;
-      if (routedFetches >= maxRoutedFetches + 6) break;
+      if (routedFetches >= maxRoutedFetches + 8) break;
       try {
         const roadDir = roadDirs[roadSlot % roadDirs.length]!;
         const roadScale = roadScales[roadSlot % roadScales.length]!;
@@ -1855,6 +1863,114 @@ async function generateRouteWithEngine(
       } catch (error) {
         if (process.env.NODE_ENV !== "production") {
           console.warn("[loopforge] road-short recovery failed:", error);
+        }
+      }
+    }
+  }
+
+  // Gravel/MTB +A mid/long: no-prefs oversized recovery after avoid burns the graph.
+  if (
+    !best &&
+    (request.bikeType === "gravel" || request.bikeType === "mtb") &&
+    request.avoidAsphalt &&
+    request.distanceKm >= 35 &&
+    Date.now() < deadlineMs + 25_000 &&
+    routedFetches < maxRoutedFetches + 6
+  ) {
+    const avoidPrefs = mergeLoopPrefs(
+      profilePrefs,
+      urbanWaypointAdjustments(request.distanceKm, true, baseUrban),
+    );
+    const avoidDirs = recoveryDirectionOrder(request.direction).slice(0, 4);
+    const avoidScales =
+      request.distanceKm >= 50
+        ? [1.35, 1.55, 1.75, 1.95, 1.2, 2.15]
+        : [1.25, 1.45, 1.65, 1.1, 1.85, 2.0];
+    const avoidDeadline = deadlineMs + 25_000;
+    for (let ai = 0; ai < avoidScales.length; ai++) {
+      if (Date.now() > avoidDeadline) break;
+      if (routedFetches >= maxRoutedFetches + 6) break;
+      try {
+        const avoidDir = avoidDirs[ai % avoidDirs.length]!;
+        const shape = loopShapeForVariant(
+          request.distanceKm,
+          ai % 5,
+          avoidPrefs,
+        );
+        const viaCoords =
+          request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
+        const waypoints = buildLoopWaypointsWithVia(
+          request.start,
+          request.distanceKm,
+          avoidDir,
+          ai % 5,
+          avoidScales[ai]!,
+          shape,
+          false,
+          jitter,
+          viaCoords,
+          undefined,
+          avoidPrefs,
+        );
+        routedFetches += 1;
+        const routed = await fetchLoopRouteResilient(fetchRoute, {
+          start: request.start,
+          bikeType: request.bikeType,
+          waypoints,
+          rideProfile: request.profile,
+          avoidAsphalt: false,
+          preferQuietRoutes: false,
+          urbanRouting: true,
+          skipGpx: true,
+        });
+        if (hasHardTeleportEdge(routed.coordinates)) continue;
+        if (hasHardSidepathAccess(routed.segments)) continue;
+        if (hasForbiddenBikeAccess(routed.segments)) continue;
+        const { refined, metrics } = applySpurRefinement(
+          routed,
+          request.distanceKm,
+          request.start,
+          avoidDir,
+          shape,
+          false,
+          options?.approachCoordinates,
+          (request.viaPoints?.length ?? 0) > 0,
+          avoidPrefs,
+          false,
+        );
+        const shareOk =
+          refined.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_SHIP &&
+          refined.distanceKm <=
+            request.distanceKm * emergencyMaxLoopShare(request.bikeType);
+        if (
+          shareOk &&
+          passesDeliverableGeometry(refined.coordinates, {
+            targetDistanceKm: request.distanceKm,
+            actualDistanceKm: refined.distanceKm,
+            start: request.start,
+            direction: avoidDir,
+            approachMode: options?.approachCoordinates != null,
+            urban: baseUrban,
+            relaxed: true,
+            preferQuiet: false,
+            emergency: true,
+          })
+        ) {
+          best = refined;
+          usedRelaxedFallback = true;
+          if (process.env.NODE_ENV !== "production") {
+            console.warn(
+              "[loopforge] avoid-long recovery:",
+              `${refined.distanceKm.toFixed(1)} km`,
+              `dir=${metrics.directionCoverage.toFixed(2)}`,
+              `bearing=${avoidDir}`,
+            );
+          }
+          break;
+        }
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[loopforge] avoid-long recovery failed:", error);
         }
       }
     }
@@ -2031,6 +2147,149 @@ async function generateRouteWithEngine(
     }
   }
 
+  // Last chance: clean-but-short candidates never became `best`, so the
+  // post-finalize stretch rescue never ran (road-tech 20 → 12 km geoOk trap).
+  if (!best) {
+    const shortClean = [bestRejected, bestFallback, bestLowOverlap].find(
+      (c): c is RoutedLoopResult =>
+        !!c &&
+        c.coordinates.length >= 4 &&
+        c.distanceKm >= request.distanceKm * 0.4 &&
+        c.distanceKm < request.distanceKm * MIN_LOOP_SHARE_SHIP &&
+        !hasHardTeleportEdge(c.coordinates) &&
+        !hasHardSidepathAccess(c.segments) &&
+        !hasForbiddenBikeAccess(c.segments) &&
+        passesDeliverableGeometry(c.coordinates, {
+          targetDistanceKm: request.distanceKm,
+          actualDistanceKm: c.distanceKm,
+          start: request.start,
+          direction: request.direction,
+          approachMode: options?.approachCoordinates != null,
+          urban: baseUrban,
+          relaxed: true,
+          preferQuiet: false,
+          emergency: true,
+        }),
+    );
+    if (shortClean || hardRecoveryCase) {
+      const stretchDeadline =
+        deadlineMs +
+        (request.bikeType === "road"
+          ? 30_000
+          : request.distanceKm >= 50
+            ? 25_000
+            : 15_000);
+      const stretchFetchCap = maxRoutedFetches + 8;
+      const stretchScales =
+        request.distanceKm <= 25
+          ? [1.6, 1.9, 2.2, 1.35, 2.5, 1.15]
+          : request.distanceKm >= 50
+            ? [1.4, 1.65, 1.9, 2.15, 1.25, 2.35]
+            : [1.35, 1.55, 1.8, 2.05, 1.2, 2.2];
+      const stretchDirs = recoveryDirectionOrder(request.direction).slice(0, 4);
+      if (Date.now() < stretchDeadline && routedFetches < stretchFetchCap) {
+        reportProgress(onProgress, {
+          phase: "refining",
+          message: "Docinam kilometry",
+          detail: shortClean
+            ? `Za krótko (${shortClean.distanceKm.toFixed(1)} km) — poszerzam czystą pętlę`
+            : "Ostatnia próba poszerzenia obwodu",
+          progress: 90,
+        });
+        const stretchPrefs = mergeLoopPrefs(
+          profilePrefs,
+          urbanWaypointAdjustments(request.distanceKm, true, baseUrban),
+        );
+        for (let si = 0; si < stretchScales.length; si++) {
+          if (Date.now() > stretchDeadline) break;
+          if (routedFetches >= stretchFetchCap) break;
+          try {
+            const stretchDir = stretchDirs[si % stretchDirs.length]!;
+            const shape = loopShapeForVariant(
+              request.distanceKm,
+              si % 5,
+              stretchPrefs,
+            );
+            const viaCoords =
+              request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ??
+              [];
+            const waypoints = buildLoopWaypointsWithVia(
+              request.start,
+              request.distanceKm,
+              stretchDir,
+              si % 5,
+              stretchScales[si]!,
+              shape,
+              false,
+              jitter,
+              viaCoords,
+              undefined,
+              stretchPrefs,
+            );
+            routedFetches += 1;
+            const routed = await fetchLoopRouteResilient(fetchRoute, {
+              start: request.start,
+              bikeType: request.bikeType,
+              waypoints,
+              rideProfile: request.profile,
+              avoidAsphalt: false,
+              preferQuietRoutes: false,
+              urbanRouting: true,
+              skipGpx: true,
+            });
+            if (hasHardTeleportEdge(routed.coordinates)) continue;
+            if (hasHardSidepathAccess(routed.segments)) continue;
+            if (hasForbiddenBikeAccess(routed.segments)) continue;
+            const { refined, metrics } = applySpurRefinement(
+              routed,
+              request.distanceKm,
+              request.start,
+              stretchDir,
+              shape,
+              false,
+              options?.approachCoordinates,
+              (request.viaPoints?.length ?? 0) > 0,
+              stretchPrefs,
+              false,
+            );
+            const shareOk =
+              refined.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_SHIP &&
+              refined.distanceKm <=
+                request.distanceKm * emergencyMaxLoopShare(request.bikeType);
+            if (
+              shareOk &&
+              passesDeliverableGeometry(refined.coordinates, {
+                targetDistanceKm: request.distanceKm,
+                actualDistanceKm: refined.distanceKm,
+                start: request.start,
+                direction: stretchDir,
+                approachMode: options?.approachCoordinates != null,
+                urban: baseUrban,
+                relaxed: true,
+                preferQuiet: false,
+                emergency: true,
+              })
+            ) {
+              best = refined;
+              usedRelaxedFallback = true;
+              if (process.env.NODE_ENV !== "production") {
+                console.warn(
+                  "[loopforge] pre-throw stretch:",
+                  `${refined.distanceKm.toFixed(1)} km`,
+                  `dir=${metrics.directionCoverage.toFixed(2)}`,
+                  `bearing=${stretchDir}`,
+                );
+              }
+              break;
+            }
+          } catch {
+            // try next stretch scale
+          }
+        }
+      }
+    }
+  }
+
   if (!best) {
     const urbanHint = baseUrban
       ? " W aglomeracji spróbuj krótszego dystansu albo startu za miastem."
@@ -2045,7 +2304,7 @@ async function generateRouteWithEngine(
           request.start,
           request.direction,
         );
-        const mirrorM = mirroredPrefixLengthM(sample.coordinates);
+        const mirrorM = densifiedMirrorLengthM(sample.coordinates, request.start);
         const geoOk = passesDeliverableGeometry(sample.coordinates, {
           targetDistanceKm: request.distanceKm,
           actualDistanceKm: sample.distanceKm,
@@ -2270,12 +2529,22 @@ async function generateRouteWithEngine(
   // Before failing, try a dedicated stretch rescue (no quiet/avoid).
   const minShipShare = MIN_LOOP_SHARE_SHIP;
   if (finalized.distanceKm < request.distanceKm * minShipShare) {
-    const rescueDeadline = deadlineMs + (request.distanceKm >= 50 ? 15_000 : 0);
+    const rescueDeadline =
+      deadlineMs +
+      (request.bikeType === "road"
+        ? 25_000
+        : request.distanceKm >= 50
+          ? 15_000
+          : 8_000);
     const rescueScales =
-      request.distanceKm >= 50
-        ? [1.25, 1.45, 1.65, 1.85, 2.05, 2.2]
-        : [1.15, 1.3, 1.45, 1.6, 1.75];
-    const rescueFetchCap = maxRoutedFetches + (request.distanceKm >= 50 ? 5 : 3);
+      request.distanceKm <= 25
+        ? [1.5, 1.75, 2.0, 2.25, 1.3, 2.5]
+        : request.distanceKm >= 50
+          ? [1.25, 1.45, 1.65, 1.85, 2.05, 2.2]
+          : [1.15, 1.3, 1.45, 1.6, 1.75, 1.95];
+    const rescueFetchCap =
+      maxRoutedFetches +
+      (request.bikeType === "road" || request.distanceKm >= 50 ? 6 : 3);
     let rescued: RoutedLoopResult | null = null;
     if (Date.now() < rescueDeadline && routedFetches < rescueFetchCap) {
       reportProgress(onProgress, {
