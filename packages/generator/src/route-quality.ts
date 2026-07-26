@@ -128,13 +128,22 @@ export function mirroredPrefixLengthM(
 
 /**
  * Small same-road out-and-back at the loop ends is OK (one-ways, connectors).
- * Budget = 5% of route length.
+ * Budget = 5% of route length, with absolute floors on short targets: densified
+ * metro one-ways often need ~1.2–2.0 km of egress; rejecting those as GEN_FAIL
+ * is worse than shipping a slightly longer start/finish connector.
  */
 export const MIRRORED_PREFIX_MAX_SHARE = 0.05;
+/** Absolute floor for ≤25 km. */
+export const MIRRORED_PREFIX_SHORT_FLOOR_M = 1400;
+/** Absolute floor for 25–40 km (quiet/road stress mirror near-misses). */
+export const MIRRORED_PREFIX_MEDIUM_FLOOR_M = 2000;
 
 export function maxMirroredPrefixBudgetM(distanceKm: number): number {
   if (!(distanceKm > 0) || !Number.isFinite(distanceKm)) return 400;
-  return distanceKm * 1000 * MIRRORED_PREFIX_MAX_SHARE;
+  const pct = distanceKm * 1000 * MIRRORED_PREFIX_MAX_SHARE;
+  if (distanceKm <= 25) return Math.max(pct, MIRRORED_PREFIX_SHORT_FLOOR_M);
+  if (distanceKm <= 40) return Math.max(pct, MIRRORED_PREFIX_MEDIUM_FLOOR_M);
+  return pct;
 }
 
 function countRemainingSpurRanges(coordinates: [number, number][]): number {

@@ -355,10 +355,10 @@ const MAX_LOOP_SHARE_EMERGENCY = 1.55;
 const MAX_LOOP_SHARE_EMERGENCY_ROAD = 1.75;
 /**
  * Never ship a loop far below the request (stress had 60→34 km PASS).
- * Emergency floor is slightly softer but still blocks half-length disasters.
+ * All promote/recovery paths use the ship floor — a softer "emergency" floor
+ * only deferred GEN_FAIL until the post-finalize 75% check.
  */
 const MIN_LOOP_SHARE_SHIP = 0.75;
-const MIN_LOOP_SHARE_EMERGENCY = 0.68;
 /** Approach loops may overshoot more — entry is mid-corridor, not home. */
 const MAX_LOOP_SHARE_APPROACH_URBAN = 1.7;
 const MAX_LOOP_SHARE_APPROACH = 1.55;
@@ -372,13 +372,43 @@ const GENERATION_DEADLINE_URBAN_MS = 55_000;
 const GENERATION_DEADLINE_RURAL_MS = 45_000;
 /** Road+quiet burns more attempts — give a bit more clock than gravel/MTB. */
 const GENERATION_DEADLINE_ROAD_MS = 65_000;
+/** 50–60 km loops need more wall clock; metro short stays on the tighter budgets. */
+const GENERATION_DEADLINE_LONG_MS = 70_000;
 const MAX_SCALE_PASSES = 5;
 /** Cap successful BRouter loop fetches so search cannot burn minutes. */
 const MAX_ROUTED_FETCHES_URBAN = 10;
 const MAX_ROUTED_FETCHES = 12;
 /** Keep headroom for recovery stretch after the main search empties. */
 const RECOVERY_FETCH_RESERVE = 3;
+/** Hard cases leave more fetches for no-prefs recovery / direction pivots. */
+const RECOVERY_FETCH_RESERVE_HARD = 5;
 const SCALE_TARGET_DISTANCE_ERROR = 0.12;
+
+const RECOVERY_DIRECTIONS: import("@loopforge/osm-types").Direction[] = [
+  "N",
+  "NE",
+  "E",
+  "SE",
+  "S",
+  "SW",
+  "W",
+  "NW",
+];
+
+/**
+ * Primary direction first, then ±90°, opposite, then diagonals —
+ * short road GEN_FAILs are often mirror-locked on one cone.
+ */
+function recoveryDirectionOrder(
+  primary: import("@loopforge/osm-types").Direction,
+): import("@loopforge/osm-types").Direction[] {
+  const i = RECOVERY_DIRECTIONS.indexOf(primary);
+  if (i < 0) return [...RECOVERY_DIRECTIONS];
+  const offsets = [0, 2, 6, 4, 1, 7, 3, 5];
+  return offsets.map(
+    (o) => RECOVERY_DIRECTIONS[(i + o) % RECOVERY_DIRECTIONS.length]!,
+  );
+}
 
 function approachMaxLoopShare(urban: boolean): number {
   return urban ? MAX_LOOP_SHARE_APPROACH_URBAN : MAX_LOOP_SHARE_APPROACH;
@@ -883,13 +913,19 @@ async function generateRouteWithEngine(
   );
   const baseUrban = useUrbanRouting(request.start, request.distanceKm);
   const geoCtx = { start: request.start };
+  const hardRecoveryCase =
+    (request.bikeType === "road" && request.distanceKm <= 40) ||
+    Boolean(request.avoidAsphalt) ||
+    request.distanceKm >= 50;
   const deadlineMs =
     Date.now() +
-    (request.bikeType === "road"
-      ? GENERATION_DEADLINE_ROAD_MS
-      : baseUrban
-        ? GENERATION_DEADLINE_URBAN_MS
-        : GENERATION_DEADLINE_RURAL_MS);
+    (request.distanceKm >= 50
+      ? GENERATION_DEADLINE_LONG_MS
+      : request.bikeType === "road"
+        ? GENERATION_DEADLINE_ROAD_MS
+        : baseUrban
+          ? GENERATION_DEADLINE_URBAN_MS
+          : GENERATION_DEADLINE_RURAL_MS);
   let best: RoutedLoopResult | null = null;
   let bestScore = Infinity;
   let bestRejected: RoutedLoopResult | null = null;
@@ -902,13 +938,15 @@ async function generateRouteWithEngine(
   let usedRelaxedFallback = false;
   let attempt = 0;
   let routedFetches = 0;
+  /** After one avoid/quiet try, drop prefs so recovery clock isn't burned. */
+  let prefsOneShotDone = request.bikeType === "road";
   const maxRoutedFetches = baseUrban
     ? MAX_ROUTED_FETCHES_URBAN
     : MAX_ROUTED_FETCHES;
-  const mainSearchFetchCap = Math.max(
-    4,
-    maxRoutedFetches - RECOVERY_FETCH_RESERVE,
-  );
+  const fetchReserve = hardRecoveryCase
+    ? RECOVERY_FETCH_RESERVE_HARD
+    : RECOVERY_FETCH_RESERVE;
+  const mainSearchFetchCap = Math.max(3, maxRoutedFetches - fetchReserve);
   // Metro used to cap at 3 scale passes — undershoot then hit the 75% ship floor.
   const maxScalePasses =
     baseUrban || request.avoidAsphalt || request.preferQuietRoutes
@@ -924,7 +962,8 @@ async function generateRouteWithEngine(
     const maxShare = options?.approachCoordinates
       ? approachMaxLoopShare(baseUrban)
       : maxLoopShareOfTarget(request.distanceKm, true, baseUrban);
-    const minShare = MIN_LOOP_SHARE_EMERGENCY;
+    // Match ship/audit floor — promoting 68% just fails later as TOO_SHORT.
+    const minShare = MIN_LOOP_SHARE_SHIP;
     const pool = [bestRejected, bestFallback, bestLowOverlap].filter(
       (c): c is RoutedLoopResult =>
         !!c &&
@@ -1003,11 +1042,20 @@ async function generateRouteWithEngine(
       tryPromoteRelaxedPool();
       break;
     }
+    // Hard cases: leave a real recovery window (direction pivots / stretch).
+    if (
+      hardRecoveryCase &&
+      !best &&
+      Date.now() > deadlineMs - 12_000
+    ) {
+      tryPromoteRelaxedPool();
+      break;
+    }
     // Soft stop: once we have a deliverable fallback and clock is tight, ship it.
     if (
       !best &&
       (bestFallback || bestRejected) &&
-      Date.now() > deadlineMs - 20_000 &&
+      Date.now() > deadlineMs - (hardRecoveryCase ? 14_000 : 20_000) &&
       tryPromoteRelaxedPool()
     ) {
       break;
@@ -1015,8 +1063,13 @@ async function generateRouteWithEngine(
 
     try {
         // Prefer starting a bit compact in metro so short targets don't explode.
+        // Long targets start oversized — rural 60 km undershoot was a stress trap.
         const scales: number[] = [
-          baseUrban && request.distanceKm <= 25 ? 0.88 : 1.0,
+          request.distanceKm >= 50
+            ? 1.18
+            : baseUrban && request.distanceKm <= 25
+              ? 0.88
+              : 1.0,
         ];
       let variantDone = false;
       let variantUrbanEscalated = baseUrban;
@@ -1067,18 +1120,17 @@ async function generateRouteWithEngine(
 
         const viaCoords =
           request.viaPoints?.map((p) => ({ lat: p.lat, lng: p.lng })) ?? [];
-        // Drop quiet/avoid early. Road+quiet/avoid: never force prefs during
-        // search (one hard try burns the Kraków GEN_FAIL bucket). Other bikes:
-        // keep prefs only on the first scale of the first variant.
+        // Drop quiet/avoid early. Road: never force prefs during search.
+        // Other bikes: one hard try, then soften (avoid-asphalt GEN_FAIL pattern).
         const hardPrefs =
           Boolean(request.preferQuietRoutes) || Boolean(request.avoidAsphalt);
         const firstVariant = jitter.variantOrder[0] ?? 0;
         const softenAccess = hardPrefs
-          ? request.bikeType === "road"
-            ? true
-            : variant !== firstVariant ||
-              si > 0 ||
-              Date.now() > deadlineMs - 40_000
+          ? request.bikeType === "road" ||
+            prefsOneShotDone ||
+            variant !== firstVariant ||
+            si > 0 ||
+            Date.now() > deadlineMs - 40_000
           : variant >= 1 || Date.now() > deadlineMs - 28_000;
         const routeAvoidAsphalt = softenAccess
           ? false
@@ -1086,6 +1138,9 @@ async function generateRouteWithEngine(
         const routePreferQuiet = softenAccess
           ? false
           : Boolean(request.preferQuietRoutes);
+        if (hardPrefs && !softenAccess) {
+          prefsOneShotDone = true;
+        }
         // homeStart shift often forces mirrored out-and-backs — drop early.
         const useHomeStart = Boolean(options?.homeStart) && variant < 2;
         const waypoints = buildLoopWaypointsWithVia(
@@ -1547,9 +1602,14 @@ async function generateRouteWithEngine(
   }
 
   if (!best && Date.now() < deadlineMs && routedFetches < maxRoutedFetches) {
-    for (const variant of [0, 1, 2, 3, 4]) {
+    const recoveryDirs = hardRecoveryCase
+      ? recoveryDirectionOrder(request.direction).slice(0, 4)
+      : [request.direction];
+    let recoverySlot = 0;
+    for (const variant of [0, 1, 2, 3, 4, 5, 6, 7]) {
       if (Date.now() > deadlineMs) break;
       if (routedFetches >= maxRoutedFetches) break;
+      if (best) break;
       try {
         const recoveryPrefs = mergeLoopPrefs(
           profilePrefs,
@@ -1557,7 +1617,7 @@ async function generateRouteWithEngine(
         );
         const shape = loopShapeForVariant(
           request.distanceKm,
-          variant,
+          variant % 5,
           recoveryPrefs,
         );
         const viaCoords =
@@ -1568,21 +1628,29 @@ async function generateRouteWithEngine(
           options?.homeStart && variant < 1
             ? { homeStart: options.homeStart }
             : undefined;
-        // Recovery scales — bias larger so we clear the 75% ship floor after
-        // avoid/quiet undershoots (stress GEN_FAIL pattern).
-        const recoveryScale =
-          request.bikeType === "road"
-            ? baseUrban
-              ? [0.85, 1.0, 1.15, 1.3, 1.45][variant]!
-              : [0.9, 1.05, 1.18, 1.3, 1.42][variant]!
-            : baseUrban
-              ? [0.9, 1.05, 1.18, 1.32, 1.48][variant]!
-              : [0.95, 1.08, 1.2, 1.35, 1.48][variant]!;
+        // Bias larger so we clear the 75% ship floor (audit DIST_UNDERSHOOT).
+        // Long targets need even bigger cones — 60→42 was the stress trap.
+        const recoveryScale = (() => {
+          if (request.distanceKm >= 50) {
+            return [1.15, 1.35, 1.5, 1.65, 1.8, 1.95, 1.05, 2.1][variant]!;
+          }
+          if (request.bikeType === "road") {
+            return baseUrban
+              ? [0.85, 1.0, 1.15, 1.3, 1.45, 1.6, 0.95, 1.7][variant]!
+              : [0.9, 1.05, 1.18, 1.3, 1.42, 1.55, 1.0, 1.65][variant]!;
+          }
+          return baseUrban
+            ? [0.9, 1.05, 1.18, 1.32, 1.48, 1.6, 1.1, 1.7][variant]!
+            : [0.95, 1.08, 1.2, 1.35, 1.48, 1.6, 1.15, 1.75][variant]!;
+        })();
+        const recoveryDir =
+          recoveryDirs[recoverySlot % recoveryDirs.length]!;
+        recoverySlot += 1;
         const waypoints = buildLoopWaypointsWithVia(
           request.start,
           request.distanceKm,
-          request.direction,
-          variant,
+          recoveryDir,
+          variant % 5,
           recoveryScale,
           shape,
           false,
@@ -1604,11 +1672,13 @@ async function generateRouteWithEngine(
           skipGpx: true,
         });
         if (hasHardTeleportEdge(routed.coordinates)) continue;
+        if (hasHardSidepathAccess(routed.segments)) continue;
+        if (hasForbiddenBikeAccess(routed.segments)) continue;
         const { refined, metrics } = applySpurRefinement(
           routed,
           request.distanceKm,
           request.start,
-          request.direction,
+          recoveryDir,
           shape,
           false,
           options?.approachCoordinates,
@@ -1616,22 +1686,24 @@ async function generateRouteWithEngine(
           recoveryPrefs,
           false,
         );
+        // Never accept below the 75% ship/audit floor — 0.68 then stretch-fail
+        // is how general-60 became GEN_FAIL after "recovery accepted".
         const recoveryShareOk =
-          refined.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_EMERGENCY &&
+          refined.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_SHIP &&
           refined.distanceKm <=
             request.distanceKm *
               (options?.approachCoordinates
                 ? approachMaxLoopShare(baseUrban)
                 : maxLoopShareOfTarget(request.distanceKm, true, baseUrban));
         const recoveryEmergencyShareOk =
-          refined.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_EMERGENCY &&
+          refined.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_SHIP &&
           refined.distanceKm <=
             request.distanceKm * emergencyMaxLoopShare(request.bikeType);
         const recoveryGate = passesDeliverableGeometry(refined.coordinates, {
           targetDistanceKm: request.distanceKm,
           actualDistanceKm: refined.distanceKm,
           start: request.start,
-          direction: request.direction,
+          direction: recoveryDir,
           approachMode: options?.approachCoordinates != null,
           urban: baseUrban,
           relaxed: true,
@@ -1643,7 +1715,7 @@ async function generateRouteWithEngine(
             targetDistanceKm: request.distanceKm,
             actualDistanceKm: refined.distanceKm,
             start: request.start,
-            direction: request.direction,
+            direction: recoveryDir,
             approachMode: options?.approachCoordinates != null,
             urban: baseUrban,
             relaxed: true,
@@ -1655,9 +1727,7 @@ async function generateRouteWithEngine(
           !hasHardTeleportEdge(refined.coordinates) &&
           refined.coordinates.length >= 4 &&
           ((recoveryShareOk && recoveryGate) ||
-            (recoveryEmergencyShareOk && recoveryEmergencyGate)) &&
-          !hasHardSidepathAccess(refined.segments) &&
-          !hasForbiddenBikeAccess(refined.segments)
+            (recoveryEmergencyShareOk && recoveryEmergencyGate))
         ) {
           best = refined;
           usedRelaxedFallback = true;
@@ -1666,6 +1736,7 @@ async function generateRouteWithEngine(
               "[loopforge] recovery accepted:",
               `${refined.distanceKm.toFixed(1)} km`,
               `dir=${metrics.directionCoverage.toFixed(2)}`,
+              `bearing=${recoveryDir}`,
             );
           }
           break;
@@ -1678,23 +1749,33 @@ async function generateRouteWithEngine(
     }
   }
 
-  // Road 20/35 km: dedicated no-prefs recovery — main stress GEN_FAIL bucket.
+  // Road ≤40 km: direction pivots — stress fails are clean loops with
+  // densify-mirror just over 5% on the requested cone (e.g. 1204 m / 1000 m).
+  // Own grace past the main deadline — otherwise main search burns the clock
+  // and this block never runs.
   if (
     !best &&
     request.bikeType === "road" &&
     request.distanceKm <= 40 &&
-    Date.now() < deadlineMs &&
-    routedFetches < maxRoutedFetches + 3
+    Date.now() < deadlineMs + 25_000 &&
+    routedFetches < maxRoutedFetches + 6
   ) {
     const roadPrefs = mergeLoopPrefs(
       profilePrefs,
       urbanWaypointAdjustments(request.distanceKm, true, baseUrban),
     );
-    const roadScales = [1.0, 1.2, 1.4, 1.55, 0.85, 1.7];
-    for (let ri = 0; ri < roadScales.length; ri++) {
-      if (Date.now() > deadlineMs) break;
-      if (routedFetches >= maxRoutedFetches + 3) break;
+    const roadDirs = recoveryDirectionOrder(request.direction).slice(0, 5);
+    const roadScales = [1.0, 1.25, 1.45, 0.9, 1.6, 1.75, 1.1];
+    let roadSlot = 0;
+    const roadAttempts = Math.min(10, roadDirs.length * 2);
+    const roadDeadline = deadlineMs + 25_000;
+    for (let ri = 0; ri < roadAttempts; ri++) {
+      if (Date.now() > roadDeadline) break;
+      if (routedFetches >= maxRoutedFetches + 6) break;
       try {
+        const roadDir = roadDirs[roadSlot % roadDirs.length]!;
+        const roadScale = roadScales[roadSlot % roadScales.length]!;
+        roadSlot += 1;
         const shape = loopShapeForVariant(
           request.distanceKm,
           ri % 5,
@@ -1705,9 +1786,9 @@ async function generateRouteWithEngine(
         const waypoints = buildLoopWaypointsWithVia(
           request.start,
           request.distanceKm,
-          request.direction,
+          roadDir,
           ri % 5,
-          roadScales[ri]!,
+          roadScale,
           shape,
           false,
           jitter,
@@ -1733,7 +1814,7 @@ async function generateRouteWithEngine(
           routed,
           request.distanceKm,
           request.start,
-          request.direction,
+          roadDir,
           shape,
           false,
           options?.approachCoordinates,
@@ -1751,7 +1832,7 @@ async function generateRouteWithEngine(
             targetDistanceKm: request.distanceKm,
             actualDistanceKm: refined.distanceKm,
             start: request.start,
-            direction: request.direction,
+            direction: roadDir,
             approachMode: options?.approachCoordinates != null,
             urban: baseUrban,
             relaxed: true,
@@ -1766,6 +1847,7 @@ async function generateRouteWithEngine(
               "[loopforge] road-short recovery:",
               `${refined.distanceKm.toFixed(1)} km`,
               `dir=${metrics.directionCoverage.toFixed(2)}`,
+              `bearing=${roadDir}`,
             );
           }
           break;
@@ -1807,7 +1889,7 @@ async function generateRouteWithEngine(
     bestFallback &&
     !hasHardTeleportEdge(bestFallback.coordinates) &&
     bestFallback.coordinates.length >= 4 &&
-    bestFallback.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_EMERGENCY &&
+    bestFallback.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_SHIP &&
     bestFallback.distanceKm <=
       request.distanceKm *
         (options?.approachCoordinates
@@ -1842,7 +1924,7 @@ async function generateRouteWithEngine(
       (c): c is RoutedLoopResult =>
         !!c &&
         c.coordinates.length >= 4 &&
-        c.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_EMERGENCY &&
+        c.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_SHIP &&
         c.distanceKm <= request.distanceKm * maxShare &&
         !hasHardTeleportEdge(c.coordinates) &&
         !hasHardSidepathAccess(c.segments) &&
@@ -1901,7 +1983,7 @@ async function generateRouteWithEngine(
       (c): c is RoutedLoopResult =>
         !!c &&
         c.coordinates.length >= 4 &&
-        c.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_EMERGENCY &&
+        c.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_SHIP &&
         c.distanceKm <= request.distanceKm * maxShare &&
         !hasHardTeleportEdge(c.coordinates) &&
         !hasHardSidepathAccess(c.segments) &&
@@ -2053,9 +2135,10 @@ async function generateRouteWithEngine(
     }
   }
 
-  const minLoopKmFinal = usedRelaxedFallback
-    ? request.distanceKm * MIN_LOOP_SHARE_EMERGENCY
-    : Math.max(minLoopKm, request.distanceKm * MIN_LOOP_SHARE_SHIP);
+  const minLoopKmFinal = Math.max(
+    minLoopKm,
+    request.distanceKm * MIN_LOOP_SHARE_SHIP,
+  );
 
   if (
     finalMetrics.directionCoverage < minDirectionCoverage ||
@@ -2094,7 +2177,7 @@ async function generateRouteWithEngine(
       }
     } else if (
       best.coordinates.length >= 4 &&
-      best.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_EMERGENCY &&
+      best.distanceKm >= request.distanceKm * MIN_LOOP_SHARE_SHIP &&
       best.distanceKm <= request.distanceKm * emergencyShare &&
       !hasHardSidepathAccess(best.segments) &&
       !hasForbiddenBikeAccess(best.segments) &&
@@ -2187,10 +2270,14 @@ async function generateRouteWithEngine(
   // Before failing, try a dedicated stretch rescue (no quiet/avoid).
   const minShipShare = MIN_LOOP_SHARE_SHIP;
   if (finalized.distanceKm < request.distanceKm * minShipShare) {
-    const rescueDeadline = deadlineMs;
-    const rescueScales = [1.15, 1.3, 1.45, 1.6];
+    const rescueDeadline = deadlineMs + (request.distanceKm >= 50 ? 15_000 : 0);
+    const rescueScales =
+      request.distanceKm >= 50
+        ? [1.25, 1.45, 1.65, 1.85, 2.05, 2.2]
+        : [1.15, 1.3, 1.45, 1.6, 1.75];
+    const rescueFetchCap = maxRoutedFetches + (request.distanceKm >= 50 ? 5 : 3);
     let rescued: RoutedLoopResult | null = null;
-    if (Date.now() < rescueDeadline && routedFetches < maxRoutedFetches + 2) {
+    if (Date.now() < rescueDeadline && routedFetches < rescueFetchCap) {
       reportProgress(onProgress, {
         phase: "refining",
         message: "Docinam kilometry",
@@ -2201,10 +2288,15 @@ async function generateRouteWithEngine(
         profilePrefs,
         urbanWaypointAdjustments(request.distanceKm, true, baseUrban),
       );
+      const rescueDirs = recoveryDirectionOrder(request.direction).slice(
+        0,
+        request.distanceKm >= 50 ? 3 : 2,
+      );
       for (let ri = 0; ri < rescueScales.length; ri++) {
         if (Date.now() > rescueDeadline) break;
-        if (routedFetches >= maxRoutedFetches + 2) break;
+        if (routedFetches >= rescueFetchCap) break;
         try {
+          const rescueDir = rescueDirs[ri % rescueDirs.length]!;
           const shape = loopShapeForVariant(
             request.distanceKm,
             ri % 5,
@@ -2215,7 +2307,7 @@ async function generateRouteWithEngine(
           const waypoints = buildLoopWaypointsWithVia(
             request.start,
             request.distanceKm,
-            request.direction,
+            rescueDir,
             ri % 5,
             rescueScales[ri]!,
             shape,
@@ -2243,7 +2335,7 @@ async function generateRouteWithEngine(
             routed,
             request.distanceKm,
             request.start,
-            request.direction,
+            rescueDir,
             shape,
             false,
             options?.approachCoordinates,
@@ -2261,7 +2353,7 @@ async function generateRouteWithEngine(
               targetDistanceKm: request.distanceKm,
               actualDistanceKm: refined.distanceKm,
               start: request.start,
-              direction: request.direction,
+              direction: rescueDir,
               approachMode,
               urban: baseUrban,
               relaxed: true,

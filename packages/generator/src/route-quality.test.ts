@@ -122,7 +122,8 @@ describe("auditRouteGeometry", () => {
   });
 
   it("allows mirrored prefix up to 5% of route length by default", () => {
-    expect(maxMirroredPrefixBudgetM(20)).toBe(1000);
+    // ≤25 km: absolute floor for densified one-way egress (not mid-loop fingers).
+    expect(maxMirroredPrefixBudgetM(20)).toBe(1400);
     expect(maxMirroredPrefixBudgetM(60)).toBe(3000);
 
     const loop = rectLoop(0, 500, 3000, 2000);
@@ -142,8 +143,11 @@ describe("auditRouteGeometry", () => {
       format(ok),
     ).toBe(false);
 
-    // Budget from target 10 km = 500 m → same mirror fails.
-    const tight = auditRouteGeometry(withApproach, {
+    // Budget from target 10 km = max(500, 1400) floor → need a longer corridor to fail.
+    const longApproach = approachCorridor(1600);
+    const withLongApproach = withMirroredApproach(loop, longApproach);
+    expect(mirroredPrefixLengthM(withLongApproach)).toBeGreaterThan(1400);
+    const tight = auditRouteGeometry(withLongApproach, {
       allowApproachMirror: false,
       targetDistanceKm: 10,
       failOnRemainingSpurs: false,
