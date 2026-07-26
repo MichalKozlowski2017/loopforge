@@ -36,7 +36,11 @@ const matrix: LiveRouteMatrix =
       ? "stress"
       : matrixEnv === "stress-full"
         ? "stress-full"
-        : "full";
+        : matrixEnv === "home"
+          ? "home"
+          : matrixEnv === "home-stress"
+            ? "home-stress"
+            : "full";
 const filter = process.env.LOOPFORGE_SCENARIOS?.split(",")
   .map((s) => s.trim())
   .filter(Boolean);

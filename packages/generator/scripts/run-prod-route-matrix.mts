@@ -11,6 +11,8 @@
  *   LOOPFORGE_MATRIX=core pnpm test:prod   # smoke: 12 bike×profile defaults
  *   LOOPFORGE_MATRIX=stress pnpm test:prod # geo stress: mixed PL starts × 20/35/60 (~108)
  *   LOOPFORGE_MATRIX=stress-full pnpm test:prod  # all toggles × starts × dist (~648)
+ *   LOOPFORGE_MATRIX=home pnpm test:prod   # all UI variants from home start (~72)
+ *   LOOPFORGE_MATRIX=home-stress pnpm test:prod  # core × 20/35/60 from home (~36)
  *   LOOPFORGE_STRESS_PLACES=mixed|pool|random   # default mixed (named + random near cities)
  *   LOOPFORGE_STRESS_INCLUDE_EDGE=1             # add sparse/mountain starts (harsh overnight)
  *   LOOPFORGE_STRESS_DISTANCES=20,35,60 LOOPFORGE_STRESS_STARTS=3
@@ -383,7 +385,11 @@ async function main(): Promise<void> {
         ? "stress"
         : matrixEnv === "stress-full"
           ? "stress-full"
-          : "full";
+          : matrixEnv === "home"
+            ? "home"
+            : matrixEnv === "home-stress"
+              ? "home-stress"
+              : "full";
   const filter = process.env.LOOPFORGE_SCENARIOS?.split(",")
     .map((s) => s.trim())
     .filter(Boolean);

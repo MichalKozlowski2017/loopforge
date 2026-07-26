@@ -33,6 +33,12 @@ export const START_RURAL: LatLng = { lat: 52.39225, lng: 21.34062 };
 /** Warsaw — Ochota / Filtry edge: still metro, less one-way maze than Śródmieście. */
 export const START_URBAN: LatLng = { lat: 52.2118, lng: 20.9815 };
 
+/**
+ * Dom (Bielany / Chomiczówka) — 52°17'58.1"N 20°58'42.2"E.
+ * Personal regression: LOOPFORGE_MATRIX=home pnpm test:prod
+ */
+export const START_HOME: LatLng = { lat: 52.29947, lng: 20.97839 };
+
 const APPROACH_DISTANCE_KM = 8;
 
 /** Distances used by the geo stress matrix (km). Override via LOOPFORGE_STRESS_DISTANCES. */
@@ -42,6 +48,13 @@ export type StressStart = {
   id: string;
   label: string;
   start: LatLng;
+};
+
+/** Personal home start for LOOPFORGE_MATRIX=home. */
+export const HOME_PLACE: StressStart = {
+  id: "waw-home",
+  label: "Warszawa dom",
+  start: START_HOME,
 };
 
 export type StressPlacesMode = "pool" | "random" | "mixed";
@@ -198,7 +211,13 @@ export type LiveRouteScenario = {
   placeId?: string;
 };
 
-export type LiveRouteMatrix = "full" | "core" | "stress" | "stress-full";
+export type LiveRouteMatrix =
+  | "full"
+  | "core"
+  | "stress"
+  | "stress-full"
+  | "home"
+  | "home-stress";
 
 type ToggleCombo = {
   avoidAsphalt: boolean;
@@ -592,6 +611,68 @@ export function buildCoreRouteScenarios(): LiveRouteScenario[] {
   );
 }
 
+/**
+ * Full UI matrix (72) pinned to home — every bike × profile × toggle.
+ * `LOOPFORGE_MATRIX=home pnpm test:prod`
+ */
+export function buildHomeRouteScenarios(): LiveRouteScenario[] {
+  const scenarios: LiveRouteScenario[] = [];
+  let index = 0;
+  for (const bikeType of Object.keys(RIDE_PROFILE_OPTIONS) as BikeType[]) {
+    for (const option of getRideProfileOptions(bikeType)) {
+      for (const toggles of toggleCombos(bikeType)) {
+        scenarios.push(
+          buildScenario(bikeType, option.value, toggles, index, {
+            start: START_HOME,
+            place: HOME_PLACE,
+            urban: true,
+          }),
+        );
+        index += 1;
+      }
+    }
+  }
+  return scenarios;
+}
+
+/**
+ * Core reliability at home: 12 bike×profile × 20/35/60 km = 36.
+ * `LOOPFORGE_MATRIX=home-stress pnpm test:prod`
+ */
+export function buildHomeStressRouteScenarios(
+  distancesKm: number[] = [...STRESS_DISTANCES_KM],
+): LiveRouteScenario[] {
+  const bases = buildCoreRouteScenarios();
+  const out: LiveRouteScenario[] = [];
+  let index = 0;
+  for (const base of bases) {
+    const profile = base.request.profile;
+    if (!profile) continue;
+    for (const distanceKm of distancesKm) {
+      out.push(
+        buildScenario(
+          base.request.bikeType,
+          profile,
+          {
+            avoidAsphalt: Boolean(base.request.avoidAsphalt),
+            preferQuietRoutes: Boolean(base.request.preferQuietRoutes),
+            approachEnabled: false,
+          },
+          index,
+          {
+            start: START_HOME,
+            place: HOME_PLACE,
+            distanceKm,
+            urban: true,
+          },
+        ),
+      );
+      index += 1;
+    }
+  }
+  return out;
+}
+
 export type StressMatrixOptions = {
   /** When true, expand every UI toggle combo (72×starts×distances). */
   includeAllToggles?: boolean;
@@ -678,6 +759,12 @@ export function resolveLiveRouteScenarios(
   matrix: LiveRouteMatrix = "full",
 ): LiveRouteScenario[] {
   if (matrix === "core") return LIVE_ROUTE_SCENARIOS_CORE;
+  if (matrix === "home") return buildHomeRouteScenarios();
+  if (matrix === "home-stress") {
+    return buildHomeStressRouteScenarios(
+      parseDistanceList(process.env.LOOPFORGE_STRESS_DISTANCES),
+    );
+  }
   if (matrix === "stress") {
     return buildStressRouteScenarios(stressOptionsFromEnv());
   }

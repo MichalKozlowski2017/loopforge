@@ -16,9 +16,13 @@ import {
 import { pruneDeadEndSpurs } from "./prune-spurs";
 import {
   buildCoreRouteScenarios,
+  buildHomeRouteScenarios,
+  buildHomeStressRouteScenarios,
   buildLiveRouteScenarios,
   buildStressRouteScenarios,
   pickStressStarts,
+  HOME_PLACE,
+  START_HOME,
   STRESS_DISTANCES_KM,
   STRESS_START_POOL,
   STRESS_START_POOL_EDGE,
@@ -262,6 +266,41 @@ describe("live route scenario matrix", () => {
     const core = buildCoreRouteScenarios();
     expect(core).toHaveLength(12);
     expect(core.every((s) => !s.request.approachEnabled)).toBe(true);
+  });
+
+  it("home matrix pins all 72 UI variants to the home start", () => {
+    const home = buildHomeRouteScenarios();
+    expect(home).toHaveLength(72);
+    expect(new Set(home.map((s) => s.id)).size).toBe(72);
+    expect(
+      home.every(
+        (s) =>
+          s.placeId === HOME_PLACE.id &&
+          s.request.start.lat === START_HOME.lat &&
+          s.request.start.lng === START_HOME.lng &&
+          s.urban === true,
+      ),
+    ).toBe(true);
+    expect(home.some((s) => s.request.approachEnabled)).toBe(true);
+    expect(home.some((s) => s.request.avoidAsphalt === true)).toBe(true);
+    expect(home.some((s) => s.request.preferQuietRoutes === true)).toBe(true);
+  });
+
+  it("home-stress expands core × distances from home (36)", () => {
+    const homeStress = buildHomeStressRouteScenarios([...STRESS_DISTANCES_KM]);
+    expect(homeStress).toHaveLength(12 * 3);
+    expect(new Set(homeStress.map((s) => s.id)).size).toBe(36);
+    expect(
+      homeStress.every(
+        (s) =>
+          s.placeId === HOME_PLACE.id &&
+          s.request.start.lat === START_HOME.lat &&
+          s.request.start.lng === START_HOME.lng,
+      ),
+    ).toBe(true);
+    expect(new Set(homeStress.map((s) => s.request.distanceKm))).toEqual(
+      new Set(STRESS_DISTANCES_KM),
+    );
   });
 
   it("stress matrix expands core × starts × distances (108)", () => {
