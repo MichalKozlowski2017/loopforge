@@ -558,6 +558,46 @@ export function downsampleCoordinates(
   return sampled;
 }
 
+/**
+ * How many vertices match start↔end (intentional out-and-back at meta).
+ * Mid-loop fingers must NOT use this budget — only start/finish.
+ */
+export function mirroredPrefixVertexCount(
+  coordinates: [number, number][],
+  matchM = 8,
+): number {
+  if (coordinates.length < 4) return 0;
+  let k = 0;
+  const n = coordinates.length;
+  while (k < Math.floor(n / 2)) {
+    const a = {
+      lng: coordinates[k]![0],
+      lat: coordinates[k]![1],
+    };
+    const b = {
+      lng: coordinates[n - 1 - k]![0],
+      lat: coordinates[n - 1 - k]![1],
+    };
+    if (haversineM(a, b) > matchM) break;
+    k++;
+  }
+  return k < 2 ? 0 : k;
+}
+
+/**
+ * Start/finish out-and-back only — mid-loop reverse hits stay countable.
+ * `i` = outbound index, `j` = reverse-match index along the polyline.
+ */
+export function isStartFinishOutAndBack(
+  i: number,
+  j: number,
+  n: number,
+  mirrorDepth: number,
+): boolean {
+  if (mirrorDepth < 2 || n < 4) return false;
+  return i < mirrorDepth && j >= n - mirrorDepth;
+}
+
 /** Grid-based overlap: share of points revisiting same ~25m cell. */
 export function overlapRatio(coordinates: [number, number][]): number {
   coordinates = downsampleCoordinates(coordinates, MAX_QUALITY_POINTS);
@@ -575,14 +615,32 @@ export function overlapRatio(coordinates: [number, number][]): number {
   return duplicates / coordinates.length;
 }
 
-/** Detect short out-and-back spurs (same segment reversed). */
+/**
+ * Loop body without the intentional start/finish out-and-back.
+ * Mid-loop fingers stay; meta mirror is scored separately (5% budget).
+ */
+export function stripStartFinishMirror(
+  coordinates: [number, number][],
+): [number, number][] {
+  const depth = mirroredPrefixVertexCount(coordinates);
+  if (depth < 2) return coordinates;
+  const end = coordinates.length - depth;
+  if (end - depth < 8) return coordinates;
+  return coordinates.slice(depth, end);
+}
+
+/** Detect mid-loop out-and-back spurs (same segment reversed). Ignores start/meta mirror. */
 export function backtrackRatio(coordinates: [number, number][]): number {
-  coordinates = downsampleCoordinates(coordinates, MAX_QUALITY_POINTS);
+  coordinates = downsampleCoordinates(
+    stripStartFinishMirror(coordinates),
+    MAX_QUALITY_POINTS,
+  );
   if (coordinates.length < 10) return 0;
 
   let spurs = 0;
   const thresholdM = 45;
-  const maxWindowM = 3500;
+  const approxM = pathLengthM(coordinates, 0, coordinates.length - 1);
+  const maxWindowM = Math.max(12_000, Math.min(28_000, approxM * 0.35));
 
   for (let i = 0; i < coordinates.length - 3; i++) {
     const a = { lng: coordinates[i][0], lat: coordinates[i][1] };
@@ -618,15 +676,23 @@ export function backtrackRatio(coordinates: [number, number][]): number {
   return spurs / Math.max(1, coordinates.length / 10);
 }
 
-/** Meters of route spent on out-and-back spurs (dead-end u-turns). */
+/**
+ * Meters spent on mid-loop out-and-back fingers (dead-end u-turns).
+ * Intentional start/finish mirror is stripped first — that has its own 5% budget.
+ */
 export function spurLengthM(coordinates: [number, number][]): number {
-  coordinates = downsampleCoordinates(coordinates, MAX_QUALITY_POINTS);
+  coordinates = downsampleCoordinates(
+    stripStartFinishMirror(coordinates),
+    MAX_QUALITY_POINTS,
+  );
   if (coordinates.length < 12) return 0;
 
   let spurM = 0;
   const minGap = 6;
   const matchM = 55;
-  const maxWindowM = 4000;
+  const totalApproxM = pathLengthM(coordinates, 0, coordinates.length - 1);
+  /** Match prune-spurs reverse window — long fingers must count as spur. */
+  const maxWindowM = Math.max(12_000, Math.min(28_000, totalApproxM * 0.35));
 
   for (let i = 0; i < coordinates.length - 1; i++) {
     const a = { lng: coordinates[i][0], lat: coordinates[i][1] };

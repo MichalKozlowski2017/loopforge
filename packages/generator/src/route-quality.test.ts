@@ -127,6 +127,25 @@ describe("auditRouteGeometry", () => {
       tight.findings.some((f) => f.code === "MIRRORED_OUT_AND_BACK"),
     ).toBe(true);
   });
+
+  it("counts mid-loop fingers as spur, not start/finish mirror", () => {
+    const clean = rectLoop(0, 0, 3000, 2000);
+    const midSpur = withDeadEndSpur(clean, Math.floor(clean.length / 2), 600);
+    const midAudit = auditRouteGeometry(midSpur, {
+      allowApproachMirror: false,
+      failOnRemainingSpurs: false,
+    });
+    expect(midAudit.metrics.spurShare).toBeGreaterThan(0.04);
+
+    const withMirror = withMirroredApproach(clean, approachCorridor(500));
+    const mirrorOnly = auditRouteGeometry(withMirror, {
+      allowApproachMirror: false,
+      targetDistanceKm: 20,
+      failOnRemainingSpurs: false,
+    });
+    // Start/finish out-and-back must not inflate mid-loop spurShare.
+    expect(mirrorOnly.metrics.spurShare).toBeLessThan(0.04);
+  });
 });
 
 describe("auditGeneratedRoute tags", () => {

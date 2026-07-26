@@ -1,5 +1,9 @@
 import type { RouteMapGeoJson } from "@loopforge/osm-types";
 import {
+  isStartFinishOutAndBack,
+  mirroredPrefixVertexCount,
+} from "./loop-waypoints";
+import {
   geometrySafetyLimits,
   inferGeometrySafetyLimits,
   type GeometrySafetyLimits,
@@ -300,14 +304,18 @@ function mergeSpurRanges(ranges: SpurRange[]): SpurRange[] {
 /** Detection-only cap; actual remove uses context budget from geometrySafetyLimits. */
 const MAX_DETECT_STITCH_M = 120;
 
-/** Sharp hairpin at a dead-end tip (route turns ~180° within a short stub). */
+/** Sharp hairpin at a dead-end tip (route turns ~180° within a stub). */
 export function findHairpinSpurRanges(coordinates: Coord[]): SpurRange[] {
   if (coordinates.length < 10) return [];
 
   const ranges: SpurRange[] = [];
-  const maxStubM = 500;
+  const totalM = totalPathLengthM(coordinates);
+  /** Long MTB/gravel fingers (km-scale out-and-backs) must be in scope. */
+  const maxStubM = Math.max(2_500, Math.min(12_000, totalM * 0.22));
   const minStubM = 14;
   const tipWindow = 8;
+  const mirrorDepth = mirroredPrefixVertexCount(coordinates);
+  const n = coordinates.length;
 
   for (let i = 0; i < coordinates.length - 8; i++) {
     let distM = 0;
@@ -357,6 +365,7 @@ export function findHairpinSpurRanges(coordinates: Coord[]): SpurRange[] {
       }
       const stubM = pathLengthM(coordinates, i, j);
       if (stubM < minStubM) continue;
+      if (isStartFinishOutAndBack(i, j, n, mirrorDepth)) continue;
       ranges.push({ start: i + 1, end: j - 1 });
       break;
     }
@@ -372,10 +381,12 @@ export function findReverseSegmentSpurRanges(coordinates: Coord[]): SpurRange[] 
   const ranges: SpurRange[] = [];
   const matchM = 90;
   const minGap = 5;
-  /** Dense GeoJSON: search by meters, not a fixed ~400 vertex window. */
-  const maxWindowM = 4000;
-  const minSpurM = 20;
   const totalM = totalPathLengthM(coordinates);
+  /** Was 4 km — Jabłonna-class fingers are often 5–10 km one-way. */
+  const maxWindowM = Math.max(12_000, Math.min(28_000, totalM * 0.35));
+  const minSpurM = 20;
+  const mirrorDepth = mirroredPrefixVertexCount(coordinates);
+  const n = coordinates.length;
 
   for (let i = 0; i < coordinates.length - 1; i++) {
     const a = toLatLng(coordinates[i]);
@@ -392,6 +403,9 @@ export function findReverseSegmentSpurRanges(coordinates: Coord[]): SpurRange[] 
       );
       if (j - i < minGap) continue;
       if (spanM > maxWindowM) break;
+
+      // Keep intentional start/finish out-and-back — only mid-loop fingers.
+      if (isStartFinishOutAndBack(i, j, n, mirrorDepth)) continue;
 
       const c = toLatLng(coordinates[j]);
       const d = toLatLng(coordinates[j + 1]);
@@ -424,6 +438,29 @@ export function findReverseSegmentSpurRanges(coordinates: Coord[]): SpurRange[] 
   }
 
   return ranges;
+}
+
+/**
+ * Drop ranges that are the allowed start/finish out-and-back (dojazd/powrót).
+ * Mid-loop fingers stay — those are what we prune.
+ */
+export function keepMidLoopSpurRanges(
+  coordinates: Coord[],
+  ranges: SpurRange[],
+): SpurRange[] {
+  const mirrorDepth = mirroredPrefixVertexCount(coordinates);
+  if (mirrorDepth < 2 || ranges.length === 0) return ranges;
+  const n = coordinates.length;
+  return ranges.filter((range) => {
+    // Entirely inside mirrored prefix or suffix → leave the meta out-and-back.
+    if (range.end < mirrorDepth) return false;
+    if (range.start >= n - mirrorDepth) return false;
+    // Span that bridges start↔finish (would cut the intentional return).
+    if (range.start <= mirrorDepth && range.end >= n - 1 - mirrorDepth) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function wouldCreateAirChord(
@@ -779,14 +816,14 @@ export function pruneDeadEndSpurs(
 
   for (let pass = 0; pass < 14; pass++) {
     // Do not merge before remove — merging nested stubs creates unsplittable mega-ranges.
-    const ranges = [
+    const ranges = keepMidLoopSpurRanges(current, [
       ...findDeadEndSpurRanges(current),
       ...findMicroSpurRanges(current),
       ...findStubSpurRanges(current),
       ...findHairpinSpurRanges(current),
       ...findReverseSegmentSpurRanges(current),
       ...findOpenPathBranchStubRanges(current),
-    ];
+    ]);
 
     if (ranges.length === 0) break;
 

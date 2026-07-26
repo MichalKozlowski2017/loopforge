@@ -331,11 +331,11 @@ const MAX_BACKTRACK_RELAXED_APPROACH_URBAN = 0.45;
 const MAX_SPUR_SHARE_RELAXED_APPROACH = 0.8;
 const MAX_BACKTRACK_RELAXED_APPROACH = 0.45;
 /**
- * Last-resort distance share — still close to target. Old 2.1–2.6× allowed
- * 80 km requests to ship as 140–160 km loops.
+ * Last-resort distance share. Keep below the old 2.1–2.6× disasters, but
+ * 1.35× was too tight and spiked gen-fails in stress.
  */
-const MAX_LOOP_SHARE_EMERGENCY = 1.35;
-const MAX_LOOP_SHARE_EMERGENCY_ROAD = 1.4;
+const MAX_LOOP_SHARE_EMERGENCY = 1.55;
+const MAX_LOOP_SHARE_EMERGENCY_ROAD = 1.6;
 /** Approach loops may overshoot more — entry is mid-corridor, not home. */
 const MAX_LOOP_SHARE_APPROACH_URBAN = 1.7;
 const MAX_LOOP_SHARE_APPROACH = 1.55;
@@ -670,10 +670,16 @@ function applySpurRefinement(
     const qualityImproved =
       afterM.spurShare + afterM.backtrack <
       beforeM.spurShare + beforeM.backtrack - 0.008;
+    // Always keep meaningful stub removal (long fingers), even if metrics are noisy.
+    const meaningfulCut = pruned.removedM >= 250;
     if (
       hasBrokenRouteGeometry(coordinates, routed.coordinates, geoCtx) &&
-      !qualityImproved
+      !qualityImproved &&
+      !meaningfulCut
     ) {
+      usePruned = false;
+      coordinates = routed.coordinates;
+    } else if (!qualityImproved && !meaningfulCut) {
       usePruned = false;
       coordinates = routed.coordinates;
     }
@@ -759,10 +765,13 @@ function finalizeLoopWithoutSpurs(
   const qualityImproved =
     after.spurShare + after.backtrack <
     before.spurShare + before.backtrack - 0.008;
+  const meaningfulCut = pruned.removedM >= 250;
 
   if (
-    hasBrokenRouteGeometry(pruned.coordinates, best.coordinates, geoCtx) &&
-    !qualityImproved
+    (hasBrokenRouteGeometry(pruned.coordinates, best.coordinates, geoCtx) &&
+      !qualityImproved &&
+      !meaningfulCut) ||
+    (!qualityImproved && !meaningfulCut)
   ) {
     return best;
   }
@@ -1056,26 +1065,25 @@ async function generateRouteWithEngine(
           Date.now() < deadlineMs - 6_000
         ) {
           const ratio = request.distanceKm / Math.max(refined.distanceKm, 1);
-          const severeOvershoot = refined.distanceKm > request.distanceKm * 1.35;
+          const severeOvershoot = refined.distanceKm > request.distanceKm * 1.4;
           const metroish = baseUrban || variantUrbanEscalated;
-          // Pull hard on overshoot for all bikes — gravel/express was shipping 1.7–2×.
           const shrinkPull = severeOvershoot
             ? 1
             : metroish
-              ? 0.95
+              ? 0.92
               : request.bikeType === "road"
-                ? 0.9
-                : 0.82;
+                ? 0.85
+                : 0.75;
           const minDrop = severeOvershoot
-            ? 0.14
+            ? 0.12
             : metroish
-              ? 0.1
-              : 0.07;
+              ? 0.08
+              : 0.06;
           const floor = severeOvershoot
-            ? 0.38
+            ? 0.45
             : metroish
-              ? 0.55
-              : 0.65;
+              ? 0.58
+              : 0.7;
           const shrink = 1 - (1 - ratio) * shrinkPull;
           const nextScale = Math.max(
             floor,
@@ -1359,15 +1367,15 @@ async function generateRouteWithEngine(
           options?.homeStart && variant < 1
             ? { homeStart: options.homeStart }
             : undefined;
-        // Recovery always starts compact — overshoot was shipping 1.5–2× targets.
+        // Recovery scales — compact enough to avoid 2×, room to reach target.
         const recoveryScale =
           request.bikeType === "road"
             ? baseUrban
-              ? [0.5, 0.62, 0.75, 0.9, 1.05][variant]!
-              : [0.62, 0.78, 0.92, 1.05, 1.15][variant]!
+              ? [0.55, 0.7, 0.85, 1.0, 1.12][variant]!
+              : [0.7, 0.85, 1.0, 1.12, 1.22][variant]!
             : baseUrban
-              ? [0.7, 0.82, 0.95, 1.05, 1.12][variant]!
-              : [0.78, 0.9, 1.0, 1.1, 1.18][variant]!;
+              ? [0.78, 0.9, 1.0, 1.1, 1.18][variant]!
+              : [0.85, 0.95, 1.05, 1.15, 1.22][variant]!;
         const waypoints = buildLoopWaypointsWithVia(
           request.start,
           request.distanceKm,

@@ -9,6 +9,7 @@ import {
   findStubSpurRanges,
   hasHardTeleportEdge,
   hasSuspiciousTeleportEdge,
+  keepMidLoopSpurRanges,
   maxConsecutiveEdgeM,
   routeLengthM,
   type GeometryContext,
@@ -133,14 +134,15 @@ export function maxMirroredPrefixBudgetM(distanceKm: number): number {
 
 function countRemainingSpurRanges(coordinates: [number, number][]): number {
   const sampled = downsampleCoordinates(coordinates, SPUR_DETECT_MAX_POINTS);
-  return (
-    findDeadEndSpurRanges(sampled).length +
-    findMicroSpurRanges(sampled).length +
-    findStubSpurRanges(sampled).length +
-    findHairpinSpurRanges(sampled).length +
-    findReverseSegmentSpurRanges(sampled).length +
-    findOpenPathBranchStubRanges(sampled).length
-  );
+  const ranges = keepMidLoopSpurRanges(sampled, [
+    ...findDeadEndSpurRanges(sampled),
+    ...findMicroSpurRanges(sampled),
+    ...findStubSpurRanges(sampled),
+    ...findHairpinSpurRanges(sampled),
+    ...findReverseSegmentSpurRanges(sampled),
+    ...findOpenPathBranchStubRanges(sampled),
+  ]);
+  return ranges.length;
 }
 
 function pointToSegmentDistanceM(
@@ -371,7 +373,7 @@ export function auditRouteGeometry(
     findings.push({
       code: "SPUR_SHARE",
       severity: "error",
-      message: `Ślepe zaułki / out-and-back: ${(metrics.spurShare * 100).toFixed(1)}% trasy.`,
+      message: `Ślepe zaułki w środku pętli (out-and-back): ${(metrics.spurShare * 100).toFixed(1)}% trasy. Dozwolone tylko przy starcie/mecie (do 5%).`,
       value: metrics.spurShare,
       limit: maxSpurShare,
     });

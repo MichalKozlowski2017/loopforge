@@ -766,9 +766,7 @@ export async function runLiveRouteScenario(
       maxBacktrack: approach ? 1 : scenario.urban ? 0.2 : 0.09,
       maxMirroredPrefixM: approach
         ? 25_000
-        : maxMirroredPrefixBudgetM(
-            auditOpts.actualDistanceKm ?? scenario.request.distanceKm,
-          ),
+        : maxMirroredPrefixBudgetM(scenario.request.distanceKm),
       maxOffPathShare: 0.025,
       maxOffPathM: scenario.urban ? 120 : 80,
     });
