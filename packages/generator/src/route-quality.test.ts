@@ -128,6 +128,8 @@ describe("auditRouteGeometry", () => {
   it("allows mirrored prefix up to 5% of route length by default", () => {
     // ≤25 km: absolute floor for densified one-way egress (not mid-loop fingers).
     expect(maxMirroredPrefixBudgetM(20)).toBe(1400);
+    // 25–40 km: metro one-way egress floor (home XC 35 → ~2737 m).
+    expect(maxMirroredPrefixBudgetM(35)).toBe(2800);
     expect(maxMirroredPrefixBudgetM(60)).toBe(3000);
 
     const loop = rectLoop(0, 500, 3000, 2000);

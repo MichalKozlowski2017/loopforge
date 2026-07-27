@@ -916,6 +916,7 @@ async function generateRouteWithEngine(
   const hardRecoveryCase =
     (request.bikeType === "road" && request.distanceKm <= 40) ||
     Boolean(request.avoidAsphalt) ||
+    request.bikeType === "general" ||
     request.distanceKm >= 50;
   const deadlineMs =
     Date.now() +
@@ -923,9 +924,14 @@ async function generateRouteWithEngine(
       ? GENERATION_DEADLINE_LONG_MS
       : request.bikeType === "road"
         ? GENERATION_DEADLINE_ROAD_MS
-        : baseUrban
-          ? GENERATION_DEADLINE_URBAN_MS
-          : GENERATION_DEADLINE_RURAL_MS);
+        : Boolean(request.avoidAsphalt) || request.bikeType === "general"
+          ? Math.max(
+              GENERATION_DEADLINE_URBAN_MS,
+              GENERATION_DEADLINE_ROAD_MS,
+            )
+          : baseUrban
+            ? GENERATION_DEADLINE_URBAN_MS
+            : GENERATION_DEADLINE_RURAL_MS);
   let best: RoutedLoopResult | null = null;
   let bestScore = Infinity;
   let bestRejected: RoutedLoopResult | null = null;
@@ -1261,8 +1267,8 @@ async function generateRouteWithEngine(
               ? Math.min(1.55, 1.14 + request.distanceKm / 320)
               : routeAvoidAsphalt
                 ? Math.min(1.55, 1.12 + request.distanceKm / 320)
-                : request.avoidAsphalt && request.distanceKm >= 50
-                  ? Math.min(2.15, 1.28 + request.distanceKm / 260)
+                : request.avoidAsphalt && request.distanceKm >= 30
+                  ? Math.min(2.2, 1.3 + request.distanceKm / 240)
                   : 1.7;
           const nextScale = Math.min(
             maxScale,
@@ -1868,28 +1874,31 @@ async function generateRouteWithEngine(
     }
   }
 
-  // Gravel/MTB +A mid/long: no-prefs oversized recovery after avoid burns the graph.
+  // Mid/long +A (and general mid): no-prefs oversized recovery after prefs burn the graph.
+  // Home-stress 35 km GEN_FAIL bucket: gravel Express, mtb Flow, general Terenowy.
   if (
     !best &&
-    (request.bikeType === "gravel" || request.bikeType === "mtb") &&
-    request.avoidAsphalt &&
-    request.distanceKm >= 35 &&
-    Date.now() < deadlineMs + 25_000 &&
-    routedFetches < maxRoutedFetches + 6
+    request.distanceKm >= 30 &&
+    (Boolean(request.avoidAsphalt) ||
+      request.bikeType === "general" ||
+      request.bikeType === "gravel" ||
+      request.bikeType === "mtb") &&
+    Date.now() < deadlineMs + 35_000 &&
+    routedFetches < maxRoutedFetches + 8
   ) {
     const avoidPrefs = mergeLoopPrefs(
       profilePrefs,
       urbanWaypointAdjustments(request.distanceKm, true, baseUrban),
     );
-    const avoidDirs = recoveryDirectionOrder(request.direction).slice(0, 4);
+    const avoidDirs = recoveryDirectionOrder(request.direction).slice(0, 5);
     const avoidScales =
       request.distanceKm >= 50
-        ? [1.35, 1.55, 1.75, 1.95, 1.2, 2.15]
-        : [1.25, 1.45, 1.65, 1.1, 1.85, 2.0];
-    const avoidDeadline = deadlineMs + 25_000;
+        ? [1.35, 1.55, 1.75, 1.95, 1.2, 2.15, 2.35]
+        : [1.3, 1.5, 1.7, 1.15, 1.9, 2.1, 1.0, 2.3];
+    const avoidDeadline = deadlineMs + 35_000;
     for (let ai = 0; ai < avoidScales.length; ai++) {
       if (Date.now() > avoidDeadline) break;
-      if (routedFetches >= maxRoutedFetches + 6) break;
+      if (routedFetches >= maxRoutedFetches + 8) break;
       try {
         const avoidDir = avoidDirs[ai % avoidDirs.length]!;
         const shape = loopShapeForVariant(

@@ -135,8 +135,11 @@ export function mirroredPrefixLengthM(
 export const MIRRORED_PREFIX_MAX_SHARE = 0.05;
 /** Absolute floor for ≤25 km. */
 export const MIRRORED_PREFIX_SHORT_FLOOR_M = 1400;
-/** Absolute floor for 25–40 km (quiet/road stress mirror near-misses). */
-export const MIRRORED_PREFIX_MEDIUM_FLOOR_M = 2000;
+/**
+ * Absolute floor for 25–40 km. Metro densify + one-way egress can run
+ * ~2.5–2.8 km (home XC 35 → 2737 m with a 2000 m floor = false MIRRORED).
+ */
+export const MIRRORED_PREFIX_MEDIUM_FLOOR_M = 2800;
 
 export function maxMirroredPrefixBudgetM(distanceKm: number): number {
   if (!(distanceKm > 0) || !Number.isFinite(distanceKm)) return 400;
