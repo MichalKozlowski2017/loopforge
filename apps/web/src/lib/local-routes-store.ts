@@ -7,8 +7,8 @@ import type {
 } from "@loopforge/osm-types";
 
 const STORAGE_KEY = "loopforge:routes";
-/** Keep history small — each metro 50 km route is multi‑MB as JSON. */
-const MAX_STORED_ROUTES = 10;
+/** Keep history small — each metro 50 km route is large as JSON. */
+const MAX_STORED_ROUTES = 6;
 /** Soft budget under typical ~5 MB origin quota (UTF-16 ≈ 2 bytes/char). */
 const MAX_STORAGE_CHARS = 2_200_000;
 const DISPLAY_MAX_POINTS = 2_500;
@@ -55,6 +55,44 @@ function downsampleCoordinates(
   return out;
 }
 
+function haversineM(a: [number, number], b: [number, number]): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(b[1] - a[1]);
+  const dLng = toRad(b[0] - a[0]);
+  const lat1 = toRad(a[1]);
+  const lat2 = toRad(b[1]);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.sqrt(h));
+}
+
+function capEdgeLength(
+  coordinates: [number, number][],
+  maxEdgeM: number,
+): [number, number][] {
+  if (coordinates.length < 3) return coordinates;
+  const out: [number, number][] = [coordinates[0]!];
+  let anchor = 0;
+  for (let i = 1; i < coordinates.length; i++) {
+    const next = coordinates[i]!;
+    const prev = out[out.length - 1]!;
+    const edgeM = haversineM(prev, next);
+    if (edgeM > maxEdgeM && i - 1 > anchor) {
+      const bridge = coordinates[i - 1]!;
+      if (bridge[0] !== prev[0] || bridge[1] !== prev[1]) {
+        out.push(bridge);
+      }
+      anchor = i - 1;
+    }
+    const last = out[out.length - 1]!;
+    if (next[0] !== last[0] || next[1] !== last[1]) {
+      out.push(next);
+    }
+  }
+  return out;
+}
+
 function downsampleMapGeojson(
   mapGeojson: RouteMapGeoJson | undefined,
   maxPointsPerFeature: number,
@@ -81,12 +119,17 @@ function downsampleMapGeojson(
  */
 function trimForStorage(
   route: StoredRoute,
-  options: { maxPoints: number; keepMap: boolean },
+  options: { maxPoints?: number; keepMap: boolean },
 ): StoredRoute {
-  const coordinates = downsampleCoordinates(
-    route.geojson.geometry.coordinates as [number, number][],
-    options.maxPoints,
-  );
+  const baseCoordinates =
+    route.geojson.geometry.coordinates as [number, number][];
+  const coordinates =
+    options.maxPoints && options.maxPoints > 0
+      ? capEdgeLength(
+          downsampleCoordinates(baseCoordinates, options.maxPoints),
+          55,
+        )
+      : baseCoordinates;
   const trimmed: StoredRoute = {
     ...route,
     gpx: "",
@@ -103,7 +146,9 @@ function trimForStorage(
   if (options.keepMap && route.mapGeojson) {
     trimmed.mapGeojson = downsampleMapGeojson(
       route.mapGeojson,
-      Math.max(80, Math.floor(options.maxPoints / 4)),
+      options.maxPoints
+        ? Math.max(80, Math.floor(options.maxPoints / 4))
+        : 650,
     );
   } else {
     delete trimmed.mapGeojson;
@@ -115,6 +160,24 @@ function payloadSize(routes: StoredRoute[]): number {
   return JSON.stringify(routes).length;
 }
 
+function maxEdgeLengthM(coordinates: [number, number][]): number {
+  if (coordinates.length < 2) return 0;
+  let maxM = 0;
+  for (let i = 1; i < coordinates.length; i++) {
+    maxM = Math.max(maxM, haversineM(coordinates[i - 1]!, coordinates[i]!));
+  }
+  return maxM;
+}
+
+function looksLikeThinnedAirChords(route: StoredRoute): boolean {
+  const coordinates = route.geojson.geometry.coordinates as [number, number][];
+  if (coordinates.length < 3) return false;
+  // Full generated routes use ~5 m spacing; historic aggressively-thinned
+  // snapshots can contain long straight cuts across blocks/parks.
+  const maxEdgeM = maxEdgeLengthM(coordinates);
+  return maxEdgeM > 110;
+}
+
 function readRoutes(): StoredRoute[] {
   if (typeof window === "undefined") return [];
 
@@ -122,7 +185,13 @@ function readRoutes(): StoredRoute[] {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as StoredRoute[];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    const cleaned = parsed.filter((route) => !looksLikeThinnedAirChords(route));
+    if (cleaned.length !== parsed.length) {
+      // Auto-heal legacy thinned routes that rendered off-road chords.
+      tryWrite(cleaned);
+    }
+    return cleaned;
   } catch {
     return [];
   }
@@ -207,7 +276,7 @@ export function getLocalRouteById(id: string): StoredRoute | null {
 export function saveLocalRoute(route: StoredRoute): void {
   const existing = readRoutes().filter((item) => item.id !== route.id);
   const light = trimForStorage(route, {
-    maxPoints: DISPLAY_MAX_POINTS,
+    // Keep full route line for re-opened map/GPX accuracy.
     keepMap: true,
   });
   const aggressive = trimForStorage(route, {
