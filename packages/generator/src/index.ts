@@ -3124,6 +3124,9 @@ async function fetchApproachLegSegment(
       from,
       to,
       skipGpx: true,
+      // Strict verification/repair must never accept a route that only
+      // "works" because BRouter silently snapped a point across a barrier.
+      strict: requireNetworkRoute,
     });
     return brouterResultToApproachLeg(routed);
   }
@@ -3170,8 +3173,12 @@ type OffRoadEdgeIssue = {
   edgeIndex: number;
   from: [number, number];
   to: [number, number];
-  replacement: [number, number][];
+  /** null when confirmed off-road but no safe on-network replacement exists. */
+  replacement: [number, number][] | null;
 };
+
+const BACKEND_UNAVAILABLE_MESSAGE =
+  "Routing backend unavailable for strict on-road validation/repair.";
 
 /**
  * Pick candidate edges likely to be off-road "air-chords".
@@ -3254,8 +3261,9 @@ async function detectOffRoadEdges(
   }): Promise<OffRoadEdgeIssue | null> => {
     const from = coordinates[candidate.edgeIndex - 1]!;
     const to = coordinates[candidate.edgeIndex]!;
+    let replacement: [number, number][];
     try {
-      const replacement = (
+      replacement = (
         await fetchApproachLegSegment(
           { lat: from[1], lng: from[0] },
           { lat: to[1], lng: to[0] },
@@ -3263,23 +3271,43 @@ async function detectOffRoadEdges(
           { requireNetworkRoute: true },
         )
       ).coordinates;
-      if (replacement.length < 2) return null;
-      const routedM = routeLengthM(replacement);
-      const limit = candidate.edgeM * maxLengthRatio + lengthSlackM;
-      if (routedM <= limit) return null;
-      const mid: [number, number] = [
-        (from[0] + to[0]) / 2,
-        (from[1] + to[1]) / 2,
-      ];
-      const midDist = distanceToPolylineM(mid, replacement);
-      if (midDist > 45) {
-        return { edgeIndex: candidate.edgeIndex, from, to, replacement };
+    } catch (error) {
+      // No routing backend configured at all — can't verify anything, so
+      // don't flag. Any other failure (e.g. "no route found" without
+      // via-point correction) is itself strong evidence the edge is
+      // off-network — ship it as a confirmed, unfixable issue so the
+      // caller retries the whole generation instead of silently shipping it.
+      if (
+        error instanceof Error &&
+        error.message === BACKEND_UNAVAILABLE_MESSAGE
+      ) {
+        return null;
       }
-      return null;
-    } catch {
-      // transient routing miss — leave this edge as-is
-      return null;
+      return { edgeIndex: candidate.edgeIndex, from, to, replacement: null };
     }
+    if (replacement.length < 2) return null;
+    const routedM = routeLengthM(replacement);
+    const limit = candidate.edgeM * maxLengthRatio + lengthSlackM;
+    if (routedM <= limit) return null;
+    const mid: [number, number] = [
+      (from[0] + to[0]) / 2,
+      (from[1] + to[1]) / 2,
+    ];
+    const midDist = distanceToPolylineM(mid, replacement);
+    if (midDist <= 45) return null;
+
+    // The replacement itself must be clean — otherwise we'd just be
+    // swapping one air-chord for another (e.g. a route that could only be
+    // found by BRouter snapping an endpoint across the same barrier).
+    const replacementIssues = findOffRoadCandidateEdges(replacement, {
+      minEdgeM: 40,
+      maxEdges: 1,
+    });
+    if (replacementIssues.length > 0) {
+      return { edgeIndex: candidate.edgeIndex, from, to, replacement: null };
+    }
+
+    return { edgeIndex: candidate.edgeIndex, from, to, replacement };
   };
 
   const concurrency = 6;
@@ -3303,6 +3331,7 @@ function repairOffRoadEdges(
   let repairedCount = 0;
   const ordered = [...issues].sort((a, b) => b.edgeIndex - a.edgeIndex);
   for (const issue of ordered) {
+    if (!issue.replacement) continue; // confirmed off-road, no safe fix — leave for retry
     const i = issue.edgeIndex;
     if (i <= 0 || i >= repaired.length) continue;
     const currentFrom = repaired[i - 1]!;
@@ -3634,11 +3663,13 @@ export async function generateRoute(
 
   const maxNetworkAttempts = request.approachEnabled ? 2 : 3;
   let lastNetworkError: Error | null = null;
+  let lastGenerated: GeneratedRoute | null = null;
 
   for (let attempt = 1; attempt <= maxNetworkAttempts; attempt++) {
     const generated = request.approachEnabled
       ? await generateRouteWithApproach(request, options)
       : (await generateLoopRoute(request, options)).route;
+    lastGenerated = generated;
 
     if (generated.geojson.properties.placeholder === true) {
       return generated;
@@ -3698,6 +3729,24 @@ export async function generateRoute(
         continue;
       }
     }
+  }
+
+  // Every attempt still left a confirmed off-road edge behind. Ship the last
+  // (partially repaired) attempt with a visible warning instead of a hard
+  // failure — a rider can work around one flagged gap far more easily than
+  // a black screen, and most of the route is still verified on-network.
+  if (lastGenerated) {
+    const existing = lastGenerated.generationQuality;
+    lastGenerated.generationQuality = {
+      mode: existing?.mode ?? "relaxed",
+      warnings: [
+        ...(existing?.warnings ?? []),
+        "Fragment trasy może zejść z sieci dróg w miejscu, gdzie dane mapy są niepełne — sprawdź przebieg przed wyjazdem.",
+      ],
+      requestedDistanceKm: existing?.requestedDistanceKm,
+      actualDistanceKm: existing?.actualDistanceKm,
+    };
+    return lastGenerated;
   }
 
   if (lastNetworkError) {

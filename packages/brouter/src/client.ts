@@ -270,14 +270,24 @@ function buildBrouterQuery(
 function buildApproachBrouterQuery(
   lonlats: string,
   profileName: string,
+  options?: { strict?: boolean },
 ): URLSearchParams {
   const query = new URLSearchParams({
     lonlats,
     profile: profileName,
     format: "geojson",
   });
-  query.set("profile:correctMisplacedViaPoints", "1");
-  query.set("profile:correctMisplacedViaPointsDistance", "1200");
+  if (options?.strict) {
+    // Strict on-road verification/repair — a "misplaced via point" correction
+    // silently snaps the requested point to the nearest reachable node up to
+    // the configured distance and draws a straight line to get there. That
+    // synthetic line is exactly the "air-chord across a barrier" defect we're
+    // trying to detect/fix, so it must never be used as ground truth here.
+    query.set("profile:correctMisplacedViaPoints", "0");
+  } else {
+    query.set("profile:correctMisplacedViaPoints", "1");
+    query.set("profile:correctMisplacedViaPointsDistance", "1200");
+  }
   query.set("profile:allow_ferries", "0");
   return query;
 }
@@ -287,6 +297,7 @@ async function fetchApproachBrouterRoute(
   points: LatLng[],
   trackName: string,
   skipGpx = true,
+  options?: { strict?: boolean },
 ): Promise<BrouterRouteResult> {
   const lonlats = points.map((p) => `${p.lng},${p.lat}`).join("|");
   const profiles = [APPROACH_BROUTER_PROFILE, APPROACH_FALLBACK_PROFILE];
@@ -294,7 +305,7 @@ async function fetchApproachBrouterRoute(
 
   for (let i = 0; i < profiles.length; i++) {
     const profileName = profiles[i]!;
-    const query = buildApproachBrouterQuery(lonlats, profileName);
+    const query = buildApproachBrouterQuery(lonlats, profileName, options);
 
     const response = await fetchBrouterWithRetry(
       config,
@@ -615,6 +626,8 @@ export async function fetchApproachRouteBetweenPoints(
     from: LatLng;
     to: LatLng;
     skipGpx?: boolean;
+    /** Disable via-point auto-correction — use for on-road verification/repair. */
+    strict?: boolean;
   },
 ): Promise<BrouterRouteResult> {
   await ensureBrouterServer(config);
@@ -623,6 +636,7 @@ export async function fetchApproachRouteBetweenPoints(
     [params.from, params.to],
     "Loopforge dojazd",
     params.skipGpx ?? true,
+    { strict: params.strict },
   );
 }
 
@@ -632,6 +646,7 @@ export async function fetchApproachRouteThroughPoints(
   params: {
     points: LatLng[];
     skipGpx?: boolean;
+    strict?: boolean;
   },
 ): Promise<BrouterRouteResult> {
   await ensureBrouterServer(config);
@@ -643,6 +658,7 @@ export async function fetchApproachRouteThroughPoints(
     params.points,
     "Loopforge dojazd",
     params.skipGpx ?? true,
+    { strict: params.strict },
   );
 }
 
