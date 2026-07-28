@@ -29,8 +29,12 @@ export default function RoutesPage() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    // Read client-only localStorage history after mount to avoid SSR hydration
+    // mismatch. Intentional one-time effect state hydration.
+    /* eslint-disable react-hooks/set-state-in-effect */
     setRoutes(loadLocalRouteSummaries());
     setReady(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
   return (
@@ -79,7 +83,7 @@ export default function RoutesPage() {
                     </p>
                     {route.notes ? (
                       <p className="mt-2 text-sm text-zinc-400 italic">
-                        „{route.notes}"
+                        „{route.notes}&rdquo;
                       </p>
                     ) : null}
                   </div>

@@ -18,19 +18,20 @@ export function useGeolocation(
   enabled = true,
 ): GeolocationState {
   const onPositionRef = useRef(onPosition);
-  onPositionRef.current = onPosition;
+  useEffect(() => {
+    onPositionRef.current = onPosition;
+  }, [onPosition]);
 
   const [status, setStatus] = useState<GeolocationStatus>(
     enabled ? "loading" : "unavailable",
   );
 
-  const refresh = useCallback(() => {
+  const requestPosition = useCallback(() => {
     if (!navigator.geolocation) {
       setStatus("unavailable");
       return;
     }
 
-    setStatus("loading");
     navigator.geolocation.getCurrentPosition(
       (position) => {
         onPositionRef.current(
@@ -44,10 +45,18 @@ export function useGeolocation(
     );
   }, []);
 
+  const refresh = useCallback(() => {
+    setStatus("loading");
+    requestPosition();
+  }, [requestPosition]);
+
   useEffect(() => {
     if (!enabled) return;
-    refresh();
-  }, [enabled, refresh]);
+    // Kicks off a browser geolocation request on mount; status updates arrive
+    // via async callbacks (only the no-support fallback sets state synchronously).
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
+    requestPosition();
+  }, [enabled, requestPosition]);
 
   return { status, refresh };
 }

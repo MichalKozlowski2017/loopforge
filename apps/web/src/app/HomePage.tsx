@@ -246,13 +246,20 @@ export default function HomePage() {
   );
 
   useEffect(() => {
+    // Mirror async geolocation status into the location UI mode. Intentional
+    // effect state sync from an external (browser geolocation) source.
+    /* eslint-disable react-hooks/set-state-in-effect */
     if (routeIdFromUrl) return;
     if (geoStatus === "denied") setLocationMode("denied");
     if (geoStatus === "unavailable") setLocationMode("unavailable");
     if (geoStatus === "loading") setLocationMode("loading");
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [geoStatus, routeIdFromUrl]);
 
   useEffect(() => {
+    // Hydrate form/route from a client-only localStorage entry after mount
+    // (deferred to avoid SSR hydration mismatch). Intentional effect state.
+    /* eslint-disable react-hooks/set-state-in-effect */
     if (!routeIdFromUrl) return;
 
     const data = getLocalRouteById(routeIdFromUrl);
@@ -278,6 +285,7 @@ export default function HomePage() {
       lng: data.start.lng,
     });
     setLocationMode("manual");
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [routeIdFromUrl]);
 
   function handleStartChange(start: { lat: number; lng: number }) {

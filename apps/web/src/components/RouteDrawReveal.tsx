@@ -124,6 +124,9 @@ export function RouteDrawReveal({
   }, []);
 
   useEffect(() => {
+    // Reset/setup for the weld-draw reveal animation: synchronous state resets
+    // when idle and per-frame progress updates while drawing. Intentional.
+    /* eslint-disable react-hooks/set-state-in-effect */
     if (!active || coordinates.length < 2) {
       phaseRef.current = "idle";
       setProgress(0);
@@ -318,6 +321,7 @@ export function RouteDrawReveal({
       map.keyboard.enable();
       map.touchZoomRotate.enable();
     };
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [active, coordinates, map, onComplete, onDrawingComplete]);
 
   if (!active || coordinates.length < 2) return null;
