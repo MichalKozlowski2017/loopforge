@@ -3094,7 +3094,9 @@ async function fetchApproachLegSegment(
   from: LatLng,
   to: LatLng,
   _bikeType: GenerateRouteRequest["bikeType"],
+  options: { requireNetworkRoute?: boolean } = {},
 ): Promise<RoutedLeg> {
+  const requireNetworkRoute = options.requireNetworkRoute === true;
   const preference = routingEnginePreference();
 
   if (preference !== "brouter") {
@@ -3126,6 +3128,12 @@ async function fetchApproachLegSegment(
     return brouterResultToApproachLeg(routed);
   }
 
+  if (requireNetworkRoute) {
+    throw new Error(
+      "Routing backend unavailable for strict on-road validation/repair.",
+    );
+  }
+
   const coordinates = [...lineCoordinates(from, to)] as [number, number][];
   const distanceKm = totalDistanceKm(coordinates);
   return {
@@ -3155,6 +3163,7 @@ async function assertRouteStaysOnRoadNetwork(
           { lat: from.lat, lng: from.lng },
           { lat: to.lat, lng: to.lng },
           request.bikeType,
+          { requireNetworkRoute: true },
         )
       ).coordinates,
     {
@@ -3206,6 +3215,7 @@ async function detectOffRoadEdges(
           { lat: from[1], lng: from[0] },
           { lat: to[1], lng: to[0] },
           request.bikeType,
+          { requireNetworkRoute: true },
         )
       ).coordinates;
       if (replacement.length < 2) continue;
