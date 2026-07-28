@@ -132,7 +132,8 @@ export type GeometrySafetyLimits = {
 };
 
 const METRO_GEOMETRY_LIMITS: GeometrySafetyLimits = {
-  maxPruneStitchM: 55,
+  // Very tight — only true junction rejoins; anything wider is a visible corner-cut.
+  maxPruneStitchM: 22,
   useDenseTeleportCheck: true,
   denseP95MaxM: 28,
   denseOutlierMinM: 140,
@@ -147,7 +148,7 @@ const METRO_GEOMETRY_LIMITS: GeometrySafetyLimits = {
 
 /** Small town / mixed fabric (e.g. Dzielce → through Tłuszcz). */
 const MIXED_GEOMETRY_LIMITS: GeometrySafetyLimits = {
-  maxPruneStitchM: 50,
+  maxPruneStitchM: 20,
   useDenseTeleportCheck: true,
   denseP95MaxM: 32,
   denseOutlierMinM: 140,
@@ -160,7 +161,7 @@ const MIXED_GEOMETRY_LIMITS: GeometrySafetyLimits = {
 };
 
 const OPEN_COUNTRY_GEOMETRY_LIMITS: GeometrySafetyLimits = {
-  maxPruneStitchM: 45,
+  maxPruneStitchM: 18,
   useDenseTeleportCheck: false,
   denseP95MaxM: 0,
   denseOutlierMinM: Number.POSITIVE_INFINITY,
@@ -263,7 +264,7 @@ export function inferGeometrySafetyLimits(
   ) {
     return {
       ...MIXED_GEOMETRY_LIMITS,
-      maxPruneStitchM: 55,
+      maxPruneStitchM: 22,
       source: "dense-town",
     };
   }

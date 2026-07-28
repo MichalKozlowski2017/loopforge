@@ -48,6 +48,7 @@ import {
   measureOffPath,
   mirroredPrefixLengthM,
 } from "./route-quality";
+import { enrichRouteShapesFromOsm } from "./osm-shape-enrich";
 import {
   maxAcceptableDistanceError,
   maxLoopShareOfTarget,
@@ -3647,6 +3648,49 @@ export type {
   ViaPointValidation,
 } from "./via-validation";
 
+/** Splice denser OSM shape nodes into long chords; refresh GPX/map overlay. */
+async function polishGeneratedRouteGeometry(
+  request: GenerateRouteRequest,
+  generated: GeneratedRoute,
+  onProgress?: GenerateRouteOptions["onProgress"],
+): Promise<GeneratedRoute> {
+  const before = generated.geojson.geometry.coordinates as [number, number][];
+  const polished = await enrichRouteShapesFromOsm(before);
+  if (polished.enrichedEdges === 0) return generated;
+
+  reportProgress(onProgress, {
+    phase: "refining",
+    message: "Doprecyzowuję geometrię po drogach",
+    detail: `Uzupełniono kształt ${polished.enrichedEdges} odc. z mapy OSM`,
+    progress: 96,
+  });
+
+  const km = totalDistanceKm(polished.coordinates);
+  generated.geojson = {
+    ...generated.geojson,
+    geometry: {
+      ...generated.geojson.geometry,
+      coordinates: polished.coordinates,
+    },
+  };
+  generated.gpx = buildGpx(
+    `Loopforge ${request.bikeType} ${Math.round(km)}km`,
+    polished.coordinates,
+    request.start,
+  );
+  generated.metrics = request.approachEnabled
+    ? { ...generated.metrics, distanceKm: km }
+    : {
+        ...generated.metrics,
+        distanceKm: km,
+        loopDistanceKm: km,
+      };
+  // Recolor against the polished polyline (messages still approximate tags).
+  generated.mapGeojson =
+    buildRouteMapGeoJson(polished.coordinates, undefined) ?? undefined;
+  return generated;
+}
+
 export async function generateRoute(
   request: GenerateRouteRequest,
   options?: GenerateRouteOptions,
@@ -3723,7 +3767,11 @@ export async function generateRoute(
         request,
         generated.geojson.geometry.coordinates as [number, number][],
       );
-      return generated;
+      return polishGeneratedRouteGeometry(
+        request,
+        generated,
+        options?.onProgress,
+      );
     } catch (error) {
       lastNetworkError =
         error instanceof Error ? error : new Error("Route left road network");
@@ -3754,7 +3802,11 @@ export async function generateRoute(
       requestedDistanceKm: existing?.requestedDistanceKm,
       actualDistanceKm: existing?.actualDistanceKm,
     };
-    return lastGenerated;
+    return polishGeneratedRouteGeometry(
+      request,
+      lastGenerated,
+      options?.onProgress,
+    );
   }
 
   if (lastNetworkError) {

@@ -532,17 +532,17 @@ function stitchBudgetAtJunction(
   stitchM = 0,
 ): number {
   // True out-and-back rejoins at (essentially) the same junction — safe to cut.
-  if (stitchM > 0 && stitchM < 30) {
-    return Math.max(baseMaxStitchM, 55);
+  if (stitchM > 0 && stitchM < 12) {
+    return Math.max(baseMaxStitchM, 22);
   }
   const localMed = localMedianEdgeM(coordinates, beforeIdx);
   if (localMed > 0 && localMed < 28) {
-    return Math.min(65, Math.max(baseMaxStitchM, 55));
+    return Math.min(25, Math.max(baseMaxStitchM, 22));
   }
   if (localMed > 45) {
-    return Math.min(baseMaxStitchM, 50);
+    return Math.min(baseMaxStitchM, 18);
   }
-  return Math.max(baseMaxStitchM, 55);
+  return Math.max(baseMaxStitchM, 22);
 }
 
 function removeSpurRanges(
