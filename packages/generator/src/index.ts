@@ -41,7 +41,11 @@ import {
   hasBrokenRouteGeometry,
   hasHardTeleportEdge,
 } from "./prune-spurs";
-import { mirroredPrefixLengthM, maxMirroredPrefixBudgetM } from "./route-quality";
+import {
+  maxMirroredPrefixBudgetM,
+  measureOffPath,
+  mirroredPrefixLengthM,
+} from "./route-quality";
 import {
   maxAcceptableDistanceError,
   maxLoopShareOfTarget,
@@ -250,9 +254,19 @@ function buildGeneratedRoute(
     denseCoordinates,
     geoCtx,
   );
+  const navLooksBroken = hasBrokenRouteGeometry(
+    navCoordinates,
+    denseCoordinates,
+    geoCtx,
+  );
+  const navOffPath = measureOffPath(navCoordinates, denseCoordinates, {
+    maxPointDistanceM: 35,
+    sampleSpacingM: 20,
+  });
+  const navLeavesNetwork =
+    navOffPath.offPathShare > 0.02 || navOffPath.offPathM > 80;
   const displayCoordinates =
-    !hasBrokenRouteGeometry(navCoordinates, denseCoordinates, geoCtx) &&
-    navCoordinates.length >= 2
+    !navLooksBroken && !navLeavesNetwork && navCoordinates.length >= 2
       ? navCoordinates
       : denseCoordinates;
   // Only hard teleports fail the build — soft air-chord checks are for prune rollback.
