@@ -541,8 +541,9 @@ function geometryPenalty(
     metrics.distanceError * 0.55 +
     metrics.spurShare * 48 +
     metrics.backtrack * 30 +
-    (1 - metrics.directionCoverage) * 1.4 +
-    mirrorKm * 0.35
+    // Prefer non-overlapping return over "ideal" cone shape.
+    (1 - metrics.directionCoverage) * 0.35 +
+    mirrorKm * 1.4
   );
 }
 
@@ -578,7 +579,22 @@ function pickDegradedShipCandidate(
     isMinimallyShippableLoop(c, request.distanceKm, request.bikeType),
   );
   if (eligible.length === 0) return null;
-  eligible.sort(
+  const noMirrorOvershoot = approachMode
+    ? eligible
+    : eligible.filter(
+        (c) =>
+          !exceedsMirrorBudget(
+            c.coordinates,
+            request.distanceKm,
+            request.start,
+            false,
+          ),
+      );
+  const rankingPool =
+    !approachMode && noMirrorOvershoot.length > 0
+      ? noMirrorOvershoot
+      : eligible;
+  rankingPool.sort(
     (a, b) =>
       geometryPenalty(
         a.coordinates,
@@ -597,7 +613,7 @@ function pickDegradedShipCandidate(
         approachMode,
       ),
   );
-  return eligible[0]!;
+  return rankingPool[0]!;
 }
 
 function buildDegradedWarnings(
@@ -623,12 +639,6 @@ function buildDegradedWarnings(
   } else if (share > 1.08) {
     warnings.push(
       `Trasa ma ${output.distanceKm.toFixed(1)} km — więcej niż planowane ~${request.distanceKm} km.`,
-    );
-  }
-
-  if (metrics.directionCoverage < 0.35) {
-    warnings.push(
-      "Obwód mocno odbiega od wybranego kierunku — sprawdź mapę przed wyjazdem.",
     );
   }
 
@@ -1565,7 +1575,8 @@ async function generateRouteWithEngine(
             request.start,
             approachMode,
           );
-        const wrongDirection = metrics.directionCoverage < 0.38;
+        // Keep direction as a soft preference; reject only near-opposite cones.
+        const wrongDirection = metrics.directionCoverage < 0.08;
 
         if (
           options?.approachCoordinates &&
@@ -2576,10 +2587,10 @@ async function generateRouteWithEngine(
 
   const hasViaPoints = (request.viaPoints?.length ?? 0) > 0;
   const minDirectionCoverage = usedRelaxedFallback
-    ? 0.22
+    ? 0.08
     : approachMode
-      ? 0.36
-      : 0.42;
+      ? 0.12
+      : 0.16;
   const distanceErrorLimit = usedRelaxedFallback
     ? Math.max(
         maxAcceptableDistanceError(request.distanceKm, true, baseUrban),
