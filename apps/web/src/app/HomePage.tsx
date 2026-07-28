@@ -14,6 +14,7 @@ import {
 } from "@/components/RouteForm";
 import { SurfaceBreakdown } from "@/components/SurfaceBreakdown";
 import { MapGenerationOverlay } from "@/components/MapGenerationOverlay";
+import { RouteFallbackDialog } from "@/components/RouteFallbackDialog";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
 import { useGeolocation } from "@/lib/use-geolocation";
 import { consumeGenerationStream } from "@/lib/parse-generation-stream";
@@ -80,6 +81,9 @@ export default function HomePage() {
   const [generationProgress, setGenerationProgress] =
     useState<RouteGenerationProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fallbackQuality, setFallbackQuality] = useState<
+    NonNullable<StoredRoute["generationQuality"]> | null
+  >(null);
   const [notes, setNotes] = useState("");
   const [pickOnMap, setPickOnMap] = useState(false);
   const mapSectionRef = useRef<HTMLElement>(null);
@@ -193,6 +197,7 @@ export default function HomePage() {
     setLoadingSeconds(0);
     setGenerationProgress(null);
     setError(null);
+    setFallbackQuality(null);
     setPickOnMap(false);
     setRoute(null);
 
@@ -259,6 +264,12 @@ export default function HomePage() {
         setGenerationProgress(progress);
       });
       setRoute(generated);
+      if (
+        generated.generationQuality &&
+        generated.generationQuality.warnings.length > 0
+      ) {
+        setFallbackQuality(generated.generationQuality);
+      }
       setNotes("");
       // History is best-effort — never fail the ride on localStorage quota.
       try {
@@ -478,6 +489,12 @@ export default function HomePage() {
           </section>
         ) : null}
       </aside>
+      {fallbackQuality ? (
+        <RouteFallbackDialog
+          quality={fallbackQuality}
+          onDismiss={() => setFallbackQuality(null)}
+        />
+      ) : null}
     </main>
   );
 }

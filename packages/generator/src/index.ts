@@ -235,6 +235,8 @@ function buildGeneratedRoute(
     mapGeojson?: import("@loopforge/osm-types").RouteMapGeoJson;
     brouterMessages?: string[][];
     gpx?: string;
+    skipMirrorGate?: boolean;
+    generationQuality?: import("@loopforge/osm-types").RouteGenerationQuality;
   },
 ): GeneratedRoute {
   const { start, bikeType, direction, distanceKm } = request;
@@ -260,7 +262,7 @@ function buildGeneratedRoute(
     );
   }
   // Final GPX-identical mirror gate (densify 5 m). Catches cases sparse accept missed.
-  if (!request.approachEnabled && !options.placeholder) {
+  if (!request.approachEnabled && !options.placeholder && !options.skipMirrorGate) {
     const gpxTrack = densifyTrackForNavigation(
       displayCoordinates,
       GPX_NAV_MAX_EDGE_M,
@@ -323,6 +325,7 @@ function buildGeneratedRoute(
     segments: options.segments.length > 0 ? options.segments : undefined,
     // On-network reference = BRouter dense path before navigation prune.
     networkCoordinates: denseCoordinates,
+    generationQuality: options.generationQuality,
   };
 }
 
@@ -541,6 +544,199 @@ function geometryPenalty(
     (1 - metrics.directionCoverage) * 1.4 +
     mirrorKm * 0.35
   );
+}
+
+/** Last-resort ship floor — below MIN_LOOP_SHARE_SHIP but still rideable. */
+const MIN_DEGRADED_LOOP_SHARE = 0.4;
+
+function maxDegradedLoopShare(bikeType: GenerateRouteRequest["bikeType"]): number {
+  return emergencyMaxLoopShare(bikeType) + 0.12;
+}
+
+function isMinimallyShippableLoop(
+  candidate: RoutedLoopResult,
+  targetDistanceKm: number,
+  bikeType: GenerateRouteRequest["bikeType"],
+): boolean {
+  if (candidate.coordinates.length < 4) return false;
+  if (hasHardTeleportEdge(candidate.coordinates)) return false;
+  if (hasHardSidepathAccess(candidate.segments)) return false;
+  if (hasForbiddenBikeAccess(candidate.segments)) return false;
+  const maxShare = maxDegradedLoopShare(bikeType);
+  return (
+    candidate.distanceKm >= targetDistanceKm * MIN_DEGRADED_LOOP_SHARE &&
+    candidate.distanceKm <= targetDistanceKm * maxShare
+  );
+}
+
+function pickDegradedShipCandidate(
+  pool: RoutedLoopResult[],
+  request: GenerateRouteRequest,
+  approachMode: boolean,
+): RoutedLoopResult | null {
+  const eligible = pool.filter((c) =>
+    isMinimallyShippableLoop(c, request.distanceKm, request.bikeType),
+  );
+  if (eligible.length === 0) return null;
+  eligible.sort(
+    (a, b) =>
+      geometryPenalty(
+        a.coordinates,
+        request.distanceKm,
+        a.distanceKm,
+        request.start,
+        request.direction,
+        approachMode,
+      ) -
+      geometryPenalty(
+        b.coordinates,
+        request.distanceKm,
+        b.distanceKm,
+        request.start,
+        request.direction,
+        approachMode,
+      ),
+  );
+  return eligible[0]!;
+}
+
+function buildDegradedWarnings(
+  request: GenerateRouteRequest,
+  output: RoutedLoopResult,
+  approachMode: boolean,
+  urban: boolean,
+): import("@loopforge/osm-types").RouteGenerationQuality["warnings"] {
+  const warnings: string[] = [];
+  const metrics = loopQualityMetrics(
+    output.coordinates,
+    request.distanceKm,
+    output.distanceKm,
+    request.start,
+    request.direction,
+  );
+  const share = output.distanceKm / request.distanceKm;
+
+  if (share < MIN_LOOP_SHARE_SHIP) {
+    warnings.push(
+      `Dystans to ${output.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km — w tej okolicy pełny obwód był trudny do ułożenia.`,
+    );
+  } else if (share > 1.08) {
+    warnings.push(
+      `Trasa ma ${output.distanceKm.toFixed(1)} km — więcej niż planowane ~${request.distanceKm} km.`,
+    );
+  }
+
+  if (metrics.directionCoverage < 0.35) {
+    warnings.push(
+      "Obwód mocno odbiega od wybranego kierunku — sprawdź mapę przed wyjazdem.",
+    );
+  }
+
+  if (
+    !approachMode &&
+    exceedsMirrorBudget(
+      output.coordinates,
+      request.distanceKm,
+      request.start,
+      false,
+    )
+  ) {
+    const mirrorM = densifiedMirrorLengthM(output.coordinates, request.start);
+    warnings.push(
+      `Część powrotu idzie tą samą drogą (~${Math.round(mirrorM)} m) — to kompromis zamiast braku trasy.`,
+    );
+  }
+
+  if (request.preferQuietRoutes) {
+    warnings.push(
+      "Preferencje spokojnych dróg nie zostały w pełni spełnione — pokazujemy najlepszą dostępną pętlę.",
+    );
+  }
+
+  if (request.avoidAsphalt) {
+    warnings.push(
+      "Tryb „unikaj asfaltu” nie był w pełni możliwy — część odcinków może być utwardzona.",
+    );
+  }
+
+  if (urban && request.distanceKm >= 45) {
+    warnings.push(
+      "Długa pętla w aglomeracji bywa trudna — rozważ krótszy dystans albo start za miastem.",
+    );
+  }
+
+  if (warnings.length === 0) {
+    warnings.push(
+      "Nie udało się idealnie dopasować trasy do ustawień — pokazujemy najlepszą dostępną pętlę.",
+    );
+  }
+
+  return warnings;
+}
+
+function shipDegradedLoop(
+  request: GenerateRouteRequest,
+  candidate: RoutedLoopResult,
+  options: {
+    approachMode: boolean;
+    urban: boolean;
+    mode: import("@loopforge/osm-types").RouteGenerationMode;
+    onProgress?: GenerateRouteOptions["onProgress"];
+  },
+): {
+  route: GeneratedRoute;
+  loopSegments: { tags: OsmTags; distanceM: number }[];
+} {
+  reportProgress(options.onProgress, {
+    phase: "finalizing",
+    message: "Pakuję najlepszą dostępną pętlę",
+    detail: "Nie udało się idealnie dopasować — wysyłamy kompromis",
+    progress: 96,
+  });
+
+  let output = candidate;
+  try {
+    const finalized = finalizeLoopWithoutSpurs(
+      candidate,
+      request.start,
+      request.distanceKm,
+      request.direction,
+    );
+    if (
+      finalized.coordinates.length >= 4 &&
+      !hasHardTeleportEdge(finalized.coordinates) &&
+      isMinimallyShippableLoop(finalized, request.distanceKm, request.bikeType)
+    ) {
+      output = finalized;
+    }
+  } catch {
+    // keep raw candidate
+  }
+
+  const warnings = buildDegradedWarnings(
+    request,
+    output,
+    options.approachMode,
+    options.urban,
+  );
+
+  return {
+    route: buildGeneratedRoute(request, output.coordinates, {
+      placeholder: false,
+      elevationGainM: output.elevationGainM,
+      segments: output.segments,
+      mapGeojson: output.mapGeojson ?? undefined,
+      brouterMessages: output.brouterMessages,
+      skipMirrorGate: true,
+      generationQuality: {
+        mode: options.mode,
+        warnings,
+        requestedDistanceKm: request.distanceKm,
+        actualDistanceKm: output.distanceKm,
+      },
+    }),
+    loopSegments: output.segments,
+  };
 }
 
 function pavedShareFromSegments(
@@ -2299,6 +2495,35 @@ async function generateRouteWithEngine(
     }
   }
 
+  const approachMode = options?.approachCoordinates != null;
+
+  const tryShipDegraded = (
+    mode: import("@loopforge/osm-types").RouteGenerationMode = "fallback",
+  ): {
+    route: GeneratedRoute;
+    loopSegments: { tags: OsmTags; distanceM: number }[];
+  } | null => {
+    const pool = [best, bestRejected, bestFallback, bestLowOverlap].filter(
+      (c): c is RoutedLoopResult => !!c,
+    );
+    const candidate = pickDegradedShipCandidate(pool, request, approachMode);
+    if (!candidate) return null;
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        "[loopforge] degraded ship:",
+        `${candidate.distanceKm.toFixed(1)} km`,
+        `mode=${mode}`,
+      );
+    }
+    usedRelaxedFallback = true;
+    return shipDegradedLoop(request, candidate, {
+      approachMode,
+      urban: baseUrban,
+      mode,
+      onProgress,
+    });
+  };
+
   if (!best) {
     const urbanHint = baseUrban
       ? " W aglomeracji spróbuj krótszego dystansu albo startu za miastem."
@@ -2333,6 +2558,8 @@ async function generateRouteWithEngine(
         );
       }
     }
+    const degraded = tryShipDegraded("fallback");
+    if (degraded) return degraded;
     throw new Error(
       `Nie udało się wygenerować trasy — spróbuj innego kierunku, krótszego dystansu lub wyłącz „unikaj asfaltu”.${urbanHint}`,
     );
@@ -2348,7 +2575,6 @@ async function generateRouteWithEngine(
   });
 
   const hasViaPoints = (request.viaPoints?.length ?? 0) > 0;
-  const approachMode = options?.approachCoordinates != null;
   const minDirectionCoverage = usedRelaxedFallback
     ? 0.22
     : approachMode
@@ -2471,6 +2697,10 @@ async function generateRouteWithEngine(
         );
       }
     } else {
+      const degraded = tryShipDegraded(
+        usedRelaxedFallback ? "relaxed" : "fallback",
+      );
+      if (degraded) return degraded;
       const urbanHint = baseUrban
         ? " W mieście 50 km bywa trudne — spróbuj 35 km albo start za granicą aglomeracji."
         : "";
@@ -2516,6 +2746,8 @@ async function generateRouteWithEngine(
       }));
 
   if (!finalizedGeoOk) {
+    const degraded = tryShipDegraded("fallback");
+    if (degraded) return degraded;
     const urbanHint = baseUrban
       ? " W aglomeracji spróbuj krótszego dystansu albo startu za miastem."
       : "";
@@ -2529,6 +2761,8 @@ async function generateRouteWithEngine(
     ? approachMaxLoopShare(baseUrban)
     : emergencyMaxLoopShare(request.bikeType);
   if (finalized.distanceKm > request.distanceKm * maxShipShare) {
+    const degraded = tryShipDegraded("fallback");
+    if (degraded) return degraded;
     throw new Error(
       `Trasa wyszła za długa (${finalized.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km) — spróbuj innego kierunku lub krótszego dystansu.`,
     );
@@ -2691,6 +2925,8 @@ async function generateRouteWithEngine(
       }
     }
 
+    const degraded = tryShipDegraded("fallback");
+    if (degraded) return degraded;
     throw new Error(
       `Trasa wyszła za krótka (${finalized.distanceKm.toFixed(1)} km zamiast ~${request.distanceKm} km) — spróbuj innego kierunku lub większego dystansu.`,
     );
@@ -2706,6 +2942,8 @@ async function generateRouteWithEngine(
       approachMode,
     )
   ) {
+    const degraded = tryShipDegraded("fallback");
+    if (degraded) return degraded;
     throw new Error(
       `Nie udało się wygenerować czystej pętli (powrót tą samą drogą ~${Math.round(densifiedMirrorLengthM(finalized.coordinates, request.start))} m). Spróbuj innego kierunku lub krótszego dystansu.`,
     );
@@ -2721,6 +2959,19 @@ async function generateRouteWithEngine(
       segments: output.segments,
       mapGeojson: output.mapGeojson ?? undefined,
       brouterMessages: output.brouterMessages,
+      generationQuality: usedRelaxedFallback
+        ? {
+            mode: "relaxed",
+            warnings: buildDegradedWarnings(
+              request,
+              output,
+              approachMode,
+              baseUrban,
+            ),
+            requestedDistanceKm: request.distanceKm,
+            actualDistanceKm: output.distanceKm,
+          }
+        : undefined,
     }),
     loopSegments: output.segments,
   };

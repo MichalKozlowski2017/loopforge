@@ -128,6 +128,17 @@ export interface RouteMapGeoJson {
   features: RouteSegmentFeature[];
 }
 
+export type RouteGenerationMode = "normal" | "relaxed" | "fallback";
+
+/** When the generator ships an imperfect loop instead of failing. */
+export interface RouteGenerationQuality {
+  mode: RouteGenerationMode;
+  /** Polish copy for UI — why the route differs from the request. */
+  warnings: string[];
+  requestedDistanceKm?: number;
+  actualDistanceKm?: number;
+}
+
 export interface GeneratedRoute {
   id: string;
   geojson: RouteFeature;
@@ -142,6 +153,8 @@ export interface GeneratedRoute {
    * stay within a few meters of this path; air-chords diverge from it.
    */
   networkCoordinates?: [number, number][];
+  /** Present when the route was relaxed or shipped as a last-resort fallback. */
+  generationQuality?: RouteGenerationQuality;
 }
 
 export interface StoredRoute extends GeneratedRoute {
