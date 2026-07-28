@@ -3183,63 +3183,71 @@ const BACKEND_UNAVAILABLE_MESSAGE =
 /**
  * Pick candidate edges likely to be off-road "air-chords".
  *
- * A pure "top-N longest edges" scan misses shorter chords (~80-160 m) that
- * cut across a park or city block whenever the route also contains longer
- * *legitimate* edges elsewhere (bridges, arterial crossings, rural roads).
- * So in addition to absolute length, flag edges that are locally anomalous —
- * much longer than their immediate neighbours — the same signature a
- * straight-line stitch leaves behind after spur pruning.
+ * A pure "top-N longest edges" scan misses shorter chords (~40-90 m) that
+ * cut a park/block corner when the route also contains longer *legitimate*
+ * edges elsewhere (bridges, arterial crossings, rural roads) — those would
+ * always outrank a modest corner-cut on absolute length alone. And a pure
+ * "locally anomalous" scan (edge much longer than its immediate neighbours)
+ * misses corner-cuts sitting in moderately dense terrain where nearby real
+ * edges are already 20-40 m, so the cut isn't a big enough *relative* outlier.
+ *
+ * So we rank candidates two ways — by absolute length, and by how anomalous
+ * they are versus their local neighbourhood — and take the union of both
+ * top-lists. Being over-inclusive here is cheap: every candidate just gets a
+ * real routing check before it's ever treated as a confirmed issue.
  */
 function findOffRoadCandidateEdges(
   coordinates: [number, number][],
   options: { minEdgeM: number; maxEdges: number },
 ): Array<{ edgeIndex: number; edgeM: number }> {
   const window = 12;
-  const localRatio = 4.5;
-  const localMedianMaxM = 45;
-  const absoluteLongM = 90;
 
   const edgeLengths: number[] = [];
   for (let i = 1; i < coordinates.length; i++) {
     edgeLengths.push(routeLengthM([coordinates[i - 1]!, coordinates[i]!]));
   }
 
-  const candidates: Array<{ edgeIndex: number; edgeM: number; score: number }> =
-    [];
+  const scored: Array<{
+    edgeIndex: number;
+    edgeM: number;
+    anomalyRatio: number;
+  }> = [];
   for (let k = 0; k < edgeLengths.length; k++) {
     const edgeM = edgeLengths[k]!;
     if (edgeM < options.minEdgeM) continue;
 
-    let locallyAnomalous = false;
-    if (edgeM < absoluteLongM) {
-      const nearby: number[] = [];
-      for (
-        let j = Math.max(0, k - window);
-        j < Math.min(edgeLengths.length, k + window + 1);
-        j++
-      ) {
-        if (j !== k) nearby.push(edgeLengths[j]!);
-      }
-      if (nearby.length >= 4) {
-        const sorted = [...nearby].sort((a, b) => a - b);
-        const localMed = sorted[Math.floor(sorted.length / 2)]!;
-        locallyAnomalous =
-          localMed > 0 &&
-          localMed < localMedianMaxM &&
-          edgeM > localMed * localRatio;
-      }
-      if (!locallyAnomalous) continue;
+    const nearby: number[] = [];
+    for (
+      let j = Math.max(0, k - window);
+      j < Math.min(edgeLengths.length, k + window + 1);
+      j++
+    ) {
+      if (j !== k) nearby.push(edgeLengths[j]!);
     }
-
-    candidates.push({
-      edgeIndex: k + 1,
-      edgeM,
-      score: locallyAnomalous ? edgeM * 2 : edgeM,
-    });
+    let anomalyRatio = 0;
+    if (nearby.length >= 4) {
+      const sorted = [...nearby].sort((a, b) => a - b);
+      const localMed = sorted[Math.floor(sorted.length / 2)]!;
+      anomalyRatio = localMed > 0 ? edgeM / localMed : 0;
+    }
+    scored.push({ edgeIndex: k + 1, edgeM, anomalyRatio });
   }
 
-  candidates.sort((a, b) => b.score - a.score);
-  return candidates.slice(0, options.maxEdges);
+  const byLength = [...scored].sort((a, b) => b.edgeM - a.edgeM);
+  const byAnomaly = [...scored]
+    .filter((c) => c.anomalyRatio >= 1.8)
+    .sort((a, b) => b.anomalyRatio - a.anomalyRatio);
+
+  const half = Math.max(1, Math.ceil(options.maxEdges / 2));
+  const picked = new Map<number, { edgeIndex: number; edgeM: number }>();
+  for (const c of [...byLength.slice(0, half), ...byAnomaly.slice(0, half)]) {
+    if (!picked.has(c.edgeIndex)) {
+      picked.set(c.edgeIndex, { edgeIndex: c.edgeIndex, edgeM: c.edgeM });
+    }
+    if (picked.size >= options.maxEdges) break;
+  }
+
+  return [...picked.values()];
 }
 
 async function detectOffRoadEdges(
@@ -3251,8 +3259,8 @@ async function detectOffRoadEdges(
   const issues: OffRoadEdgeIssue[] = [];
 
   const candidates = findOffRoadCandidateEdges(coordinates, {
-    minEdgeM: 40,
-    maxEdges: 24,
+    minEdgeM: 35,
+    maxEdges: 40,
   });
 
   const checkCandidate = async (candidate: {
