@@ -22,8 +22,12 @@ export default function RouteDetailPage() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    // Read client-only localStorage entry after mount to avoid SSR hydration
+    // mismatch. Intentional one-time effect state hydration.
+    /* eslint-disable react-hooks/set-state-in-effect */
     setRoute(getLocalRouteById(params.id));
     setReady(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [params.id]);
 
   if (!ready) {

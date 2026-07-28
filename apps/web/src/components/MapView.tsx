@@ -183,9 +183,12 @@ export function MapView({
   const wasVeiledRef = useRef(false);
 
   const [mapReady, setMapReady] = useState(false);
+  const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
   const [mapStyle, setMapStyle] = useState<StyleSpecification | null>(null);
 
-  onStartChangeRef.current = onStartChange;
+  useEffect(() => {
+    onStartChangeRef.current = onStartChange;
+  }, [onStartChange]);
   const distanceHints = useMemo(
     () => ({
       approachDistanceKm,
@@ -193,6 +196,10 @@ export function MapView({
     }),
     [approachDistanceKm, returnApproachDistanceKm],
   );
+  // Latest-props snapshot read synchronously by imperative maplibre sync/event
+  // callbacks; intentionally written during render so callbacks never see stale
+  // props. Moving this into an effect would reorder it after the sync effects.
+  // eslint-disable-next-line react-hooks/refs -- intentional latest-props mirror for imperative map sync
   routeDataRef.current = {
     route,
     mapGeojson,
@@ -403,6 +410,7 @@ export function MapView({
       canvas.style.height = "100%";
 
       setMapReady(true);
+      setMapInstance(map);
       requestAnimationFrame(() => {
         map.resize();
         scheduleRouteSync();
@@ -427,6 +435,7 @@ export function MapView({
       map.remove();
       mapRef.current = null;
       setMapReady(false);
+      setMapInstance(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- init once per style
   }, [mapStyle]);
@@ -484,6 +493,9 @@ export function MapView({
   }, [onRouteRevealComplete]);
 
   useEffect(() => {
+    // Imperative reveal coordination: toggles route-layer visibility in sync
+    // with the veil/reveal animation driven by refs. Intentional effect state.
+    /* eslint-disable react-hooks/set-state-in-effect */
     if (mapVeiled && !wasVeiledRef.current) {
       routeLayersRevealedRef.current = false;
     }
@@ -502,9 +514,13 @@ export function MapView({
       setShowRouteLayers(false);
       if (mapReady) scheduleRouteSync();
     }
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [mapVeiled, mapReady, routeRevealActive, scheduleRouteSync]);
 
   useEffect(() => {
+    // Drives the route-draw reveal state machine (locks path, hides layers,
+    // starts the animation). Intentional effect state coordination.
+    /* eslint-disable react-hooks/set-state-in-effect */
     if (!routeRevealActive) {
       setDrawRevealActive(false);
       lockedRevealPathRef.current = [];
@@ -540,6 +556,7 @@ export function MapView({
     return () => {
       cancelled = true;
     };
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [
     routeRevealActive,
     mapReady,
@@ -663,9 +680,9 @@ export function MapView({
           aria-hidden
         />
       ) : null}
-      {mapReady && mapRef.current && drawRevealActive && lockedRevealPath.length >= 2 ? (
+      {mapReady && mapInstance && drawRevealActive && lockedRevealPath.length >= 2 ? (
         <RouteDrawReveal
-          map={mapRef.current}
+          map={mapInstance}
           coordinates={lockedRevealPath}
           active={drawRevealActive}
           onDrawingComplete={handleDrawingComplete}

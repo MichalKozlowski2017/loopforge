@@ -10,12 +10,12 @@ import {
 const ROUTES_PATH = path.join(process.cwd(), "../../data/routes.json");
 const MAX_STORED_ROUTES = 25;
 
-function useDatabaseStore(): boolean {
+function shouldUseDatabaseStore(): boolean {
   return isRoutingConfigured();
 }
 
 export async function loadRoutes(): Promise<StoredRoute[]> {
-  if (useDatabaseStore()) {
+  if (shouldUseDatabaseStore()) {
     const config = getRoutingConfig();
     if (!config) return [];
 
@@ -87,7 +87,7 @@ function trimForStorage(route: StoredRoute): StoredRoute {
 }
 
 export async function saveRoute(route: StoredRoute): Promise<void> {
-  if (useDatabaseStore()) {
+  if (shouldUseDatabaseStore()) {
     const config = getRoutingConfig();
     if (!config) throw new Error("DATABASE_URL is not configured");
 
@@ -150,7 +150,7 @@ export async function updateRouteRating(
   rating: "up" | "down",
   notes?: string,
 ): Promise<StoredRoute | null> {
-  if (useDatabaseStore()) {
+  if (shouldUseDatabaseStore()) {
     const config = getRoutingConfig();
     if (!config) return null;
 
@@ -184,7 +184,7 @@ export async function updateRouteRating(
 }
 
 export async function getRouteById(id: string): Promise<StoredRoute | null> {
-  if (useDatabaseStore()) {
+  if (shouldUseDatabaseStore()) {
     const config = getRoutingConfig();
     if (!config) return null;
 

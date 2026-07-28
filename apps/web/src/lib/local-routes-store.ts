@@ -11,7 +11,6 @@ const STORAGE_KEY = "loopforge:routes";
 const MAX_STORED_ROUTES = 6;
 /** Soft budget under typical ~5 MB origin quota (UTF-16 ≈ 2 bytes/char). */
 const MAX_STORAGE_CHARS = 2_200_000;
-const DISPLAY_MAX_POINTS = 2_500;
 const AGGRESSIVE_MAX_POINTS = 900;
 
 export interface LocalRouteSummary {
@@ -217,7 +216,7 @@ function tryWrite(routes: StoredRoute[]): boolean {
 function writeRoutes(routes: StoredRoute[]): void {
   if (typeof window === "undefined") return;
 
-  let candidates = routes.slice(0, MAX_STORED_ROUTES);
+  const candidates = routes.slice(0, MAX_STORED_ROUTES);
   const attempts: StoredRoute[][] = [
     candidates,
     candidates.slice(0, 6),
