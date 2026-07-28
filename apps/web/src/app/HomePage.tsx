@@ -258,9 +258,14 @@ export default function HomePage() {
       const generated = await consumeGenerationStream(response, (progress) => {
         setGenerationProgress(progress);
       });
-      saveLocalRoute(generated);
       setRoute(generated);
       setNotes("");
+      // History is best-effort — never fail the ride on localStorage quota.
+      try {
+        saveLocalRoute(generated);
+      } catch {
+        // ignore persistence errors
+      }
     } catch (err) {
       const aborted =
         (err instanceof DOMException &&
@@ -286,8 +291,12 @@ export default function HomePage() {
   function handleRate(rating: "up" | "down") {
     if (!route) return;
 
-    const updated = updateLocalRouteRating(route.id, rating, notes);
-    if (updated) setRoute(updated);
+    try {
+      const updated = updateLocalRouteRating(route.id, rating, notes);
+      if (updated) setRoute(updated);
+    } catch {
+      // Rating persist is best-effort.
+    }
   }
 
   const mapVeiled = loading || overlayExiting || routeRevealActive;
