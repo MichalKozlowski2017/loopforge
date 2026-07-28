@@ -5,6 +5,8 @@
  * Fail-open: any network/parse error returns the input unchanged.
  */
 
+import type { RouteMapGeoJson, RouteSegmentFeature } from "@loopforge/osm-types";
+
 type Coord = [number, number];
 
 const EARTH_RADIUS_M = 6_371_000;
@@ -239,4 +241,116 @@ export async function enrichRouteShapesFromOsm(
   } catch {
     return { coordinates, enrichedEdges: 0 };
   }
+}
+
+function distPointToSegmentM(p: Coord, a: Coord, b: Coord): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const denom = dx * dx + dy * dy + 1e-15;
+  const t = Math.max(
+    0,
+    Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / denom),
+  );
+  return haversineM(p, [a[0] + t * dx, a[1] + t * dy]);
+}
+
+function nearestStyledFeature(
+  point: Coord,
+  features: RouteSegmentFeature[],
+): RouteSegmentFeature | null {
+  let best: RouteSegmentFeature | null = null;
+  let bestD = Number.POSITIVE_INFINITY;
+  for (const feature of features) {
+    const coords = feature.geometry.coordinates as Coord[];
+    for (let i = 1; i < coords.length; i++) {
+      const d = distPointToSegmentM(point, coords[i - 1]!, coords[i]!);
+      if (d < bestD) {
+        bestD = d;
+        best = feature;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Paint a polished polyline using surface styles from the pre-polish overlay.
+ * Never call buildRouteMapGeoJson without BRouter messages — empty tags become
+ * the purple "Inne / brak tagu OSM" style for the whole loop.
+ */
+export function recolorCoordinatesFromMapGeojson(
+  coordinates: Coord[],
+  source: RouteMapGeoJson | undefined,
+): RouteMapGeoJson | undefined {
+  if (coordinates.length < 2 || !source?.features.length) return source;
+
+  const edges: RouteSegmentFeature[] = [];
+  let lastProps: RouteSegmentFeature["properties"] | null = null;
+
+  for (let i = 0; i < coordinates.length - 1; i++) {
+    const start = coordinates[i]!;
+    const end = coordinates[i + 1]!;
+    if (start[0] === end[0] && start[1] === end[1]) continue;
+
+    const mid: Coord = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2];
+    const nearest = nearestStyledFeature(mid, source.features);
+    const props: RouteSegmentFeature["properties"] | null =
+      nearest?.properties ?? lastProps;
+    if (!props) continue;
+    lastProps = props;
+
+    edges.push({
+      type: "Feature",
+      properties: { ...props },
+      geometry: {
+        type: "LineString",
+        coordinates: [start, end],
+      },
+    });
+  }
+
+  if (edges.length === 0) return source;
+
+  // Merge adjacent edges that share the same style key.
+  const merged: RouteSegmentFeature[] = [
+    {
+      ...edges[0]!,
+      geometry: {
+        type: "LineString",
+        coordinates: [...edges[0]!.geometry.coordinates],
+      },
+    },
+  ];
+  for (let i = 1; i < edges.length; i++) {
+    const current = edges[i]!;
+    const previous = merged[merged.length - 1]!;
+    const sameStyle =
+      previous.properties.label === current.properties.label &&
+      previous.properties.color === current.properties.color &&
+      previous.properties.category === current.properties.category &&
+      previous.properties.leg === current.properties.leg;
+    const last = previous.geometry.coordinates.at(-1) as Coord | undefined;
+    const first = current.geometry.coordinates[0] as Coord | undefined;
+    const contiguous =
+      last &&
+      first &&
+      Math.abs(last[0] - first[0]) < 1e-6 &&
+      Math.abs(last[1] - first[1]) < 1e-6;
+
+    if (sameStyle && contiguous) {
+      previous.geometry.coordinates.push(
+        ...current.geometry.coordinates.slice(1),
+      );
+    } else {
+      merged.push({
+        ...current,
+        geometry: {
+          type: "LineString",
+          coordinates: [...current.geometry.coordinates],
+        },
+      });
+    }
+  }
+
+  return { type: "FeatureCollection", features: merged };
 }

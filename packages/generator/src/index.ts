@@ -48,7 +48,7 @@ import {
   measureOffPath,
   mirroredPrefixLengthM,
 } from "./route-quality";
-import { enrichRouteShapesFromOsm } from "./osm-shape-enrich";
+import { enrichRouteShapesFromOsm, recolorCoordinatesFromMapGeojson } from "./osm-shape-enrich";
 import {
   maxAcceptableDistanceError,
   maxLoopShareOfTarget,
@@ -3685,9 +3685,12 @@ async function polishGeneratedRouteGeometry(
         distanceKm: km,
         loopDistanceKm: km,
       };
-  // Recolor against the polished polyline (messages still approximate tags).
-  generated.mapGeojson =
-    buildRouteMapGeoJson(polished.coordinates, undefined) ?? undefined;
+  // Transfer existing surface styles onto the polished polyline. Rebuilding
+  // with empty BRouter messages paints the whole loop purple ("brak tagu OSM").
+  generated.mapGeojson = recolorCoordinatesFromMapGeojson(
+    polished.coordinates,
+    generated.mapGeojson,
+  );
   return generated;
 }
 

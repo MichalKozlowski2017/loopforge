@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { enrichCoordinatesWithWays } from "./osm-shape-enrich";
+import {
+  enrichCoordinatesWithWays,
+  recolorCoordinatesFromMapGeojson,
+} from "./osm-shape-enrich";
+import type { RouteMapGeoJson } from "@loopforge/osm-types";
 
 describe("enrichCoordinatesWithWays", () => {
   it("splices denser OSM shape nodes into a long chord", () => {
@@ -61,5 +65,59 @@ describe("enrichCoordinatesWithWays", () => {
 
     const { enrichedEdges } = enrichCoordinatesWithWays(route, [way]);
     expect(enrichedEdges).toBe(0);
+  });
+});
+
+describe("recolorCoordinatesFromMapGeojson", () => {
+  it("transfers surface styles onto a denser polished polyline", () => {
+    const source: RouteMapGeoJson = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: {
+            surface: "asphalt",
+            label: "Asfalt",
+            category: "paved",
+            color: "#94a3b8",
+            dash: [],
+            highway: "residential",
+          },
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [21.0, 52.0],
+              [21.002, 52.0],
+            ],
+          },
+        },
+      ],
+    };
+
+    const polished: [number, number][] = [
+      [21.0, 52.0],
+      [21.0007, 52.0],
+      [21.0014, 52.0],
+      [21.002, 52.0],
+    ];
+
+    const colored = recolorCoordinatesFromMapGeojson(polished, source);
+    expect(colored?.features.length).toBeGreaterThanOrEqual(1);
+    expect(
+      colored?.features.every((f) => f.properties.label === "Asfalt"),
+    ).toBe(true);
+    expect(
+      colored?.features.every((f) => f.properties.color === "#94a3b8"),
+    ).toBe(true);
+  });
+
+  it("does not invent purple unknown styles when source is missing", () => {
+    const polished: [number, number][] = [
+      [21.0, 52.0],
+      [21.002, 52.0],
+    ];
+    expect(
+      recolorCoordinatesFromMapGeojson(polished, undefined),
+    ).toBeUndefined();
   });
 });
