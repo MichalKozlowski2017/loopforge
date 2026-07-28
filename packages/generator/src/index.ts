@@ -42,6 +42,8 @@ import {
   hasHardTeleportEdge,
 } from "./prune-spurs";
 import {
+  auditLongEdgesWithRouter,
+  distanceToPolylineM,
   maxMirroredPrefixBudgetM,
   measureOffPath,
   mirroredPrefixLengthM,
@@ -3140,6 +3142,136 @@ async function fetchApproachLegSegment(
   };
 }
 
+async function assertRouteStaysOnRoadNetwork(
+  request: GenerateRouteRequest,
+  coordinates: [number, number][],
+): Promise<void> {
+  if (coordinates.length < 2) return;
+  const findings = await auditLongEdgesWithRouter(
+    coordinates,
+    async (from, to) =>
+      (
+        await fetchApproachLegSegment(
+          { lat: from.lat, lng: from.lng },
+          { lat: to.lat, lng: to.lng },
+          request.bikeType,
+        )
+      ).coordinates,
+    {
+      minEdgeM: 60,
+      maxEdges: 14,
+      maxLengthRatio: 1.45,
+      lengthSlackM: 90,
+    },
+  );
+  if (findings.some((finding) => finding.code === "EDGE_OFF_ROAD")) {
+    throw new Error(
+      "Wykryto skrót poza drogami/ścieżkami — odrzucono trasę i spróbuj ponownie.",
+    );
+  }
+}
+
+type OffRoadEdgeIssue = {
+  edgeIndex: number;
+  from: [number, number];
+  to: [number, number];
+  replacement: [number, number][];
+};
+
+async function detectOffRoadEdges(
+  request: GenerateRouteRequest,
+  coordinates: [number, number][],
+): Promise<OffRoadEdgeIssue[]> {
+  const minEdgeM = 60;
+  const maxEdges = 14;
+  const maxLengthRatio = 1.45;
+  const lengthSlackM = 90;
+  const issues: OffRoadEdgeIssue[] = [];
+
+  const candidates: Array<{ edgeIndex: number; edgeM: number }> = [];
+  for (let i = 1; i < coordinates.length; i++) {
+    const from = coordinates[i - 1]!;
+    const to = coordinates[i]!;
+    const edgeM = routeLengthM([from, to]);
+    if (edgeM >= minEdgeM) candidates.push({ edgeIndex: i, edgeM });
+  }
+  candidates.sort((a, b) => b.edgeM - a.edgeM);
+
+  for (const candidate of candidates.slice(0, maxEdges)) {
+    const from = coordinates[candidate.edgeIndex - 1]!;
+    const to = coordinates[candidate.edgeIndex]!;
+    try {
+      const replacement = (
+        await fetchApproachLegSegment(
+          { lat: from[1], lng: from[0] },
+          { lat: to[1], lng: to[0] },
+          request.bikeType,
+        )
+      ).coordinates;
+      if (replacement.length < 2) continue;
+      const routedM = routeLengthM(replacement);
+      const limit = candidate.edgeM * maxLengthRatio + lengthSlackM;
+      if (routedM <= limit) continue;
+      const mid: [number, number] = [
+        (from[0] + to[0]) / 2,
+        (from[1] + to[1]) / 2,
+      ];
+      const midDist = distanceToPolylineM(mid, replacement);
+      if (midDist > 45) {
+        issues.push({ edgeIndex: candidate.edgeIndex, from, to, replacement });
+      }
+    } catch {
+      // transient routing miss — leave this edge as-is
+    }
+  }
+
+  return issues;
+}
+
+function repairOffRoadEdges(
+  coordinates: [number, number][],
+  issues: OffRoadEdgeIssue[],
+): { coordinates: [number, number][]; repairedCount: number } {
+  if (issues.length === 0) return { coordinates, repairedCount: 0 };
+  const repaired = [...coordinates];
+  let repairedCount = 0;
+  const ordered = [...issues].sort((a, b) => b.edgeIndex - a.edgeIndex);
+  for (const issue of ordered) {
+    const i = issue.edgeIndex;
+    if (i <= 0 || i >= repaired.length) continue;
+    const currentFrom = repaired[i - 1]!;
+    const currentTo = repaired[i]!;
+    const fromDriftM = routeLengthM([currentFrom, issue.from]);
+    const toDriftM = routeLengthM([currentTo, issue.to]);
+    if (fromDriftM > 25 || toDriftM > 25) continue;
+
+    const segment = [...issue.replacement];
+    if (segment.length < 2) continue;
+    segment[0] = currentFrom;
+    segment[segment.length - 1] = currentTo;
+    repaired.splice(i - 1, 2, ...segment);
+    repairedCount += 1;
+  }
+  return { coordinates: repaired, repairedCount };
+}
+
+async function repairRouteOffRoadShortcuts(
+  request: GenerateRouteRequest,
+  coordinates: [number, number][],
+): Promise<{ coordinates: [number, number][]; repairedCount: number }> {
+  let current = coordinates;
+  let repairedCount = 0;
+  for (let pass = 0; pass < 2; pass++) {
+    const issues = await detectOffRoadEdges(request, current);
+    if (issues.length === 0) break;
+    const repaired = repairOffRoadEdges(current, issues);
+    if (repaired.repairedCount === 0) break;
+    repairedCount += repaired.repairedCount;
+    current = repaired.coordinates;
+  }
+  return { coordinates: current, repairedCount };
+}
+
 async function fetchApproachLeg(
   from: LatLng,
   to: LatLng,
@@ -3434,8 +3566,76 @@ export async function generateRoute(
     }
   }
 
-  if (request.approachEnabled) {
-    return generateRouteWithApproach(request, options);
+  const maxNetworkAttempts = request.approachEnabled ? 2 : 3;
+  let lastNetworkError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxNetworkAttempts; attempt++) {
+    const generated = request.approachEnabled
+      ? await generateRouteWithApproach(request, options)
+      : (await generateLoopRoute(request, options)).route;
+
+    if (generated.geojson.properties.placeholder === true) {
+      return generated;
+    }
+
+    try {
+      const repaired = await repairRouteOffRoadShortcuts(
+        request,
+        generated.geojson.geometry.coordinates as [number, number][],
+      );
+      if (repaired.repairedCount > 0) {
+        reportProgress(options?.onProgress, {
+          phase: "refining",
+          message: "Naprawiam skróty poza drogami",
+          detail: `Podmieniono ${repaired.repairedCount} odc. na przebieg po sieci dróg`,
+          progress: 93,
+        });
+        const repairedKm = totalDistanceKm(repaired.coordinates);
+        generated.geojson = {
+          ...generated.geojson,
+          geometry: {
+            ...generated.geojson.geometry,
+            coordinates: repaired.coordinates,
+          },
+        };
+        generated.gpx = buildGpx(
+          `Loopforge ${request.bikeType} ${Math.round(repairedKm)}km`,
+          repaired.coordinates,
+          request.start,
+        );
+        generated.metrics = request.approachEnabled
+          ? { ...generated.metrics, distanceKm: repairedKm }
+          : {
+              ...generated.metrics,
+              distanceKm: repairedKm,
+              loopDistanceKm: repairedKm,
+            };
+        // Color overlay no longer matches after edge reroutes; keep route line authoritative.
+        generated.mapGeojson = undefined;
+      }
+
+      await assertRouteStaysOnRoadNetwork(
+        request,
+        generated.geojson.geometry.coordinates as [number, number][],
+      );
+      return generated;
+    } catch (error) {
+      lastNetworkError =
+        error instanceof Error ? error : new Error("Route left road network");
+      if (attempt < maxNetworkAttempts) {
+        reportProgress(options?.onProgress, {
+          phase: "refining",
+          message: "Koryguję przebieg po drogach",
+          detail: "Wykryto skrót poza siecią — próbuję nowy wariant",
+          progress: 93,
+        });
+        continue;
+      }
+    }
   }
-  return (await generateLoopRoute(request, options)).route;
+
+  if (lastNetworkError) {
+    throw lastNetworkError;
+  }
+  throw new Error("Nie udało się wygenerować trasy na sieci dróg.");
 }
