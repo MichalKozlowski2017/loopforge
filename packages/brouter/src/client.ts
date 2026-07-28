@@ -149,8 +149,10 @@ function brouterProfileOverrides(
     // Closed loops (start = end) — via correction cuts valid loop legs as "detours".
     overrides.correctMisplacedViaPoints = "0";
   } else {
+    // Kept small — just enough for GPS noise / an off-network pin, not wide
+    // enough to silently draw a straight line across a barrier/interchange.
     overrides.correctMisplacedViaPoints = "1";
-    overrides.correctMisplacedViaPointsDistance = urbanRouting ? "3200" : "1200";
+    overrides.correctMisplacedViaPointsDistance = "80";
   }
 
   if (bikeType === "gravel" || bikeType === "general") {
@@ -267,10 +269,20 @@ function buildBrouterQuery(
   return query;
 }
 
+/** Default via-point correction radius for real (non-strict) requests — just
+ * enough for GPS noise / a pin dropped in a car park, never enough to bridge
+ * a whole interchange or barrier with a straight line. */
+const APPROACH_CORRECTION_DEFAULT_M = 80;
+/** Last-resort radius tried only once the tight default fails outright, so a
+ * genuinely awkward but real gap doesn't turn into a hard generation failure.
+ * Still far short of the old 1200 m, which is what let straight lines cut
+ * across major roads/interchanges in the first place. */
+const APPROACH_CORRECTION_LENIENT_M = 150;
+
 function buildApproachBrouterQuery(
   lonlats: string,
   profileName: string,
-  options?: { strict?: boolean },
+  options?: { strict?: boolean; correctionDistanceM?: number },
 ): URLSearchParams {
   const query = new URLSearchParams({
     lonlats,
@@ -286,18 +298,21 @@ function buildApproachBrouterQuery(
     query.set("profile:correctMisplacedViaPoints", "0");
   } else {
     query.set("profile:correctMisplacedViaPoints", "1");
-    query.set("profile:correctMisplacedViaPointsDistance", "1200");
+    query.set(
+      "profile:correctMisplacedViaPointsDistance",
+      String(options?.correctionDistanceM ?? APPROACH_CORRECTION_DEFAULT_M),
+    );
   }
   query.set("profile:allow_ferries", "0");
   return query;
 }
 
-async function fetchApproachBrouterRoute(
+async function fetchApproachBrouterRouteAttempt(
   config: BrouterConfig,
   points: LatLng[],
   trackName: string,
-  skipGpx = true,
-  options?: { strict?: boolean },
+  skipGpx: boolean,
+  options?: { strict?: boolean; correctionDistanceM?: number },
 ): Promise<BrouterRouteResult> {
   const lonlats = points.map((p) => `${p.lng},${p.lat}`).join("|");
   const profiles = [APPROACH_BROUTER_PROFILE, APPROACH_FALLBACK_PROFILE];
@@ -369,6 +384,34 @@ async function fetchApproachBrouterRoute(
   }
 
   throw lastError ?? new Error("BRouter approach request failed");
+}
+
+async function fetchApproachBrouterRoute(
+  config: BrouterConfig,
+  points: LatLng[],
+  trackName: string,
+  skipGpx = true,
+  options?: { strict?: boolean },
+): Promise<BrouterRouteResult> {
+  try {
+    return await fetchApproachBrouterRouteAttempt(
+      config,
+      points,
+      trackName,
+      skipGpx,
+      options,
+    );
+  } catch (error) {
+    // The tight default correction radius sometimes can't bridge a genuinely
+    // awkward real gap (e.g. an unmapped connector). Rather than fail the
+    // whole generation, try once more with a wider — but still bounded —
+    // radius before giving up, so "always generate something" still holds.
+    if (options?.strict) throw error;
+    return fetchApproachBrouterRouteAttempt(config, points, trackName, skipGpx, {
+      ...options,
+      correctionDistanceM: APPROACH_CORRECTION_LENIENT_M,
+    });
+  }
 }
 
 export interface RoundTripParams {
