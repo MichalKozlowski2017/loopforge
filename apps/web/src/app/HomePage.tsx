@@ -14,7 +14,10 @@ import {
 } from "@/components/RouteForm";
 import { SurfaceBreakdown } from "@/components/SurfaceBreakdown";
 import { MapGenerationOverlay } from "@/components/MapGenerationOverlay";
-import { RouteFallbackDialog } from "@/components/RouteFallbackDialog";
+import {
+  RouteSummaryDialog,
+  type RouteSummaryMetric,
+} from "@/components/RouteSummaryDialog";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
 import { useGeolocation } from "@/lib/use-geolocation";
 import { consumeGenerationStream } from "@/lib/parse-generation-stream";
@@ -37,6 +40,146 @@ const MapView = dynamic(
 );
 
 const FALLBACK_START = { lat: 52.2297, lng: 21.0122 };
+
+interface RouteSummaryDialogState {
+  title: string;
+  subtitle: string;
+  metrics: RouteSummaryMetric[];
+  notes: string[];
+}
+
+function clampScore(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function haversineM(a: [number, number], b: [number, number]): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const lng1 = a[0];
+  const lat1 = a[1];
+  const lng2 = b[0];
+  const lat2 = b[1];
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(h));
+}
+
+function mirroredPrefixMeters(coords: [number, number][]): number {
+  if (coords.length < 4) return 0;
+  let mirroredM = 0;
+  let i = 1;
+  while (i < coords.length - 1 - i) {
+    const head = coords[i]!;
+    const tail = coords[coords.length - 1 - i]!;
+    if (haversineM(head, tail) > 28) break;
+    mirroredM += haversineM(coords[i - 1]!, head);
+    i += 1;
+  }
+  return mirroredM;
+}
+
+function mirrorBudgetM(targetKm: number): number {
+  if (targetKm <= 25) return 1400;
+  if (targetKm <= 40) return 2800;
+  return Math.max(3000, targetKm * 1000 * 0.05);
+}
+
+function shareOfLabel(
+  route: StoredRoute,
+  labelMatcher: (label: string) => boolean,
+): number {
+  const hit = route.metrics.surfaceBreakdown.find((entry) =>
+    labelMatcher(entry.label.toLowerCase()),
+  );
+  return hit?.share ?? 0;
+}
+
+function buildRouteSummaryDialogState(
+  route: StoredRoute,
+  request: {
+    distanceKm: number;
+    avoidAsphalt?: boolean;
+    preferQuietRoutes?: boolean;
+  },
+): RouteSummaryDialogState {
+  const requestedKm = request.distanceKm;
+  const actualKm = route.metrics.loopDistanceKm ?? route.metrics.distanceKm;
+  const distanceError = Math.abs(actualKm - requestedKm) / Math.max(1, requestedKm);
+  const distanceScore = clampScore(100 - distanceError * 180);
+
+  const coords = route.geojson.geometry.coordinates as [number, number][];
+  const mirrorM = mirroredPrefixMeters(coords);
+  const mirrorBudget = mirrorBudgetM(requestedKm);
+  const mirrorRatio = mirrorM / Math.max(1, mirrorBudget);
+  const returnScore =
+    mirrorRatio <= 1
+      ? clampScore(100 - mirrorRatio * 35)
+      : clampScore(68 - (mirrorRatio - 1) * 80);
+
+  const asphaltShare = shareOfLabel(route, (label) => label.includes("asfalt"));
+  const surfaceScore = request.avoidAsphalt
+    ? clampScore((1 - asphaltShare) * 100)
+    : route.bikeType === "road"
+      ? clampScore(55 + asphaltShare * 45)
+      : clampScore(78 - asphaltShare * 20);
+
+  const warnings = route.generationQuality?.warnings ?? [];
+  const quietMiss = warnings.some((w) => /spokojnych dróg/i.test(w));
+  const quietScore = request.preferQuietRoutes
+    ? quietMiss
+      ? 55
+      : 88
+    : 80;
+
+  const overallScore = clampScore(
+    distanceScore * 0.35 +
+      returnScore * 0.35 +
+      surfaceScore * 0.15 +
+      quietScore * 0.15,
+  );
+
+  const metrics: RouteSummaryMetric[] = [
+    {
+      label: "Dopasowanie dystansu",
+      score: distanceScore,
+      detail: `Plan ~${requestedKm} km, wynik ${actualKm.toFixed(1)} km.`,
+    },
+    {
+      label: "Różnorodność powrotu",
+      score: returnScore,
+      detail: `Nakładanie start/koniec ~${Math.round(mirrorM)} m (budżet ~${Math.round(mirrorBudget)} m).`,
+    },
+    {
+      label: request.avoidAsphalt ? "Zgodność z unikaniem asfaltu" : "Dobór nawierzchni",
+      score: surfaceScore,
+      detail: `Szacowany udział asfaltu: ${(asphaltShare * 100).toFixed(0)}%.`,
+    },
+    {
+      label: "Spokojne odcinki",
+      score: quietScore,
+      detail: request.preferQuietRoutes
+        ? "Ocena na podstawie spełnienia preferencji spokojnych dróg."
+        : "Nie wymuszono spokojnych dróg — traktowane jako neutralne.",
+    },
+  ];
+
+  const notes = [
+    `Ocena łączna: ${overallScore}%`,
+    ...(warnings.length > 0 ? warnings : []),
+  ];
+
+  return {
+    title: "Podsumowanie wygenerowanej pętli",
+    subtitle:
+      route.generationQuality?.mode === "fallback"
+        ? "To trasa kompromisowa — sprawdź mapę przed wyjazdem."
+        : "Szybka ocena jakości trasy na podstawie ustawień i geometrii.",
+    metrics,
+    notes,
+  };
+}
 
 function extractLoopEntry(route: StoredRoute | null): { lat: number; lng: number } | null {
   if (!route) return null;
@@ -81,9 +224,9 @@ export default function HomePage() {
   const [generationProgress, setGenerationProgress] =
     useState<RouteGenerationProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [fallbackQuality, setFallbackQuality] = useState<
-    NonNullable<StoredRoute["generationQuality"]> | null
-  >(null);
+  const [summaryDialog, setSummaryDialog] = useState<RouteSummaryDialogState | null>(
+    null,
+  );
   const [notes, setNotes] = useState("");
   const [pickOnMap, setPickOnMap] = useState(false);
   const mapSectionRef = useRef<HTMLElement>(null);
@@ -197,7 +340,7 @@ export default function HomePage() {
     setLoadingSeconds(0);
     setGenerationProgress(null);
     setError(null);
-    setFallbackQuality(null);
+    setSummaryDialog(null);
     setPickOnMap(false);
     setRoute(null);
 
@@ -264,12 +407,7 @@ export default function HomePage() {
         setGenerationProgress(progress);
       });
       setRoute(generated);
-      if (
-        generated.generationQuality &&
-        generated.generationQuality.warnings.length > 0
-      ) {
-        setFallbackQuality(generated.generationQuality);
-      }
+      setSummaryDialog(buildRouteSummaryDialogState(generated, request));
       setNotes("");
       // History is best-effort — never fail the ride on localStorage quota.
       try {
@@ -489,10 +627,13 @@ export default function HomePage() {
           </section>
         ) : null}
       </aside>
-      {fallbackQuality ? (
-        <RouteFallbackDialog
-          quality={fallbackQuality}
-          onDismiss={() => setFallbackQuality(null)}
+      {summaryDialog ? (
+        <RouteSummaryDialog
+          title={summaryDialog.title}
+          subtitle={summaryDialog.subtitle}
+          metrics={summaryDialog.metrics}
+          notes={summaryDialog.notes}
+          onDismiss={() => setSummaryDialog(null)}
         />
       ) : null}
     </main>
