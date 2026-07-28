@@ -132,43 +132,43 @@ export type GeometrySafetyLimits = {
 };
 
 const METRO_GEOMETRY_LIMITS: GeometrySafetyLimits = {
-  maxPruneStitchM: 100,
+  maxPruneStitchM: 55,
   useDenseTeleportCheck: true,
   denseP95MaxM: 28,
   denseOutlierMinM: 140,
   absoluteTeleportM: 1200,
   useLocalAirChordCheck: true,
-  // Only clear diagonals — ~100 m on-road straights are normal in dense GeoJSON.
-  localAirChordMinM: 150,
+  // Catch diagonal cuts across parks/blocks — these are ~90-160 m in practice.
+  localAirChordMinM: 90,
   localAirChordMedianMaxM: 28,
-  localAirChordRatio: 7,
+  localAirChordRatio: 5,
   source: "metro",
 };
 
 /** Small town / mixed fabric (e.g. Dzielce → through Tłuszcz). */
 const MIXED_GEOMETRY_LIMITS: GeometrySafetyLimits = {
-  maxPruneStitchM: 90,
+  maxPruneStitchM: 50,
   useDenseTeleportCheck: true,
   denseP95MaxM: 32,
   denseOutlierMinM: 140,
   absoluteTeleportM: 1200,
   useLocalAirChordCheck: true,
-  localAirChordMinM: 150,
+  localAirChordMinM: 90,
   localAirChordMedianMaxM: 30,
-  localAirChordRatio: 7,
+  localAirChordRatio: 5,
   source: "mixed",
 };
 
 const OPEN_COUNTRY_GEOMETRY_LIMITS: GeometrySafetyLimits = {
-  maxPruneStitchM: 70,
+  maxPruneStitchM: 45,
   useDenseTeleportCheck: false,
   denseP95MaxM: 0,
   denseOutlierMinM: Number.POSITIVE_INFINITY,
   absoluteTeleportM: 1200,
   useLocalAirChordCheck: true,
-  localAirChordMinM: 180,
+  localAirChordMinM: 110,
   localAirChordMedianMaxM: 32,
-  localAirChordRatio: 8,
+  localAirChordRatio: 6,
   source: "open-country",
 };
 
@@ -263,7 +263,7 @@ export function inferGeometrySafetyLimits(
   ) {
     return {
       ...MIXED_GEOMETRY_LIMITS,
-      maxPruneStitchM: 100,
+      maxPruneStitchM: 55,
       source: "dense-town",
     };
   }

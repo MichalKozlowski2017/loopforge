@@ -3155,25 +3155,11 @@ async function assertRouteStaysOnRoadNetwork(
   coordinates: [number, number][],
 ): Promise<void> {
   if (coordinates.length < 2) return;
-  const findings = await auditLongEdgesWithRouter(
-    coordinates,
-    async (from, to) =>
-      (
-        await fetchApproachLegSegment(
-          { lat: from.lat, lng: from.lng },
-          { lat: to.lat, lng: to.lng },
-          request.bikeType,
-          { requireNetworkRoute: true },
-        )
-      ).coordinates,
-    {
-      minEdgeM: 60,
-      maxEdges: 14,
-      maxLengthRatio: 1.45,
-      lengthSlackM: 90,
-    },
-  );
-  if (findings.some((finding) => finding.code === "EDGE_OFF_ROAD")) {
+  // Reuse the exact same candidate-detection pass as the repair step so the
+  // final gate can never see a different (narrower) edge set than what we
+  // just tried to fix — that mismatch is how air-chords used to slip through.
+  const issues = await detectOffRoadEdges(request, coordinates);
+  if (issues.length > 0) {
     throw new Error(
       "Wykryto skrót poza drogami/ścieżkami — odrzucono trasę i spróbuj ponownie.",
     );
@@ -3187,26 +3173,85 @@ type OffRoadEdgeIssue = {
   replacement: [number, number][];
 };
 
+/**
+ * Pick candidate edges likely to be off-road "air-chords".
+ *
+ * A pure "top-N longest edges" scan misses shorter chords (~80-160 m) that
+ * cut across a park or city block whenever the route also contains longer
+ * *legitimate* edges elsewhere (bridges, arterial crossings, rural roads).
+ * So in addition to absolute length, flag edges that are locally anomalous —
+ * much longer than their immediate neighbours — the same signature a
+ * straight-line stitch leaves behind after spur pruning.
+ */
+function findOffRoadCandidateEdges(
+  coordinates: [number, number][],
+  options: { minEdgeM: number; maxEdges: number },
+): Array<{ edgeIndex: number; edgeM: number }> {
+  const window = 12;
+  const localRatio = 4.5;
+  const localMedianMaxM = 45;
+  const absoluteLongM = 90;
+
+  const edgeLengths: number[] = [];
+  for (let i = 1; i < coordinates.length; i++) {
+    edgeLengths.push(routeLengthM([coordinates[i - 1]!, coordinates[i]!]));
+  }
+
+  const candidates: Array<{ edgeIndex: number; edgeM: number; score: number }> =
+    [];
+  for (let k = 0; k < edgeLengths.length; k++) {
+    const edgeM = edgeLengths[k]!;
+    if (edgeM < options.minEdgeM) continue;
+
+    let locallyAnomalous = false;
+    if (edgeM < absoluteLongM) {
+      const nearby: number[] = [];
+      for (
+        let j = Math.max(0, k - window);
+        j < Math.min(edgeLengths.length, k + window + 1);
+        j++
+      ) {
+        if (j !== k) nearby.push(edgeLengths[j]!);
+      }
+      if (nearby.length >= 4) {
+        const sorted = [...nearby].sort((a, b) => a - b);
+        const localMed = sorted[Math.floor(sorted.length / 2)]!;
+        locallyAnomalous =
+          localMed > 0 &&
+          localMed < localMedianMaxM &&
+          edgeM > localMed * localRatio;
+      }
+      if (!locallyAnomalous) continue;
+    }
+
+    candidates.push({
+      edgeIndex: k + 1,
+      edgeM,
+      score: locallyAnomalous ? edgeM * 2 : edgeM,
+    });
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates.slice(0, options.maxEdges);
+}
+
 async function detectOffRoadEdges(
   request: GenerateRouteRequest,
   coordinates: [number, number][],
 ): Promise<OffRoadEdgeIssue[]> {
-  const minEdgeM = 60;
-  const maxEdges = 14;
   const maxLengthRatio = 1.45;
   const lengthSlackM = 90;
   const issues: OffRoadEdgeIssue[] = [];
 
-  const candidates: Array<{ edgeIndex: number; edgeM: number }> = [];
-  for (let i = 1; i < coordinates.length; i++) {
-    const from = coordinates[i - 1]!;
-    const to = coordinates[i]!;
-    const edgeM = routeLengthM([from, to]);
-    if (edgeM >= minEdgeM) candidates.push({ edgeIndex: i, edgeM });
-  }
-  candidates.sort((a, b) => b.edgeM - a.edgeM);
+  const candidates = findOffRoadCandidateEdges(coordinates, {
+    minEdgeM: 40,
+    maxEdges: 24,
+  });
 
-  for (const candidate of candidates.slice(0, maxEdges)) {
+  const checkCandidate = async (candidate: {
+    edgeIndex: number;
+    edgeM: number;
+  }): Promise<OffRoadEdgeIssue | null> => {
     const from = coordinates[candidate.edgeIndex - 1]!;
     const to = coordinates[candidate.edgeIndex]!;
     try {
@@ -3218,20 +3263,31 @@ async function detectOffRoadEdges(
           { requireNetworkRoute: true },
         )
       ).coordinates;
-      if (replacement.length < 2) continue;
+      if (replacement.length < 2) return null;
       const routedM = routeLengthM(replacement);
       const limit = candidate.edgeM * maxLengthRatio + lengthSlackM;
-      if (routedM <= limit) continue;
+      if (routedM <= limit) return null;
       const mid: [number, number] = [
         (from[0] + to[0]) / 2,
         (from[1] + to[1]) / 2,
       ];
       const midDist = distanceToPolylineM(mid, replacement);
       if (midDist > 45) {
-        issues.push({ edgeIndex: candidate.edgeIndex, from, to, replacement });
+        return { edgeIndex: candidate.edgeIndex, from, to, replacement };
       }
+      return null;
     } catch {
       // transient routing miss — leave this edge as-is
+      return null;
+    }
+  };
+
+  const concurrency = 6;
+  for (let i = 0; i < candidates.length; i += concurrency) {
+    const batch = candidates.slice(i, i + concurrency);
+    const results = await Promise.all(batch.map(checkCandidate));
+    for (const result of results) {
+      if (result) issues.push(result);
     }
   }
 
@@ -3271,7 +3327,7 @@ async function repairRouteOffRoadShortcuts(
 ): Promise<{ coordinates: [number, number][]; repairedCount: number }> {
   let current = coordinates;
   let repairedCount = 0;
-  for (let pass = 0; pass < 2; pass++) {
+  for (let pass = 0; pass < 3; pass++) {
     const issues = await detectOffRoadEdges(request, current);
     if (issues.length === 0) break;
     const repaired = repairOffRoadEdges(current, issues);

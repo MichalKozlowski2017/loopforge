@@ -517,8 +517,13 @@ function localMedianEdgeM(
 }
 
 /**
- * Adaptive stitch budget at a junction: dense town streets allow wider rejoins
- * for dead-end cuts; open legs stay tight against field chords.
+ * Adaptive stitch budget at a junction: dense town streets allow slightly
+ * wider rejoins for dead-end cuts; open legs stay tight against field chords.
+ *
+ * Kept deliberately tight (well under 100 m) — a wide budget here is exactly
+ * what lets the pruner "solve" a dead-end spur by drawing a straight chord
+ * across a park or city block instead of an actual path. Real cul-de-sac /
+ * driveway spurs rejoin the same junction within a few tens of metres.
  */
 function stitchBudgetAtJunction(
   coordinates: Coord[],
@@ -526,18 +531,18 @@ function stitchBudgetAtJunction(
   baseMaxStitchM: number,
   stitchM = 0,
 ): number {
-  // True out-and-back rejoins at the same junction — always allow the cut.
-  if (stitchM > 0 && stitchM < 45) {
-    return Math.max(baseMaxStitchM, 160);
+  // True out-and-back rejoins at (essentially) the same junction — safe to cut.
+  if (stitchM > 0 && stitchM < 30) {
+    return Math.max(baseMaxStitchM, 55);
   }
   const localMed = localMedianEdgeM(coordinates, beforeIdx);
   if (localMed > 0 && localMed < 28) {
-    return Math.min(140, Math.max(baseMaxStitchM, 120));
+    return Math.min(65, Math.max(baseMaxStitchM, 55));
   }
   if (localMed > 45) {
-    return Math.min(baseMaxStitchM, 85);
+    return Math.min(baseMaxStitchM, 50);
   }
-  return Math.max(baseMaxStitchM, 100);
+  return Math.max(baseMaxStitchM, 55);
 }
 
 function removeSpurRanges(
