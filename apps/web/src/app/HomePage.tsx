@@ -19,6 +19,7 @@ import {
   type RouteSummaryMetric,
 } from "@/components/RouteSummaryDialog";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
+import { FirstRunDialog, hasSeenFirstRun } from "@/components/FirstRunDialog";
 import { useGeolocation } from "@/lib/use-geolocation";
 import { consumeGenerationStream } from "@/lib/parse-generation-stream";
 import { downloadRouteGpx } from "@/lib/download-route-gpx";
@@ -274,6 +275,7 @@ export default function HomePage() {
   const [summaryDialog, setSummaryDialog] = useState<RouteSummaryDialogState | null>(
     null,
   );
+  const [showFirstRun, setShowFirstRun] = useState(false);
   const [notes, setNotes] = useState("");
   const [pickOnMap, setPickOnMap] = useState(false);
   const mapSectionRef = useRef<HTMLElement>(null);
@@ -285,6 +287,11 @@ export default function HomePage() {
   const onGeolocation = useCallback((lat: number, lng: number) => {
     setForm((current) => ({ ...current, lat, lng }));
     setLocationMode("ready");
+  }, []);
+
+  useEffect(() => {
+    // Client-only first-run flag — avoid SSR/localStorage mismatch.
+    if (!hasSeenFirstRun()) setShowFirstRun(true);
   }, []);
 
   const { status: geoStatus, refresh: refreshGeolocation } = useGeolocation(
@@ -599,7 +606,7 @@ export default function HomePage() {
         <div className="mb-6">
           <p className="text-sm text-zinc-400">
             Ustaw punkt startu (GPS, wyszukiwarka lub mapa), wybierz dystans i
-            kierunek — reszta dzieje się automatycznie.
+            kierunek — generowanie zwykle trwa 1–2 minuty i wymaga konta.
           </p>
         </div>
 
@@ -729,6 +736,9 @@ export default function HomePage() {
           </section>
         ) : null}
       </aside>
+      {showFirstRun ? (
+        <FirstRunDialog onDismiss={() => setShowFirstRun(false)} />
+      ) : null}
       {summaryDialog ? (
         <RouteSummaryDialog
           title={summaryDialog.title}
