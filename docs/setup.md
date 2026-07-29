@@ -73,6 +73,7 @@ Tylko gdy brak `DATABASE_URL` lub `ROUTING_ENGINE=brouter`:
 
 ```bash
 pnpm setup:brouter
+# albo pełny świat (~9 GiB): pnpm setup:brouter:planet — docs/brouter-segments.md
 pnpm brouter
 ```
 

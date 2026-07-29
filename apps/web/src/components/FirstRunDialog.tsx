@@ -65,8 +65,8 @@ export function FirstRunDialog({ onDismiss }: FirstRunDialogProps) {
               ·
             </span>
             <span>
-              Trasy idą po sieci OSM (BRouter). Najlepiej w Polsce; poza
-              pokryciem segmentów routing może się wyłożyć.
+              Trasy idą po sieci OSM (BRouter). Działa globalnie tam, gdzie
+              serwer ma segmenty mapy — u nas pokrycie planetarne.
             </span>
           </li>
           <li className="flex gap-3">
