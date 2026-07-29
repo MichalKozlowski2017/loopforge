@@ -4,12 +4,18 @@ import type {
   RouteGenerationStreamEvent,
   StoredRoute,
 } from "@loopforge/osm-types";
+import { requireUser } from "@/lib/supabase/require-user";
 
 function sseChunk(event: RouteGenerationStreamEvent): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
 }
 
 export async function POST(request: Request) {
+  const auth = await requireUser();
+  if (!auth.ok) {
+    return Response.json({ error: auth.error }, { status: auth.status });
+  }
+
   let body: GenerateRouteRequest;
   try {
     body = (await request.json()) as GenerateRouteRequest;

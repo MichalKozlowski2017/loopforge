@@ -28,6 +28,8 @@ import {
   updateLocalRouteRating,
 } from "@/lib/local-routes-store";
 import { validateViaPointsForRoute } from "@loopforge/generator/via-validation";
+import { createClient } from "@/lib/supabase/client";
+import { isAuthRequired } from "@/lib/supabase/env";
 
 const MapView = dynamic(
   () => import("@/components/MapView").then((mod) => mod.MapView),
@@ -391,6 +393,21 @@ export default function HomePage() {
   }, []);
 
   async function handleGenerate() {
+    if (isAuthRequired()) {
+      try {
+        const {
+          data: { user },
+        } = await createClient().auth.getUser();
+        if (!user) {
+          window.location.href = `/login?next=${encodeURIComponent("/")}`;
+          return;
+        }
+      } catch {
+        window.location.href = `/login?next=${encodeURIComponent("/")}`;
+        return;
+      }
+    }
+
     scrollMobileToMap();
     setLoading(true);
     setOverlayExiting(false);
@@ -460,6 +477,11 @@ export default function HomePage() {
         // Long MTB/gravel searches routinely exceed 2 min on cold BRouter.
         signal: AbortSignal.timeout(140_000),
       });
+
+      if (response.status === 401) {
+        window.location.href = `/login?next=${encodeURIComponent("/")}`;
+        return;
+      }
 
       const generated = await consumeGenerationStream(response, (progress) => {
         setGenerationProgress(progress);

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AuthControls } from "@/components/AuthControls";
 
 export function SiteHeader() {
   return (
@@ -18,14 +19,17 @@ export function SiteHeader() {
           Loopforge
         </span>
       </Link>
-      <nav className="flex gap-4 text-sm text-zinc-400">
-        <Link href="/" className="transition hover:text-amber-200">
-          Generator
-        </Link>
-        <Link href="/routes" className="transition hover:text-amber-200">
-          Historia
-        </Link>
-      </nav>
+      <div className="flex items-center gap-4">
+        <nav className="flex gap-4 text-sm text-zinc-400">
+          <Link href="/" className="transition hover:text-amber-200">
+            Generator
+          </Link>
+          <Link href="/routes" className="transition hover:text-amber-200">
+            Historia
+          </Link>
+        </nav>
+        <AuthControls />
+      </div>
     </header>
   );
 }
