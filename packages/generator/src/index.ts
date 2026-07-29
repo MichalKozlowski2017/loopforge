@@ -108,6 +108,12 @@ export interface GenerateRouteOptions {
   approachCoordinates?: [number, number][];
   /** User's home start — biases loop waypoints away from the approach leg. */
   homeStart?: LatLng;
+  /**
+   * Absolute wall-clock deadline (epoch ms) for the whole generate call —
+   * approach + loop search + retries + polish. Must finish before the client
+   * 3‑minute abort so we ship a route instead of timing out empty-handed.
+   */
+  absoluteDeadlineMs?: number;
 }
 
 function reportProgress(
@@ -389,7 +395,9 @@ const MAX_DISTANCE_ERROR_APPROACH_RELAXED = 0.55;
 const MAX_BACKTRACK_URBAN = 0.08;
 /**
  * Wall-clock budgets — hard stop even without a strict `best`.
- * Client timeout is 3 min; we must ship or fail well before that.
+ * Client abort is 3 min (HomePage AbortSignal); the absolute wall below must
+ * leave headroom for approach, repair, and SSE. Prefer shipping degraded over
+ * burning the full client timeout.
  */
 const GENERATION_DEADLINE_URBAN_MS = 55_000;
 const GENERATION_DEADLINE_RURAL_MS = 45_000;
@@ -397,6 +405,13 @@ const GENERATION_DEADLINE_RURAL_MS = 45_000;
 const GENERATION_DEADLINE_ROAD_MS = 65_000;
 /** 50–60 km loops need more wall clock; metro short stays on the tighter budgets. */
 const GENERATION_DEADLINE_LONG_MS = 70_000;
+/**
+ * Whole-request ceiling (approach + loop + network retries + OSM polish).
+ * Client times out at 180s — stay well under so the user gets a map, not abort.
+ */
+const ABSOLUTE_GENERATION_WALL_MS = 110_000;
+/** Reserve inside the absolute wall for finalize / repair / polish / SSE. */
+const ABSOLUTE_TAIL_RESERVE_MS = 12_000;
 const MAX_SCALE_PASSES = 5;
 /** Cap successful BRouter loop fetches so search cannot burn minutes. */
 const MAX_ROUTED_FETCHES_URBAN = 10;
@@ -435,6 +450,52 @@ function recoveryDirectionOrder(
 
 function approachMaxLoopShare(urban: boolean): number {
   return urban ? MAX_LOOP_SHARE_APPROACH_URBAN : MAX_LOOP_SHARE_APPROACH;
+}
+
+function configuredSearchBudgetMs(request: GenerateRouteRequest): number {
+  const baseUrban = useUrbanRouting(request.start, request.distanceKm);
+  if (request.distanceKm >= 50) return GENERATION_DEADLINE_LONG_MS;
+  if (request.bikeType === "road") return GENERATION_DEADLINE_ROAD_MS;
+  if (request.avoidAsphalt || request.bikeType === "general") {
+    return Math.max(GENERATION_DEADLINE_URBAN_MS, GENERATION_DEADLINE_ROAD_MS);
+  }
+  return baseUrban
+    ? GENERATION_DEADLINE_URBAN_MS
+    : GENERATION_DEADLINE_RURAL_MS;
+}
+
+/** Search deadline capped by the absolute whole-request wall. */
+function resolveLoopSearchDeadlineMs(
+  request: GenerateRouteRequest,
+  options?: GenerateRouteOptions,
+  now = Date.now(),
+): number {
+  const absolute =
+    options?.absoluteDeadlineMs ?? now + ABSOLUTE_GENERATION_WALL_MS;
+  const remaining = absolute - now;
+  const configured = configuredSearchBudgetMs(request);
+  const maxSearch = Math.max(18_000, remaining - ABSOLUTE_TAIL_RESERVE_MS);
+  return now + Math.min(configured, maxSearch);
+}
+
+/** Cap recovery/stretch grace so we never overrun the absolute wall. */
+function cappedGraceDeadlineMs(
+  baseDeadlineMs: number,
+  graceMs: number,
+  options?: GenerateRouteOptions,
+  reserveMs = 8_000,
+): number {
+  const absolute =
+    options?.absoluteDeadlineMs ?? baseDeadlineMs + graceMs + reserveMs;
+  return Math.min(baseDeadlineMs + graceMs, absolute - reserveMs);
+}
+
+function msLeftOnAbsoluteDeadline(
+  options?: GenerateRouteOptions,
+  now = Date.now(),
+): number {
+  if (options?.absoluteDeadlineMs == null) return Number.POSITIVE_INFINITY;
+  return options.absoluteDeadlineMs - now;
 }
 
 /** Mirror length after the same densify path as buildGpx (default 5 m edges). */
@@ -1144,20 +1205,7 @@ async function generateRouteWithEngine(
     Boolean(request.avoidAsphalt) ||
     request.bikeType === "general" ||
     request.distanceKm >= 50;
-  const deadlineMs =
-    Date.now() +
-    (request.distanceKm >= 50
-      ? GENERATION_DEADLINE_LONG_MS
-      : request.bikeType === "road"
-        ? GENERATION_DEADLINE_ROAD_MS
-        : Boolean(request.avoidAsphalt) || request.bikeType === "general"
-          ? Math.max(
-              GENERATION_DEADLINE_URBAN_MS,
-              GENERATION_DEADLINE_ROAD_MS,
-            )
-          : baseUrban
-            ? GENERATION_DEADLINE_URBAN_MS
-            : GENERATION_DEADLINE_RURAL_MS);
+  const deadlineMs = resolveLoopSearchDeadlineMs(request, options);
   let best: RoutedLoopResult | null = null;
   let bestScore = Infinity;
   let bestRejected: RoutedLoopResult | null = null;
@@ -1989,12 +2037,13 @@ async function generateRouteWithEngine(
   // Road ≤40 km: direction pivots — stress fails are clean loops with
   // densify-mirror just over 5% on the requested cone (e.g. 1204 m / 1000 m).
   // Own grace past the main deadline — otherwise main search burns the clock
-  // and this block never runs.
+  // and this block never runs. Capped by the absolute whole-request wall.
+  const roadDeadline = cappedGraceDeadlineMs(deadlineMs, 30_000, options);
   if (
     !best &&
     request.bikeType === "road" &&
     request.distanceKm <= 40 &&
-    Date.now() < deadlineMs + 30_000 &&
+    Date.now() < roadDeadline &&
     routedFetches < maxRoutedFetches + 8
   ) {
     const roadPrefs = mergeLoopPrefs(
@@ -2009,7 +2058,6 @@ async function generateRouteWithEngine(
         : [1.2, 1.45, 1.7, 1.0, 1.9, 2.1, 0.9];
     let roadSlot = 0;
     const roadAttempts = Math.min(12, roadDirs.length * 2);
-    const roadDeadline = deadlineMs + 30_000;
     for (let ri = 0; ri < roadAttempts; ri++) {
       if (Date.now() > roadDeadline) break;
       if (routedFetches >= maxRoutedFetches + 8) break;
@@ -2103,6 +2151,7 @@ async function generateRouteWithEngine(
 
   // Mid/long +A (and general mid): no-prefs oversized recovery after prefs burn the graph.
   // Home-stress 35 km GEN_FAIL bucket: gravel Express, mtb Flow, general Terenowy.
+  const avoidDeadline = cappedGraceDeadlineMs(deadlineMs, 35_000, options);
   if (
     !best &&
     request.distanceKm >= 30 &&
@@ -2110,7 +2159,7 @@ async function generateRouteWithEngine(
       request.bikeType === "general" ||
       request.bikeType === "gravel" ||
       request.bikeType === "mtb") &&
-    Date.now() < deadlineMs + 35_000 &&
+    Date.now() < avoidDeadline &&
     routedFetches < maxRoutedFetches + 8
   ) {
     const avoidPrefs = mergeLoopPrefs(
@@ -2122,7 +2171,6 @@ async function generateRouteWithEngine(
       request.distanceKm >= 50
         ? [1.35, 1.55, 1.75, 1.95, 1.2, 2.15, 2.35]
         : [1.3, 1.5, 1.7, 1.15, 1.9, 2.1, 1.0, 2.3];
-    const avoidDeadline = deadlineMs + 35_000;
     for (let ai = 0; ai < avoidScales.length; ai++) {
       if (Date.now() > avoidDeadline) break;
       if (routedFetches >= maxRoutedFetches + 8) break;
@@ -2408,13 +2456,17 @@ async function generateRouteWithEngine(
         }),
     );
     if (shortClean || hardRecoveryCase) {
-      const stretchDeadline =
-        deadlineMs +
-        (request.bikeType === "road"
+      const stretchGraceMs =
+        request.bikeType === "road"
           ? 30_000
           : request.distanceKm >= 50
             ? 25_000
-            : 15_000);
+            : 15_000;
+      const stretchDeadline = cappedGraceDeadlineMs(
+        deadlineMs,
+        stretchGraceMs,
+        options,
+      );
       const stretchFetchCap = maxRoutedFetches + 8;
       const stretchScales =
         request.distanceKm <= 25
@@ -2803,13 +2855,17 @@ async function generateRouteWithEngine(
   // Before failing, try a dedicated stretch rescue (no quiet/avoid).
   const minShipShare = MIN_LOOP_SHARE_SHIP;
   if (finalized.distanceKm < request.distanceKm * minShipShare) {
-    const rescueDeadline =
-      deadlineMs +
-      (request.bikeType === "road"
+    const rescueGraceMs =
+      request.bikeType === "road"
         ? 25_000
         : request.distanceKm >= 50
           ? 15_000
-          : 8_000);
+          : 8_000;
+    const rescueDeadline = cappedGraceDeadlineMs(
+      deadlineMs,
+      rescueGraceMs,
+      options,
+    );
     const rescueScales =
       request.distanceKm <= 25
         ? [1.5, 1.75, 2.0, 2.25, 1.3, 2.5]
@@ -3661,7 +3717,16 @@ async function polishGeneratedRouteGeometry(
   request: GenerateRouteRequest,
   generated: GeneratedRoute,
   onProgress?: GenerateRouteOptions["onProgress"],
+  absoluteDeadlineMs?: number,
 ): Promise<GeneratedRoute> {
+  // Near the client abort wall — skip OSM fetch so we still return a route.
+  if (
+    absoluteDeadlineMs != null &&
+    Date.now() > absoluteDeadlineMs - 6_000
+  ) {
+    return generated;
+  }
+
   const before = generated.geojson.geometry.coordinates as [number, number][];
   const polished = await enrichRouteShapesFromOsm(before);
   if (polished.enrichedEdges === 0) return generated;
@@ -3724,22 +3789,42 @@ export async function generateRoute(
     }
   }
 
-  const maxNetworkAttempts = request.approachEnabled ? 2 : 3;
+  const absoluteDeadlineMs =
+    options?.absoluteDeadlineMs ?? Date.now() + ABSOLUTE_GENERATION_WALL_MS;
+  const scopedOptions: GenerateRouteOptions = {
+    ...options,
+    absoluteDeadlineMs,
+  };
+
+  // Approach already pays for a long corridor fetch — prefer one solid attempt
+  // over burning the wall on full regenerations that hit the client timeout.
+  const maxNetworkAttempts = 2;
   let lastNetworkError: Error | null = null;
   let lastGenerated: GeneratedRoute | null = null;
 
   for (let attempt = 1; attempt <= maxNetworkAttempts; attempt++) {
+    // Not enough clock for another full search — ship what we have.
+    if (
+      attempt > 1 &&
+      msLeftOnAbsoluteDeadline(scopedOptions) < 28_000
+    ) {
+      break;
+    }
+
     let generated: GeneratedRoute;
     try {
       generated = request.approachEnabled
-        ? await generateRouteWithApproach(request, options)
-        : (await generateLoopRoute(request, options)).route;
+        ? await generateRouteWithApproach(request, scopedOptions)
+        : (await generateLoopRoute(request, scopedOptions)).route;
     } catch (error) {
       lastNetworkError =
         error instanceof Error ? error : new Error("Route generation failed");
       // Keep any earlier successful generation so we can still ship a fallback
       // if a later attempt throws (common with approach + mirror edge cases).
-      if (attempt < maxNetworkAttempts) {
+      if (
+        attempt < maxNetworkAttempts &&
+        msLeftOnAbsoluteDeadline(scopedOptions) >= 28_000
+      ) {
         reportProgress(options?.onProgress, {
           phase: "refining",
           message: "Koryguję przebieg pętli",
@@ -3755,6 +3840,26 @@ export async function generateRoute(
 
     if (generated.geojson.properties.placeholder === true) {
       return generated;
+    }
+
+    // Out of time for repair/assert — ship now rather than abort at 3 minutes.
+    if (msLeftOnAbsoluteDeadline(scopedOptions) < 14_000) {
+      const existing = generated.generationQuality;
+      generated.generationQuality = {
+        mode: existing?.mode ?? "relaxed",
+        warnings: [
+          ...(existing?.warnings ?? []),
+          "Skrócono walidację z powodu limitu czasu — sprawdź przebieg przed wyjazdem.",
+        ],
+        requestedDistanceKm: existing?.requestedDistanceKm,
+        actualDistanceKm: existing?.actualDistanceKm,
+      };
+      return polishGeneratedRouteGeometry(
+        request,
+        generated,
+        options?.onProgress,
+        absoluteDeadlineMs,
+      );
     }
 
     try {
@@ -3801,11 +3906,15 @@ export async function generateRoute(
         request,
         generated,
         options?.onProgress,
+        absoluteDeadlineMs,
       );
     } catch (error) {
       lastNetworkError =
         error instanceof Error ? error : new Error("Route left road network");
-      if (attempt < maxNetworkAttempts) {
+      if (
+        attempt < maxNetworkAttempts &&
+        msLeftOnAbsoluteDeadline(scopedOptions) >= 28_000
+      ) {
         reportProgress(options?.onProgress, {
           phase: "refining",
           message: "Koryguję przebieg po drogach",
@@ -3836,6 +3945,7 @@ export async function generateRoute(
       request,
       lastGenerated,
       options?.onProgress,
+      absoluteDeadlineMs,
     );
   }
 

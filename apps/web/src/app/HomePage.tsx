@@ -458,7 +458,7 @@ export default function HomePage() {
         },
         body: JSON.stringify(request),
         // Long MTB/gravel searches routinely exceed 2 min on cold BRouter.
-        signal: AbortSignal.timeout(180_000),
+        signal: AbortSignal.timeout(140_000),
       });
 
       const generated = await consumeGenerationStream(response, (progress) => {
