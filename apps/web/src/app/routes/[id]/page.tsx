@@ -9,7 +9,6 @@ import { getRideProfileLabel } from "@loopforge/osm-types";
 import { SurfaceBreakdown } from "@/components/SurfaceBreakdown";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
 import { downloadRouteGpx } from "@/lib/download-route-gpx";
-import { getLocalRouteById } from "@/lib/local-routes-store";
 
 const MapView = dynamic(
   () => import("@/components/MapView").then((mod) => mod.MapView),
@@ -20,14 +19,44 @@ export default function RouteDetailPage() {
   const params = useParams<{ id: string }>();
   const [route, setRoute] = useState<StoredRoute | null>(null);
   const [ready, setReady] = useState(false);
+  const [needsLogin, setNeedsLogin] = useState(false);
 
   useEffect(() => {
-    // Read client-only localStorage entry after mount to avoid SSR hydration
-    // mismatch. Intentional one-time effect state hydration.
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setRoute(getLocalRouteById(params.id));
-    setReady(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await fetch(`/api/routes/${params.id}`);
+        if (response.status === 401) {
+          if (!cancelled) {
+            setNeedsLogin(true);
+            setReady(true);
+          }
+          return;
+        }
+        if (!response.ok) {
+          if (!cancelled) {
+            setRoute(null);
+            setReady(true);
+          }
+          return;
+        }
+        const payload = (await response.json()) as { route?: StoredRoute };
+        if (!cancelled) {
+          setRoute(payload.route ?? null);
+          setReady(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setRoute(null);
+          setReady(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [params.id]);
 
   if (!ready) {
@@ -38,12 +67,26 @@ export default function RouteDetailPage() {
     );
   }
 
+  if (needsLogin) {
+    return (
+      <main className="flex flex-1 flex-col items-center justify-center p-6">
+        <p className="text-zinc-400">Zaloguj się, żeby zobaczyć tę trasę.</p>
+        <Link
+          href={`/login?next=${encodeURIComponent(`/routes/${params.id}`)}`}
+          className="mt-4 text-sm text-amber-400 hover:underline"
+        >
+          → Zaloguj się
+        </Link>
+      </main>
+    );
+  }
+
   if (!route) {
     return (
       <main className="flex flex-1 flex-col items-center justify-center p-6">
         <p className="text-zinc-400">
-          Trasa nie znaleziona w tej przeglądarce. Wygeneruj ją ponownie lub
-          otwórz link na urządzeniu, na którym ją utworzyłeś.
+          Trasa nie znaleziona na Twoim koncie. Wygeneruj nową pętlę albo sprawdź
+          listę historii.
         </p>
         <Link href="/routes" className="mt-4 text-sm text-amber-400 hover:underline">
           ← Historia

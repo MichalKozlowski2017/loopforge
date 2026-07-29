@@ -22,11 +22,6 @@ import { SurfaceLegend } from "@/components/SurfaceLegend";
 import { useGeolocation } from "@/lib/use-geolocation";
 import { consumeGenerationStream } from "@/lib/parse-generation-stream";
 import { downloadRouteGpx } from "@/lib/download-route-gpx";
-import {
-  getLocalRouteById,
-  saveLocalRoute,
-  updateLocalRouteRating,
-} from "@/lib/local-routes-store";
 import { validateViaPointsForRoute } from "@loopforge/generator/via-validation";
 import { createClient } from "@/lib/supabase/client";
 import { isAuthRequired } from "@/lib/supabase/env";
@@ -309,35 +304,49 @@ export default function HomePage() {
   }, [geoStatus, routeIdFromUrl]);
 
   useEffect(() => {
-    // Hydrate form/route from a client-only localStorage entry after mount
-    // (deferred to avoid SSR hydration mismatch). Intentional effect state.
-    /* eslint-disable react-hooks/set-state-in-effect */
     if (!routeIdFromUrl) return;
+    let cancelled = false;
 
-    const data = getLocalRouteById(routeIdFromUrl);
-    if (!data) return;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/routes/${routeIdFromUrl}`);
+        if (response.status === 401) {
+          window.location.href = `/login?next=${encodeURIComponent(`/?routeId=${routeIdFromUrl}`)}`;
+          return;
+        }
+        if (!response.ok) return;
+        const payload = (await response.json()) as { route?: StoredRoute };
+        const data = payload.route;
+        if (!data || cancelled) return;
 
-    setRoute(data);
-    setNotes(data.notes ?? "");
-    setForm({
-      bikeType: data.bikeType,
-      distanceKm: Math.round(
-        data.metrics.loopDistanceKm ?? data.metrics.distanceKm,
-      ),
-      direction: data.direction,
-      profile: data.profile ?? "flow",
-      avoidAsphalt:
-        data.avoidAsphalt ??
-        (data.bikeType === "mtb" || data.bikeType === "gravel"),
-      preferQuietRoutes: data.preferQuietRoutes ?? false,
-      approachEnabled: data.approachEnabled ?? false,
-      approachDistanceKm: data.approachDistanceKm ?? 10,
-      viaPoints: data.viaPoints ?? [],
-      lat: data.start.lat,
-      lng: data.start.lng,
-    });
-    setLocationMode("manual");
-    /* eslint-enable react-hooks/set-state-in-effect */
+        setRoute(data);
+        setNotes(data.notes ?? "");
+        setForm({
+          bikeType: data.bikeType,
+          distanceKm: Math.round(
+            data.metrics.loopDistanceKm ?? data.metrics.distanceKm,
+          ),
+          direction: data.direction,
+          profile: data.profile ?? "flow",
+          avoidAsphalt:
+            data.avoidAsphalt ??
+            (data.bikeType === "mtb" || data.bikeType === "gravel"),
+          preferQuietRoutes: data.preferQuietRoutes ?? false,
+          approachEnabled: data.approachEnabled ?? false,
+          approachDistanceKm: data.approachDistanceKm ?? 10,
+          viaPoints: data.viaPoints ?? [],
+          lat: data.start.lat,
+          lng: data.start.lng,
+        });
+        setLocationMode("manual");
+      } catch {
+        // Hydration is best-effort.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [routeIdFromUrl]);
 
   function handleStartChange(start: { lat: number; lng: number }) {
@@ -489,9 +498,13 @@ export default function HomePage() {
       setRoute(generated);
       setSummaryDialog(buildRouteSummaryDialogState(generated, request));
       setNotes("");
-      // History is best-effort — never fail the ride on localStorage quota.
+      // Cloud history is best-effort — never fail the ride on save errors.
       try {
-        saveLocalRoute(generated);
+        await fetch("/api/routes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(generated),
+        });
       } catch {
         // ignore persistence errors
       }
@@ -520,12 +533,21 @@ export default function HomePage() {
   function handleRate(rating: "up" | "down") {
     if (!route) return;
 
-    try {
-      const updated = updateLocalRouteRating(route.id, rating, notes);
-      if (updated) setRoute(updated);
-    } catch {
-      // Rating persist is best-effort.
-    }
+    setRoute({ ...route, rating, notes });
+    void (async () => {
+      try {
+        const response = await fetch(`/api/routes/${route.id}/rate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rating, notes }),
+        });
+        if (!response.ok) return;
+        const payload = (await response.json()) as { route?: StoredRoute };
+        if (payload.route) setRoute(payload.route);
+      } catch {
+        // Rating persist is best-effort.
+      }
+    })();
   }
 
   const mapVeiled = loading || overlayExiting || routeRevealActive;

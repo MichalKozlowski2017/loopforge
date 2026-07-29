@@ -75,7 +75,10 @@ Na Vercel te same `NEXT_PUBLIC_*`. Po włączeniu providerów w Dashboard wyłą
 3. Generuj → redirect na `/login`.
 4. Google (lub Apple) → powrót na `/` z sesją → Generuj działa.
 5. Header: nazwa / Wyloguj.
+6. Po generate → `/routes` pokazuje trasę z chmury (per konto, RLS).
 
-## Następny krok (osobno)
+## Historia tras (chmura)
 
-`user_id` na `public.routes` + własna historia w chmurze (RLS per user). Auth sam w sobie nie synchronizuje jeszcze `localStorage`.
+Po zalogowaniu wygenerowane trasy trafiają do `public.routes` z `user_id = auth.uid()` (limit 25 / konto).  
+API: `GET/POST /api/routes`, `GET /api/routes/[id]`, `POST .../rate`, `GET .../gpx`.  
+localStorage nie jest już źródłem prawdy.

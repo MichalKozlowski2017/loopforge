@@ -15,9 +15,11 @@ Logowanie Google/Apple: [docs/auth.md](./auth.md).
 ## Migracje (zastosowane)
 
 - PostGIS, pgRouting, hstore (pgRouting opcjonalnie na przyszłość)
-- `public.routes`, `loopforge.import_status`, puste `loopforge.ways`
-- RLS na tabelach aplikacyjnych
+- `public.routes` z `user_id` → `auth.users` (historia per konto, RLS `auth.uid()`)
+- `loopforge.import_status`, puste `loopforge.ways`
+- Orphan trasy bez właściciela skasowane przy migracji `routes_user_owned` (2026-07-29)
 
+Historia w aplikacji **nie** wymaga `DATABASE_URL` — zapis idzie przez sesję Supabase (anon key + cookies). `DATABASE_URL` zostaje opcjonalne pod pgRouting / tooling.
 ## Setup
 
 ```bash
