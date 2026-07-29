@@ -86,6 +86,46 @@ function mirrorBudgetM(targetKm: number): number {
   return Math.max(3000, targetKm * 1000 * 0.05);
 }
 
+/** Drop intentional approach+return corridor so mirror scoring rates the loop only. */
+function loopBodyCoordinatesForMirror(
+  route: StoredRoute,
+): [number, number][] {
+  const coords = route.geojson.geometry.coordinates as [number, number][];
+  if (!route.approachEnabled || coords.length < 8) return coords;
+
+  const skipStartM =
+    (route.metrics.approachDistanceKm ?? route.approachDistanceKm ?? 0) * 1000;
+  const skipEndM =
+    (route.metrics.returnApproachKm ??
+      route.metrics.approachDistanceKm ??
+      route.approachDistanceKm ??
+      0) * 1000;
+  if (skipStartM < 200 && skipEndM < 200) return coords;
+
+  let startIdx = 0;
+  let acc = 0;
+  for (let i = 1; i < coords.length; i++) {
+    acc += haversineM(coords[i - 1]!, coords[i]!);
+    if (acc >= skipStartM * 0.9) {
+      startIdx = i;
+      break;
+    }
+  }
+
+  let endIdx = coords.length - 1;
+  acc = 0;
+  for (let i = coords.length - 1; i > startIdx + 2; i--) {
+    acc += haversineM(coords[i - 1]!, coords[i]!);
+    if (acc >= skipEndM * 0.9) {
+      endIdx = i - 1;
+      break;
+    }
+  }
+
+  if (endIdx - startIdx < 4) return coords;
+  return coords.slice(startIdx, endIdx + 1);
+}
+
 function shareOfLabel(
   route: StoredRoute,
   labelMatcher: (label: string) => boolean,
@@ -102,6 +142,7 @@ function buildRouteSummaryDialogState(
     distanceKm: number;
     avoidAsphalt?: boolean;
     preferQuietRoutes?: boolean;
+    approachEnabled?: boolean;
   },
 ): RouteSummaryDialogState {
   const requestedKm = request.distanceKm;
@@ -109,8 +150,13 @@ function buildRouteSummaryDialogState(
   const distanceError = Math.abs(actualKm - requestedKm) / Math.max(1, requestedKm);
   const distanceScore = clampScore(100 - distanceError * 180);
 
-  const coords = route.geojson.geometry.coordinates as [number, number][];
-  const mirrorM = mirroredPrefixMeters(coords);
+  const approachOn = Boolean(
+    request.approachEnabled ?? route.approachEnabled,
+  );
+  const mirrorCoords = approachOn
+    ? loopBodyCoordinatesForMirror(route)
+    : (route.geojson.geometry.coordinates as [number, number][]);
+  const mirrorM = mirroredPrefixMeters(mirrorCoords);
   const mirrorBudget = mirrorBudgetM(requestedKm);
   const mirrorRatio = mirrorM / Math.max(1, mirrorBudget);
   const returnScore =
@@ -144,12 +190,16 @@ function buildRouteSummaryDialogState(
     {
       label: "Dopasowanie dystansu",
       score: distanceScore,
-      detail: `Plan ~${requestedKm} km, wynik ${actualKm.toFixed(1)} km.`,
+      detail: approachOn
+        ? `Pętla ~${requestedKm} km, wynik ${actualKm.toFixed(1)} km (bez dojazdu/powrotu).`
+        : `Plan ~${requestedKm} km, wynik ${actualKm.toFixed(1)} km.`,
     },
     {
       label: "Różnorodność powrotu",
       score: returnScore,
-      detail: `Nakładanie start/koniec ~${Math.round(mirrorM)} m (budżet ~${Math.round(mirrorBudget)} m).`,
+      detail: approachOn
+        ? `Nakładanie w samej pętli ~${Math.round(mirrorM)} m (budżet ~${Math.round(mirrorBudget)} m). Dojazd i powrót do domu tą samą drogą są zamierzone.`
+        : `Nakładanie start/koniec ~${Math.round(mirrorM)} m (budżet ~${Math.round(mirrorBudget)} m).`,
     },
     {
       label: request.avoidAsphalt ? "Zgodność z unikaniem asfaltu" : "Dobór nawierzchni",

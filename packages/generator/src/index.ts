@@ -279,6 +279,9 @@ function buildGeneratedRoute(
     );
   }
   // Final GPX-identical mirror gate (densify 5 m). Catches cases sparse accept missed.
+  // Skipped when skipMirrorGate is set — used for approach-loop shipping where
+  // home↔entry corridor mirroring is intentional after merge, and for degraded
+  // fallbacks that already passed exceedsMirrorBudget / tryShipDegraded.
   if (!request.approachEnabled && !options.placeholder && !options.skipMirrorGate) {
     const gpxTrack = densifyTrackForNavigation(
       displayCoordinates,
@@ -2947,6 +2950,9 @@ async function generateRouteWithEngine(
             segments: output.segments,
             mapGeojson: output.mapGeojson ?? undefined,
             brouterMessages: output.brouterMessages,
+            // Approach wyjazdy intentionally share the home↔entry corridor;
+            // mirror is audited on the loop body only (exceedsMirrorBudget).
+            skipMirrorGate: approachMode,
           }),
           loopSegments: output.segments,
         };
@@ -2987,6 +2993,8 @@ async function generateRouteWithEngine(
       segments: output.segments,
       mapGeojson: output.mapGeojson ?? undefined,
       brouterMessages: output.brouterMessages,
+      // Same as rescue path: approach corridor mirror must not hard-fail ship.
+      skipMirrorGate: approachMode,
       generationQuality: usedRelaxedFallback
         ? {
             mode: "relaxed",
@@ -3721,9 +3729,28 @@ export async function generateRoute(
   let lastGenerated: GeneratedRoute | null = null;
 
   for (let attempt = 1; attempt <= maxNetworkAttempts; attempt++) {
-    const generated = request.approachEnabled
-      ? await generateRouteWithApproach(request, options)
-      : (await generateLoopRoute(request, options)).route;
+    let generated: GeneratedRoute;
+    try {
+      generated = request.approachEnabled
+        ? await generateRouteWithApproach(request, options)
+        : (await generateLoopRoute(request, options)).route;
+    } catch (error) {
+      lastNetworkError =
+        error instanceof Error ? error : new Error("Route generation failed");
+      // Keep any earlier successful generation so we can still ship a fallback
+      // if a later attempt throws (common with approach + mirror edge cases).
+      if (attempt < maxNetworkAttempts) {
+        reportProgress(options?.onProgress, {
+          phase: "refining",
+          message: "Koryguję przebieg pętli",
+          detail: "Poprzedni wariant się nie domknął — próbuję dalej",
+          progress: 90,
+        });
+        continue;
+      }
+      if (lastGenerated) break;
+      throw lastNetworkError;
+    }
     lastGenerated = generated;
 
     if (generated.geojson.properties.placeholder === true) {
