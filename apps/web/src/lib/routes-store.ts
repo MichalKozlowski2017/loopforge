@@ -32,7 +32,9 @@ export async function loadRoutes(): Promise<StoredRoute[]> {
         metrics: StoredRoute["metrics"];
         gpx: string;
         rating: number | null;
+        feedback_tags: string[] | null;
         notes: string | null;
+        ridden_at: string | null;
         created_at: string;
       }>(
         `
@@ -48,7 +50,9 @@ export async function loadRoutes(): Promise<StoredRoute[]> {
             metrics,
             gpx,
             rating,
+            feedback_tags,
             notes,
+            ridden_at,
             created_at
           from public.routes
           order by created_at desc
@@ -72,7 +76,11 @@ export async function loadRoutes(): Promise<StoredRoute[]> {
         row.rating <= 5
           ? (row.rating as StoredRoute["rating"])
           : undefined),
+        feedbackTags: row.feedback_tags?.length
+          ? row.feedback_tags
+          : undefined,
         notes: row.notes ?? undefined,
+        riddenAt: row.ridden_at ?? undefined,
         createdAt: row.created_at,
       }));
     });
@@ -153,6 +161,7 @@ export async function updateRouteRating(
   id: string,
   rating: 1 | 2 | 3 | 4 | 5,
   notes?: string,
+  tags?: string[],
 ): Promise<StoredRoute | null> {
   if (shouldUseDatabaseStore()) {
     const config = getRoutingConfig();
@@ -162,11 +171,15 @@ export async function updateRouteRating(
       const result = await client.query<{ id: string }>(
         `
           update public.routes
-          set rating = $2, notes = coalesce($3, notes)
+          set
+            rating = $2,
+            notes = coalesce($3, notes),
+            feedback_tags = coalesce($4::text[], feedback_tags),
+            ridden_at = coalesce(ridden_at, now())
           where id = $1::uuid
           returning id::text
         `,
-        [id, rating, notes ?? null],
+        [id, rating, notes ?? null, tags ?? null],
       );
       if (result.rowCount === 0) return null;
       const routes = await loadRoutes();
@@ -178,13 +191,16 @@ export async function updateRouteRating(
   const index = routes.findIndex((route) => route.id === id);
   if (index === -1) return null;
 
+  const existing = routes[index]!;
   routes[index] = {
-    ...routes[index],
+    ...existing,
     rating,
     ...(notes !== undefined ? { notes } : {}),
+    ...(tags !== undefined ? { feedbackTags: tags } : {}),
+    riddenAt: existing.riddenAt ?? new Date().toISOString(),
   };
   await fs.writeFile(ROUTES_PATH, JSON.stringify(routes, null, 2), "utf8");
-  return routes[index];
+  return routes[index]!;
 }
 
 export async function getRouteById(id: string): Promise<StoredRoute | null> {
