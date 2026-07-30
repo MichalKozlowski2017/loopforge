@@ -17,6 +17,9 @@ type GooglePlace = {
   googleMapsUri?: string;
   formattedAddress?: string;
   displayName?: { text?: string };
+  nationalPhoneNumber?: string;
+  websiteUri?: string;
+  regularOpeningHours?: { weekdayDescriptions?: string[] };
 };
 
 export async function GET(request: Request) {
@@ -39,6 +42,9 @@ export async function GET(request: Request) {
     return NextResponse.json(fallback);
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8_000);
+
   try {
     const response = await fetch(
       "https://places.googleapis.com/v1/places:searchText",
@@ -49,7 +55,7 @@ export async function GET(request: Request) {
           "User-Agent": USER_AGENT,
           "X-Goog-Api-Key": apiKey,
           "X-Goog-FieldMask":
-            "places.displayName,places.rating,places.userRatingCount,places.googleMapsUri,places.formattedAddress",
+            "places.displayName,places.rating,places.userRatingCount,places.googleMapsUri,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.regularOpeningHours",
         },
         body: JSON.stringify({
           textQuery: name,
@@ -62,6 +68,7 @@ export async function GET(request: Request) {
             },
           },
         }),
+        signal: controller.signal,
         next: { revalidate: 86_400 },
       },
     );
@@ -75,14 +82,18 @@ export async function GET(request: Request) {
     const place = data.places?.[0];
     if (!place) return NextResponse.json(fallback);
 
+    const hours = place.regularOpeningHours?.weekdayDescriptions?.join("; ");
+
     const details: PoiDetails = {
-      rating:
-        typeof place.rating === "number" ? place.rating : undefined,
+      rating: typeof place.rating === "number" ? place.rating : undefined,
       userRatingCount:
         typeof place.userRatingCount === "number"
           ? place.userRatingCount
           : undefined,
       address: place.formattedAddress,
+      phone: place.nationalPhoneNumber,
+      website: place.websiteUri,
+      openingHours: hours,
       googleMapsUri: place.googleMapsUri ?? fallback.googleMapsUri,
       source: "google",
     };
@@ -91,5 +102,7 @@ export async function GET(request: Request) {
   } catch (error) {
     console.warn("[loopforge] Places enrich failed:", error);
     return NextResponse.json(fallback);
+  } finally {
+    clearTimeout(timer);
   }
 }

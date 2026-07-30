@@ -9,12 +9,6 @@ export interface SelectedPoi {
   kind: string;
   lat: number;
   lng: number;
-  cuisine?: string;
-  openingHours?: string;
-  phone?: string;
-  website?: string;
-  brand?: string;
-  wheelchair?: string;
 }
 
 interface PoiDetailCardProps {
@@ -52,6 +46,10 @@ export function PoiDetailCard({
   const rating = details?.rating;
   const ratingCount = details?.userRatingCount;
   const mapsUri = details?.googleMapsUri;
+  const cuisine = details?.cuisine;
+  const openingHours = details?.openingHours;
+  const phone = details?.phone;
+  const website = details?.website;
 
   return (
     <div className="absolute bottom-16 left-3 z-20 w-[min(100%-1.5rem,20rem)] rounded-xl border border-zinc-700/80 bg-zinc-950/95 p-3 shadow-xl backdrop-blur-sm">
@@ -100,30 +98,32 @@ export function PoiDetailCard({
         {details?.address ? (
           <p className="text-zinc-400">{details.address}</p>
         ) : null}
-        {poi.cuisine ? (
+        {cuisine ? (
           <p>
             <span className="text-zinc-500">Kuchnia: </span>
-            {poi.cuisine.replaceAll(";", ", ")}
+            {cuisine.replaceAll(";", ", ")}
           </p>
         ) : null}
-        {poi.openingHours ? (
+        {openingHours ? (
           <p>
             <span className="text-zinc-500">Godziny: </span>
-            {poi.openingHours}
+            {openingHours}
           </p>
         ) : null}
-        {poi.phone ? (
+        {phone ? (
           <p>
             <span className="text-zinc-500">Tel: </span>
-            <a href={`tel:${poi.phone}`} className="text-sky-300 hover:underline">
-              {poi.phone}
+            <a href={`tel:${phone}`} className="text-sky-300 hover:underline">
+              {phone}
             </a>
           </p>
         ) : null}
-        {poi.website ? (
+        {website ? (
           <p className="truncate">
             <a
-              href={poi.website.startsWith("http") ? poi.website : `https://${poi.website}`}
+              href={
+                website.startsWith("http") ? website : `https://${website}`
+              }
               target="_blank"
               rel="noreferrer"
               className="text-sky-300 hover:underline"
@@ -131,9 +131,6 @@ export function PoiDetailCard({
               Strona WWW
             </a>
           </p>
-        ) : null}
-        {poi.wheelchair && poi.wheelchair !== "no" ? (
-          <p className="text-zinc-500">Wózek: {poi.wheelchair}</p>
         ) : null}
       </div>
 
