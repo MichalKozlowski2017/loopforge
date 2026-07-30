@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { AuthControls } from "@/components/AuthControls";
+import { getAdminViewer } from "@/lib/supabase/admin";
 
-export function SiteHeader() {
+export async function SiteHeader() {
+  const admin = await getAdminViewer();
+
   return (
     <header className="flex items-center justify-between border-b border-amber-950/35 bg-zinc-950/80 px-4 py-3 backdrop-blur-sm">
       <Link
@@ -27,6 +30,11 @@ export function SiteHeader() {
           <Link href="/routes" className="transition hover:text-amber-200">
             Historia
           </Link>
+          {admin ? (
+            <Link href="/admin" className="transition hover:text-amber-200">
+              Admin
+            </Link>
+          ) : null}
         </nav>
         <AuthControls />
       </div>

@@ -5,6 +5,7 @@ import type {
   StoredRoute,
 } from "@loopforge/osm-types";
 import { requireUser } from "@/lib/supabase/require-user";
+import { logGenerationEvent } from "@/lib/admin/generation-log";
 
 function sseChunk(event: RouteGenerationStreamEvent): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
@@ -67,6 +68,9 @@ export async function POST(request: Request) {
     }
   }
 
+  const userId = auth.user?.id ?? null;
+  const startedAt = Date.now();
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let closed = false;
@@ -108,15 +112,29 @@ export async function POST(request: Request) {
               : undefined,
         };
 
+        void logGenerationEvent({
+          userId,
+          request: routeInput,
+          status: "success",
+          latencyMs: Date.now() - startedAt,
+          routeId: stored.id,
+        });
+
         send({ type: "complete", route: stored });
       } catch (error) {
         console.error(error);
+        const message =
+          error instanceof Error ? error.message : "Błąd generowania trasy";
+        void logGenerationEvent({
+          userId,
+          request: routeInput,
+          status: "error",
+          latencyMs: Date.now() - startedAt,
+          errorMessage: message,
+        });
         send({
           type: "error",
-          error:
-            error instanceof Error
-              ? error.message
-              : "Błąd generowania trasy",
+          error: message,
         });
       } finally {
         if (!closed) {

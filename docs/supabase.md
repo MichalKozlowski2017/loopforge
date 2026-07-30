@@ -10,7 +10,8 @@
 
 Supabase służy **tylko aplikacji** — auth, zapis tras (`public.routes`), metadata. **OSM i routing** → BRouter (lokalnie / osobny serwer).
 
-Logowanie Google/Apple: [docs/auth.md](./auth.md).
+Logowanie Google/Apple: [docs/auth.md](./auth.md).  
+Panel admina: [docs/admin.md](./admin.md).
 
 ## Migracje (zastosowane)
 
