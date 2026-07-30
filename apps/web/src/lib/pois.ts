@@ -1,3 +1,6 @@
+/** Feature flag — set true to show category toggles / POI layers on the map. */
+export const POI_LAYERS_ENABLED = false;
+
 export const POI_CATEGORIES = [
   "food",
   "fuel",
