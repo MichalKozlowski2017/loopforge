@@ -14,6 +14,7 @@ import {
 import {
   POI_CATEGORIES,
   POI_CATEGORY_META,
+  POI_LAYERS_ENABLED,
   POI_MIN_ZOOM,
   categoryForPoiClass,
   googleMapsSearchUri,
@@ -817,6 +818,12 @@ export function MapView({
     const map = mapRef.current;
     if (!map || !mapReady) return;
 
+    if (!POI_LAYERS_ENABLED) {
+      syncPoiLayers(map, poiCategories, false);
+      closePoiDetail();
+      return;
+    }
+
     const picking = pickStart || pickVia;
     const show = !picking && !mapVeiled && poiCategories.size > 0;
 
@@ -855,7 +862,7 @@ export function MapView({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady) return;
+    if (!map || !mapReady || !POI_LAYERS_ENABLED) return;
 
     const layerIds = POI_CATEGORIES.map(poiIconLayerId);
 
@@ -1003,7 +1010,7 @@ export function MapView({
           onComplete={handleRevealComplete}
         />
       ) : null}
-      {!mapVeiled && selectedPoi ? (
+      {POI_LAYERS_ENABLED && !mapVeiled && selectedPoi ? (
         <PoiDetailCard
           poi={selectedPoi}
           details={poiDetails}
@@ -1011,7 +1018,7 @@ export function MapView({
           onClose={closePoiDetail}
         />
       ) : null}
-      {!mapVeiled ? (
+      {POI_LAYERS_ENABLED && !mapVeiled ? (
         <div className="absolute bottom-3 left-3 z-10 flex max-w-[min(100%,18rem)] flex-col gap-1.5">
           <div className="flex flex-wrap gap-1.5 rounded-lg border border-zinc-700/80 bg-zinc-950/90 p-1.5 shadow-lg backdrop-blur-sm">
             {POI_CATEGORIES.map((category) => {
