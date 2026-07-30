@@ -43,6 +43,7 @@ type RouteRow = {
   feedback_tags: string[] | null;
   notes: string | null;
   ridden_at: string | null;
+  share_slug: string | null;
   created_at: string;
 };
 
@@ -83,6 +84,7 @@ function rowToStored(row: RouteRow): StoredRoute {
     feedbackTags: row.feedback_tags?.length ? row.feedback_tags : undefined,
     notes: row.notes ?? undefined,
     riddenAt: row.ridden_at ?? undefined,
+    shareSlug: row.share_slug ?? undefined,
     createdAt: row.created_at,
   };
 }
@@ -107,7 +109,10 @@ function rowToSummary(row: SummaryRow): CloudRouteSummary {
 }
 
 const FULL_SELECT =
-  "id, bike_type, direction, profile, start_lat, start_lng, geojson, map_geojson, metrics, gpx, rating, feedback_tags, notes, ridden_at, created_at";
+  "id, bike_type, direction, profile, start_lat, start_lng, geojson, map_geojson, metrics, gpx, rating, feedback_tags, notes, ridden_at, share_slug, created_at";
+
+const SHARE_SELECT =
+  "id, bike_type, direction, profile, start_lat, start_lng, geojson, map_geojson, metrics, gpx, created_at, share_slug";
 
 export async function listRouteSummaries(
   supabase: SupabaseClient,
@@ -258,4 +263,101 @@ export async function getRouteGpx(
   if (error) throw new Error(error.message);
   if (!data) return null;
   return (data.gpx as string) ?? "";
+}
+
+function createShareSlug(): string {
+  // 12 bytes → 16 chars base64url, unguessable enough for share links
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+export async function setRouteSharing(
+  supabase: SupabaseClient,
+  userId: string,
+  id: string,
+  enabled: boolean,
+): Promise<StoredRoute | null> {
+  const existing = await getRouteById(supabase, userId, id);
+  if (!existing) return null;
+
+  let shareSlug: string | null = null;
+  if (enabled) {
+    shareSlug = existing.shareSlug ?? createShareSlug();
+  }
+
+  const { data, error } = await supabase
+    .from("routes")
+    .update({ share_slug: shareSlug })
+    .eq("user_id", userId)
+    .eq("id", id)
+    .select(FULL_SELECT)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  return rowToStored(data as RouteRow);
+}
+
+/** Public shared route payload — no private notes/ratings. */
+export type SharedRoutePublic = {
+  id: string;
+  bikeType: BikeType;
+  direction: Direction;
+  profile?: RideProfile;
+  start: { lat: number; lng: number };
+  geojson: StoredRoute["geojson"];
+  mapGeojson?: StoredRoute["mapGeojson"];
+  metrics: StoredRoute["metrics"];
+  gpx: string;
+  createdAt: string;
+  shareSlug: string;
+};
+
+export async function getSharedRouteBySlug(
+  service: SupabaseClient,
+  slug: string,
+): Promise<SharedRoutePublic | null> {
+  const normalized = slug.trim();
+  if (!normalized || normalized.length > 64) return null;
+
+  const { data, error } = await service
+    .from("routes")
+    .select(SHARE_SELECT)
+    .eq("share_slug", normalized)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+
+  const row = data as {
+    id: string;
+    bike_type: string;
+    direction: string;
+    profile: string | null;
+    start_lat: number;
+    start_lng: number;
+    geojson: StoredRoute["geojson"];
+    map_geojson: StoredRoute["mapGeojson"] | null;
+    metrics: StoredRoute["metrics"];
+    gpx: string;
+    created_at: string;
+    share_slug: string;
+  };
+
+  return {
+    id: row.id,
+    bikeType: row.bike_type as BikeType,
+    direction: row.direction as Direction,
+    profile: (row.profile as RideProfile | null) ?? undefined,
+    start: { lat: row.start_lat, lng: row.start_lng },
+    geojson: row.geojson,
+    mapGeojson: row.map_geojson ?? undefined,
+    metrics: row.metrics,
+    gpx: row.gpx ?? "",
+    createdAt: row.created_at,
+    shareSlug: row.share_slug,
+  };
 }

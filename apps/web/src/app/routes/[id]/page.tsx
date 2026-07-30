@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import type { StoredRoute } from "@loopforge/osm-types";
 import { getRideProfileLabel } from "@loopforge/osm-types";
 import { RouteFeedbackForm } from "@/components/RouteFeedbackForm";
+import { RouteShareControls } from "@/components/RouteShareControls";
 import { SurfaceBreakdown } from "@/components/SurfaceBreakdown";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
 import { downloadRouteGpx } from "@/lib/download-route-gpx";
@@ -154,6 +155,7 @@ export default function RouteDetailPage() {
             GPX
           </button>
         </div>
+        <RouteShareControls route={route} onUpdated={setRoute} />
         <RouteFeedbackForm
           routeId={route.id}
           initialRating={route.rating}

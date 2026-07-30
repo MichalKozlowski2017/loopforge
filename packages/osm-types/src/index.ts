@@ -179,6 +179,8 @@ export interface StoredRoute extends GeneratedRoute {
   notes?: string;
   /** When the user first submitted post-ride feedback. */
   riddenAt?: string;
+  /** Public share slug when sharing is enabled (`/r/{shareSlug}`). */
+  shareSlug?: string;
 }
 
 export type RouteGenerationPhase =
