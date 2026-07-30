@@ -10,6 +10,8 @@ import type { RouteFeedbackTagId } from "@/lib/route-feedback";
 import { extractPreviewPath } from "@/lib/route-shape-preview";
 
 export const MAX_CLOUD_ROUTES = 25;
+/** Favorites are kept outside the rolling history window. */
+export const MAX_FAVORITE_ROUTES = 50;
 
 export interface CloudRouteSummary {
   id: string;
@@ -24,6 +26,7 @@ export interface CloudRouteSummary {
   notes?: string;
   riddenAt?: string;
   createdAt: string;
+  isFavorite?: boolean;
   /** Downsampled [lng, lat] polyline for list thumbnails. */
   previewPath?: [number, number][];
 }
@@ -44,6 +47,8 @@ type RouteRow = {
   notes: string | null;
   ridden_at: string | null;
   share_slug: string | null;
+  is_favorite: boolean | null;
+  favorited_at: string | null;
   created_at: string;
 };
 
@@ -58,6 +63,7 @@ type SummaryRow = {
   notes: string | null;
   ridden_at: string | null;
   created_at: string;
+  is_favorite?: boolean | null;
   geojson?: StoredRoute["geojson"] | null;
 };
 
@@ -85,6 +91,8 @@ function rowToStored(row: RouteRow): StoredRoute {
     notes: row.notes ?? undefined,
     riddenAt: row.ridden_at ?? undefined,
     shareSlug: row.share_slug ?? undefined,
+    isFavorite: Boolean(row.is_favorite),
+    favoritedAt: row.favorited_at ?? undefined,
     createdAt: row.created_at,
   };
 }
@@ -104,12 +112,16 @@ function rowToSummary(row: SummaryRow): CloudRouteSummary {
     notes: row.notes ?? undefined,
     riddenAt: row.ridden_at ?? undefined,
     createdAt: row.created_at,
+    isFavorite: Boolean(row.is_favorite),
     previewPath: previewPath.length >= 2 ? previewPath : undefined,
   };
 }
 
 const FULL_SELECT =
-  "id, bike_type, direction, profile, start_lat, start_lng, geojson, map_geojson, metrics, gpx, rating, feedback_tags, notes, ridden_at, share_slug, created_at";
+  "id, bike_type, direction, profile, start_lat, start_lng, geojson, map_geojson, metrics, gpx, rating, feedback_tags, notes, ridden_at, share_slug, is_favorite, favorited_at, created_at";
+
+const SUMMARY_SELECT =
+  "id, bike_type, direction, profile, metrics, rating, feedback_tags, notes, ridden_at, created_at, is_favorite, geojson";
 
 const SHARE_SELECT =
   "id, bike_type, direction, profile, start_lat, start_lng, geojson, map_geojson, metrics, gpx, created_at, share_slug";
@@ -120,12 +132,26 @@ export async function listRouteSummaries(
 ): Promise<CloudRouteSummary[]> {
   const { data, error } = await supabase
     .from("routes")
-    .select(
-      "id, bike_type, direction, profile, metrics, rating, feedback_tags, notes, ridden_at, created_at, geojson",
-    )
+    .select(SUMMARY_SELECT)
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(MAX_CLOUD_ROUTES);
+
+  if (error) throw new Error(error.message);
+  return (data as SummaryRow[] | null)?.map(rowToSummary) ?? [];
+}
+
+export async function listFavoriteSummaries(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<CloudRouteSummary[]> {
+  const { data, error } = await supabase
+    .from("routes")
+    .select(SUMMARY_SELECT)
+    .eq("user_id", userId)
+    .eq("is_favorite", true)
+    .order("favorited_at", { ascending: false })
+    .limit(MAX_FAVORITE_ROUTES);
 
   if (error) throw new Error(error.message);
   return (data as SummaryRow[] | null)?.map(rowToSummary) ?? [];
@@ -188,21 +214,25 @@ export async function saveRoute(
 
   if (insertError) throw new Error(insertError.message);
 
-  // Keep only the newest MAX_CLOUD_ROUTES for this user.
-  const { data: ids, error: listError } = await supabase
+  // Prune rolling history only — favorites are never auto-deleted.
+  const { data: nonFavorites, error: listError } = await supabase
     .from("routes")
     .select("id")
     .eq("user_id", userId)
+    .eq("is_favorite", false)
     .order("created_at", { ascending: false });
 
   if (listError) throw new Error(listError.message);
 
-  const overflow = (ids ?? []).slice(MAX_CLOUD_ROUTES).map((row) => row.id as string);
+  const overflow = (nonFavorites ?? [])
+    .slice(MAX_CLOUD_ROUTES)
+    .map((row) => row.id as string);
   if (overflow.length > 0) {
     const { error: deleteError } = await supabase
       .from("routes")
       .delete()
       .eq("user_id", userId)
+      .eq("is_favorite", false)
       .in("id", overflow);
     if (deleteError) throw new Error(deleteError.message);
   }
@@ -238,6 +268,45 @@ export async function updateRouteRating(
   const { data, error } = await supabase
     .from("routes")
     .update(patch)
+    .eq("user_id", userId)
+    .eq("id", id)
+    .select(FULL_SELECT)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  return rowToStored(data as RouteRow);
+}
+
+export async function setRouteFavorite(
+  supabase: SupabaseClient,
+  userId: string,
+  id: string,
+  enabled: boolean,
+): Promise<StoredRoute | null> {
+  const existing = await getRouteById(supabase, userId, id);
+  if (!existing) return null;
+
+  if (enabled && !existing.isFavorite) {
+    const { count, error: countError } = await supabase
+      .from("routes")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("is_favorite", true);
+    if (countError) throw new Error(countError.message);
+    if ((count ?? 0) >= MAX_FAVORITE_ROUTES) {
+      throw new Error(
+        `Limit ulubionych to ${MAX_FAVORITE_ROUTES}. Usuń którąś, żeby dodać nową.`,
+      );
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("routes")
+    .update({
+      is_favorite: enabled,
+      favorited_at: enabled ? new Date().toISOString() : null,
+    })
     .eq("user_id", userId)
     .eq("id", id)
     .select(FULL_SELECT)

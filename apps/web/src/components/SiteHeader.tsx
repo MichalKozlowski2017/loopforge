@@ -30,6 +30,12 @@ export async function SiteHeader() {
           <Link href="/routes" className="transition hover:text-amber-200">
             Historia
           </Link>
+          <Link
+            href="/routes/favorites"
+            className="hidden transition hover:text-amber-200 sm:inline"
+          >
+            Ulubione
+          </Link>
           {admin ? (
             <Link href="/admin" className="transition hover:text-amber-200">
               Admin

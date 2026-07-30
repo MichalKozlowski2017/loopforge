@@ -5,11 +5,11 @@ import { useEffect, useState } from "react";
 import { RouteSummaryList } from "@/components/RouteSummaryList";
 import { RoutesLibraryNav } from "@/components/RoutesLibraryNav";
 import {
-  MAX_CLOUD_ROUTES,
+  MAX_FAVORITE_ROUTES,
   type CloudRouteSummary,
 } from "@/lib/cloud-routes-store";
 
-export default function RoutesPage() {
+export default function FavoriteRoutesPage() {
   const [routes, setRoutes] = useState<CloudRouteSummary[]>([]);
   const [ready, setReady] = useState(false);
   const [needsLogin, setNeedsLogin] = useState(false);
@@ -20,7 +20,7 @@ export default function RoutesPage() {
 
     void (async () => {
       try {
-        const response = await fetch("/api/routes");
+        const response = await fetch("/api/routes?favorites=1");
         if (response.status === 401) {
           if (!cancelled) {
             setNeedsLogin(true);
@@ -33,7 +33,7 @@ export default function RoutesPage() {
             error?: string;
           } | null;
           if (!cancelled) {
-            setError(payload?.error ?? "Nie udało się pobrać historii.");
+            setError(payload?.error ?? "Nie udało się pobrać ulubionych.");
             setReady(true);
           }
           return;
@@ -47,7 +47,7 @@ export default function RoutesPage() {
         }
       } catch {
         if (!cancelled) {
-          setError("Nie udało się pobrać historii.");
+          setError("Nie udało się pobrać ulubionych.");
           setReady(true);
         }
       }
@@ -61,23 +61,23 @@ export default function RoutesPage() {
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 p-6">
       <div className="mb-2">
-        <h1 className="text-2xl font-semibold">Historia tras</h1>
+        <h1 className="text-2xl font-semibold">Ulubione trasy</h1>
         <p className="mt-1 text-sm text-zinc-400">
-          Ostatnie generacje (do {MAX_CLOUD_ROUTES}). Ulubione nie wypadają z
-          konta — zapisz je gwiazdką na stronie trasy.
+          Świadomie zapisane pętle (do {MAX_FAVORITE_ROUTES}). Nie znikają przy
+          czyszczeniu historii generacji.
         </p>
       </div>
-      <RoutesLibraryNav active="history" />
+      <RoutesLibraryNav active="favorites" />
 
       {!ready ? (
         <p className="text-zinc-500">Ładowanie…</p>
       ) : needsLogin ? (
         <div className="rounded-xl border border-amber-950/25 bg-zinc-900/50 p-8 text-center">
           <p className="text-zinc-400">
-            Zaloguj się, żeby zobaczyć historię tras na koncie.
+            Zaloguj się, żeby zobaczyć ulubione trasy.
           </p>
           <Link
-            href="/login?next=/routes"
+            href="/login?next=/routes/favorites"
             className="mt-4 inline-block text-sm text-amber-400 hover:underline"
           >
             → Zaloguj się
@@ -89,12 +89,15 @@ export default function RoutesPage() {
         </div>
       ) : routes.length === 0 ? (
         <div className="rounded-xl border border-amber-950/25 bg-zinc-900/50 p-8 text-center">
-          <p className="text-zinc-400">Brak tras. Wygeneruj pierwszą pętlę.</p>
+          <p className="text-zinc-400">
+            Brak ulubionych. Otwórz trasę z historii i kliknij „Zapisz w
+            ulubionych”.
+          </p>
           <Link
-            href="/"
+            href="/routes"
             className="mt-4 inline-block text-sm text-amber-400 hover:underline"
           >
-            → Generator
+            → Historia
           </Link>
         </div>
       ) : (

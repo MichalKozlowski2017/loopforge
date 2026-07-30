@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { StoredRoute } from "@loopforge/osm-types";
 import { getRideProfileLabel } from "@loopforge/osm-types";
+import { RouteFavoriteButton } from "@/components/RouteFavoriteButton";
 import { RouteFeedbackForm } from "@/components/RouteFeedbackForm";
 import { RouteShareControls } from "@/components/RouteShareControls";
 import { SurfaceBreakdown } from "@/components/SurfaceBreakdown";
@@ -155,6 +156,7 @@ export default function RouteDetailPage() {
             GPX
           </button>
         </div>
+        <RouteFavoriteButton route={route} onUpdated={setRoute} />
         <RouteShareControls route={route} onUpdated={setRoute} />
         <RouteFeedbackForm
           routeId={route.id}

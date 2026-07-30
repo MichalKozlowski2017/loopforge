@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import type { StoredRoute } from "@loopforge/osm-types";
-import { listRouteSummaries, saveRoute } from "@/lib/cloud-routes-store";
+import {
+  listFavoriteSummaries,
+  listRouteSummaries,
+  saveRoute,
+} from "@/lib/cloud-routes-store";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/require-user";
 
-export async function GET() {
+export async function GET(request: Request) {
   const auth = await requireUser();
   if (!auth.ok) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
@@ -16,9 +20,14 @@ export async function GET() {
     );
   }
 
+  const favoritesOnly =
+    new URL(request.url).searchParams.get("favorites") === "1";
+
   try {
     const supabase = await createClient();
-    const routes = await listRouteSummaries(supabase, auth.user.id);
+    const routes = favoritesOnly
+      ? await listFavoriteSummaries(supabase, auth.user.id)
+      : await listRouteSummaries(supabase, auth.user.id);
     return NextResponse.json({ routes });
   } catch (err) {
     return NextResponse.json(

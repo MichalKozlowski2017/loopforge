@@ -181,6 +181,9 @@ export interface StoredRoute extends GeneratedRoute {
   riddenAt?: string;
   /** Public share slug when sharing is enabled (`/r/{shareSlug}`). */
   shareSlug?: string;
+  /** Saved to favorites — survives history prune. */
+  isFavorite?: boolean;
+  favoritedAt?: string;
 }
 
 export type RouteGenerationPhase =
