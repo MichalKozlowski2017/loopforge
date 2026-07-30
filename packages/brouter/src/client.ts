@@ -140,23 +140,24 @@ function brouterProfileOverrides(
   urbanRouting?: boolean,
   closedLoop?: boolean,
   preferQuietRoutes?: boolean,
+  /** Prefer short legs between pins (waypoints mode) — skip scenic town-avoid detours. */
+  directPath?: boolean,
 ): Record<string, string> {
   const overrides: Record<string, string> = {
     allow_ferries: "0",
   };
 
-  if (closedLoop) {
+  if (closedLoop && !directPath) {
     // Closed loops (start = end) — via correction cuts valid loop legs as "detours".
     overrides.correctMisplacedViaPoints = "0";
   } else {
-    // Kept small — just enough for GPS noise / an off-network pin, not wide
-    // enough to silently draw a straight line across a barrier/interchange.
+    // Snap pins slightly onto the network (GPS / map click noise).
     overrides.correctMisplacedViaPoints = "1";
-    overrides.correctMisplacedViaPointsDistance = "80";
+    overrides.correctMisplacedViaPointsDistance = directPath ? "120" : "80";
   }
 
   if (bikeType === "gravel" || bikeType === "general") {
-    if (rideProfile === "technical") {
+    if (rideProfile === "technical" && !directPath) {
       overrides.prefer_unpaved_paths = "1";
       overrides.prefer_forests = "1";
       overrides.avoid_towns = "1";
@@ -167,7 +168,7 @@ function brouterProfileOverrides(
         // Express = fast compacted/gravel (e.g. Wisła towpaths), not paved shortcuts.
         overrides.prefer_unpaved_paths = "1";
         overrides.prefer_cycle_routes = "1";
-        overrides.prefer_rivers = "1";
+        if (!directPath) overrides.prefer_rivers = "1";
         overrides.avoid_steep_inclines = "1";
       } else {
         overrides.prefer_unpaved_paths = "0";
@@ -210,10 +211,14 @@ function brouterProfileOverrides(
   ) {
     overrides.avoid_footways = "1";
     overrides.prefer_unpaved_paths = "1";
-    overrides.prefer_forests = "1";
+    // Forest/town avoidance creates huge detours between city pins — skip in
+    // through-points mode where the geometry is user-defined.
+    if (!directPath) {
+      overrides.prefer_forests = "1";
+    }
   }
 
-  if (preferQuietRoutes) {
+  if (preferQuietRoutes && !directPath) {
     if (bikeType === "gravel" || bikeType === "general") {
       overrides.prefer_cycle_routes = "1";
     }
@@ -233,6 +238,13 @@ function brouterProfileOverrides(
     }
   }
 
+  if (preferQuietRoutes && directPath) {
+    // Keep a light cycleway preference without scenic detours.
+    if (bikeType === "gravel" || bikeType === "general" || bikeType === "road") {
+      overrides.prefer_cycle_routes = "1";
+    }
+  }
+
   return overrides;
 }
 
@@ -245,6 +257,7 @@ function buildBrouterQuery(
   urbanRouting?: boolean,
   closedLoop?: boolean,
   preferQuietRoutes?: boolean,
+  directPath?: boolean,
 ): URLSearchParams {
   const query = new URLSearchParams({
     lonlats,
@@ -261,6 +274,7 @@ function buildBrouterQuery(
       urbanRouting,
       closedLoop,
       preferQuietRoutes,
+      directPath,
     ),
   )) {
     query.set(`profile:${key}`, value);
@@ -433,6 +447,11 @@ export interface WaypointRouteParams {
   urbanRouting?: boolean;
   /** Skip extra GPX request — use buildGpx() on the client/generator side. */
   skipGpx?: boolean;
+  /**
+   * Through-points mode: shorter legs between pins, light via snap, no
+   * scenic avoid_towns / prefer_forests padding.
+   */
+  directPath?: boolean;
 }
 
 export interface BrouterRouteResult {
@@ -574,6 +593,8 @@ async function fetchBrouterRoute(
     urbanRouting?: boolean;
     /** Route returns to its first point (loop) — disable via-point detour stripping. */
     closedLoop?: boolean;
+    /** Prefer short pin-to-pin legs (through-points planning mode). */
+    directPath?: boolean;
   },
 ): Promise<BrouterRouteResult> {
   const lonlats = points.map((p) => `${p.lng},${p.lat}`).join("|");
@@ -595,6 +616,7 @@ async function fetchBrouterRoute(
       options?.urbanRouting,
       options?.closedLoop,
       options?.preferQuietRoutes,
+      options?.directPath,
     );
 
     const response = await fetchBrouterWithRetry(
@@ -751,6 +773,7 @@ export async function fetchRouteThroughWaypoints(
       preferQuietRoutes: params.preferQuietRoutes,
       urbanRouting: params.urbanRouting,
       closedLoop: true,
+      directPath: params.directPath,
     },
   );
 }

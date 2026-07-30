@@ -3689,7 +3689,12 @@ async function generateWaypointsLoop(
       );
     }
     fetchRoute = async (params) => {
-      const routed = await fetchBrouterRoute(brouterConfig, params);
+      const routed = await fetchBrouterRoute(brouterConfig, {
+        ...params,
+        // Pin-to-pin: snap clicks, skip scenic forest/town padding.
+        directPath: true,
+        urbanRouting: true,
+      });
       return {
         coordinates: routed.coordinates,
         distanceKm: routed.distanceKm,
@@ -3709,7 +3714,8 @@ async function generateWaypointsLoop(
     progress: 35,
   });
 
-  const routed = await fetchLoopRouteResilient(fetchRoute, {
+  // Direct fetch — no resilient shrink (that warps pin geometry toward start).
+  const routed = await fetchRoute({
     start: request.start,
     bikeType: request.bikeType,
     waypoints: vias.map((p) => ({ lat: p.lat, lng: p.lng })),
@@ -3729,7 +3735,7 @@ async function generateWaypointsLoop(
   const normalizedRequest: GenerateRouteRequest = {
     ...request,
     direction,
-    distanceKm: Math.max(request.distanceKm || routed.distanceKm, routed.distanceKm),
+    distanceKm: routed.distanceKm,
     planningMode: "waypoints",
     viaPoints: vias,
     approachEnabled: false,

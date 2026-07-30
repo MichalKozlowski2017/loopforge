@@ -140,6 +140,36 @@ function shareOfLabel(
   return hit?.share ?? 0;
 }
 
+function haversineKm(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number },
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h));
+}
+
+/** Rough air-line tour length (for logging only — not a generation target). */
+function estimateWaypointsTourKm(
+  start: { lat: number; lng: number },
+  vias: { lat: number; lng: number }[],
+): number {
+  let km = 0;
+  let prev = start;
+  for (const via of vias) {
+    km += haversineKm(prev, via);
+    prev = via;
+  }
+  km += haversineKm(prev, start);
+  return Math.max(5, Math.round(km * 1.25));
+}
+
 function buildRouteSummaryDialogState(
   route: StoredRoute,
   request: {
@@ -147,8 +177,10 @@ function buildRouteSummaryDialogState(
     avoidAsphalt?: boolean;
     preferQuietRoutes?: boolean;
     approachEnabled?: boolean;
+    planningMode?: "loop" | "waypoints";
   },
 ): RouteSummaryDialogState {
+  const waypointsMode = request.planningMode === "waypoints";
   const requestedKm = request.distanceKm;
   const actualKm = route.metrics.loopDistanceKm ?? route.metrics.distanceKm;
   const distanceError = Math.abs(actualKm - requestedKm) / Math.max(1, requestedKm);
@@ -161,7 +193,9 @@ function buildRouteSummaryDialogState(
     ? loopBodyCoordinatesForMirror(route)
     : (route.geojson.geometry.coordinates as [number, number][]);
   const mirrorM = mirroredPrefixMeters(mirrorCoords);
-  const mirrorBudget = mirrorBudgetM(requestedKm);
+  const mirrorBudget = mirrorBudgetM(
+    waypointsMode ? Math.max(actualKm, 20) : requestedKm,
+  );
   const mirrorRatio = mirrorM / Math.max(1, mirrorBudget);
   const returnScore =
     mirrorRatio <= 1
@@ -183,41 +217,80 @@ function buildRouteSummaryDialogState(
       : 88
     : 80;
 
-  const overallScore = clampScore(
-    distanceScore * 0.35 +
-      returnScore * 0.35 +
-      surfaceScore * 0.15 +
-      quietScore * 0.15,
-  );
+  const pinCount = route.viaPoints?.length ?? 0;
+  const pinsScore = clampScore(55 + Math.min(pinCount, 5) * 8);
 
-  const metrics: RouteSummaryMetric[] = [
-    {
-      label: "Dopasowanie dystansu",
-      score: distanceScore,
-      detail: approachOn
-        ? `Pętla ~${requestedKm} km, wynik ${actualKm.toFixed(1)} km (bez dojazdu/powrotu).`
-        : `Plan ~${requestedKm} km, wynik ${actualKm.toFixed(1)} km.`,
-    },
-    {
-      label: "Różnorodność powrotu",
-      score: returnScore,
-      detail: approachOn
-        ? `Nakładanie w samej pętli ~${Math.round(mirrorM)} m (budżet ~${Math.round(mirrorBudget)} m). Dojazd i powrót do domu tą samą drogą są zamierzone.`
-        : `Nakładanie start/koniec ~${Math.round(mirrorM)} m (budżet ~${Math.round(mirrorBudget)} m).`,
-    },
-    {
-      label: request.avoidAsphalt ? "Zgodność z unikaniem asfaltu" : "Dobór nawierzchni",
-      score: surfaceScore,
-      detail: `Szacowany udział asfaltu: ${(asphaltShare * 100).toFixed(0)}%.`,
-    },
-    {
-      label: "Spokojne odcinki",
-      score: quietScore,
-      detail: request.preferQuietRoutes
-        ? "Ocena na podstawie spełnienia preferencji spokojnych dróg."
-        : "Nie wymuszono spokojnych dróg — traktowane jako neutralne.",
-    },
-  ];
+  const overallScore = waypointsMode
+    ? clampScore(
+        pinsScore * 0.25 +
+          returnScore * 0.3 +
+          surfaceScore * 0.25 +
+          quietScore * 0.2,
+      )
+    : clampScore(
+        distanceScore * 0.35 +
+          returnScore * 0.35 +
+          surfaceScore * 0.15 +
+          quietScore * 0.15,
+      );
+
+  const metrics: RouteSummaryMetric[] = waypointsMode
+    ? [
+        {
+          label: "Przebieg przez punkty",
+          score: pinsScore,
+          detail: `Zaliczone punkty: ${pinCount}. Dystans wynikowy: ${actualKm.toFixed(1)} km (bez celu km).`,
+        },
+        {
+          label: "Różnorodność powrotu",
+          score: returnScore,
+          detail: `Nakładanie start/koniec ~${Math.round(mirrorM)} m.`,
+        },
+        {
+          label: request.avoidAsphalt
+            ? "Zgodność z unikaniem asfaltu"
+            : "Dobór nawierzchni",
+          score: surfaceScore,
+          detail: `Szacowany udział asfaltu: ${(asphaltShare * 100).toFixed(0)}%.`,
+        },
+        {
+          label: "Spokojne odcinki",
+          score: quietScore,
+          detail: request.preferQuietRoutes
+            ? "Ocena na podstawie spełnienia preferencji spokojnych dróg."
+            : "Nie wymuszono spokojnych dróg — traktowane jako neutralne.",
+        },
+      ]
+    : [
+        {
+          label: "Dopasowanie dystansu",
+          score: distanceScore,
+          detail: approachOn
+            ? `Pętla ~${requestedKm} km, wynik ${actualKm.toFixed(1)} km (bez dojazdu/powrotu).`
+            : `Plan ~${requestedKm} km, wynik ${actualKm.toFixed(1)} km.`,
+        },
+        {
+          label: "Różnorodność powrotu",
+          score: returnScore,
+          detail: approachOn
+            ? `Nakładanie w samej pętli ~${Math.round(mirrorM)} m (budżet ~${Math.round(mirrorBudget)} m). Dojazd i powrót do domu tą samą drogą są zamierzone.`
+            : `Nakładanie start/koniec ~${Math.round(mirrorM)} m (budżet ~${Math.round(mirrorBudget)} m).`,
+        },
+        {
+          label: request.avoidAsphalt
+            ? "Zgodność z unikaniem asfaltu"
+            : "Dobór nawierzchni",
+          score: surfaceScore,
+          detail: `Szacowany udział asfaltu: ${(asphaltShare * 100).toFixed(0)}%.`,
+        },
+        {
+          label: "Spokojne odcinki",
+          score: quietScore,
+          detail: request.preferQuietRoutes
+            ? "Ocena na podstawie spełnienia preferencji spokojnych dróg."
+            : "Nie wymuszono spokojnych dróg — traktowane jako neutralne.",
+        },
+      ];
 
   const notes = [
     `Ocena łączna: ${overallScore}%`,
@@ -225,11 +298,15 @@ function buildRouteSummaryDialogState(
   ];
 
   return {
-    title: "Podsumowanie wygenerowanej pętli",
+    title: waypointsMode
+      ? "Podsumowanie trasy przez punkty"
+      : "Podsumowanie wygenerowanej pętli",
     subtitle:
       route.generationQuality?.mode === "fallback"
         ? "To trasa kompromisowa — sprawdź mapę przed wyjazdem."
-        : "Szybka ocena jakości trasy na podstawie ustawień i geometrii.",
+        : waypointsMode
+          ? "Dystans wynika z pinezek — nie było celu w kilometrach."
+          : "Szybka ocena jakości trasy na podstawie ustawień i geometrii.",
     metrics,
     notes,
   };
@@ -499,7 +576,12 @@ export default function HomePage() {
         start: { lat: form.lat, lng: form.lng },
         bikeType: form.bikeType,
         planningMode: form.planningMode,
-        distanceKm: form.distanceKm,
+        distanceKm: waypointsMode
+          ? estimateWaypointsTourKm(
+              { lat: form.lat, lng: form.lng },
+              viaPoints,
+            )
+          : form.distanceKm,
         direction: waypointsMode
           ? directionFromBearing(
               bearingBetween(
