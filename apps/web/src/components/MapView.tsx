@@ -63,7 +63,7 @@ const SEGMENTS_SOURCE = "route-segments";
 const SEGMENTS_LAYER = "route-segments-line";
 const OMT_SOURCE = "openmaptiles";
 
-function poiCircleLayerId(category: PoiCategory): string {
+function poiIconLayerId(category: PoiCategory): string {
   return `lf-poi-${category}`;
 }
 
@@ -420,48 +420,59 @@ export function MapView({
       setPoiUnavailable(false);
 
       for (const category of POI_CATEGORIES) {
-        const circleId = poiCircleLayerId(category);
+        const iconId = poiIconLayerId(category);
         const labelId = poiLabelLayerId(category);
         const meta = POI_CATEGORY_META[category];
         const show = visible && active.has(category);
         const classFilter: maplibregl.FilterSpecification = [
-          "in",
-          ["get", "class"],
-          ["literal", meta.classes],
+          "any",
+          ["in", ["get", "class"], ["literal", meta.classes]],
+          ["in", ["get", "subclass"], ["literal", meta.classes]],
         ];
 
-        if (!map.getLayer(circleId)) {
+        // Drop legacy circle layer from earlier probe if still present.
+        if (map.getLayer(iconId) && map.getLayer(iconId)?.type === "circle") {
+          map.removeLayer(iconId);
+        }
+
+        if (!map.getLayer(iconId)) {
           map.addLayer({
-            id: circleId,
-            type: "circle",
+            id: iconId,
+            type: "symbol",
             source: OMT_SOURCE,
             "source-layer": "poi",
             minzoom: POI_MIN_ZOOM,
             filter: classFilter,
             layout: {
               visibility: show ? "visible" : "none",
-            },
-            paint: {
-              "circle-radius": [
+              "icon-image": [
+                "coalesce",
+                ["image", ["get", "subclass"]],
+                ["image", ["get", "class"]],
+                ["image", meta.fallbackIcon],
+              ],
+              "icon-size": [
                 "interpolate",
                 ["linear"],
                 ["zoom"],
                 7,
-                3.5,
-                11,
-                6,
-                15,
-                8,
+                0.7,
+                12,
+                1,
+                16,
+                1.15,
               ],
-              "circle-color": meta.color,
-              "circle-stroke-width": 1.5,
-              "circle-stroke-color": "#18181b",
-              "circle-opacity": 0.92,
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+              "icon-anchor": "center",
+            },
+            paint: {
+              "icon-opacity": 0.95,
             },
           });
         } else {
           map.setLayoutProperty(
-            circleId,
+            iconId,
             "visibility",
             show ? "visible" : "none",
           );
@@ -473,21 +484,22 @@ export function MapView({
             type: "symbol",
             source: OMT_SOURCE,
             "source-layer": "poi",
-            minzoom: 11,
+            minzoom: 12,
             filter: classFilter,
             layout: {
               visibility: show ? "visible" : "none",
               "text-field": ["coalesce", ["get", "name"], ["get", "class"]],
               "text-size": 11,
-              "text-offset": [0, 1.15],
+              "text-offset": [0, 1.35],
               "text-anchor": "top",
               "text-max-width": 10,
               "text-optional": true,
+              "text-allow-overlap": false,
             },
             paint: {
-              "text-color": "#fafafa",
-              "text-halo-color": "#18181b",
-              "text-halo-width": 1.2,
+              "text-color": "#18181b",
+              "text-halo-color": "#ffffff",
+              "text-halo-width": 1.4,
             },
           });
         } else {
@@ -498,7 +510,7 @@ export function MapView({
           );
         }
 
-        if (map.getLayer(circleId)) map.moveLayer(circleId);
+        if (map.getLayer(iconId)) map.moveLayer(iconId);
         if (map.getLayer(labelId)) map.moveLayer(labelId);
       }
     },
@@ -845,7 +857,7 @@ export function MapView({
     const map = mapRef.current;
     if (!map || !mapReady) return;
 
-    const layerIds = POI_CATEGORIES.map(poiCircleLayerId);
+    const layerIds = POI_CATEGORIES.map(poiIconLayerId);
 
     const onClick = (event: maplibregl.MapLayerMouseEvent) => {
       const feature = event.features?.[0];
@@ -853,8 +865,10 @@ export function MapView({
       event.originalEvent.stopPropagation();
 
       const props = feature.properties as Record<string, unknown>;
-      const poiClass = String(props.class ?? props.subclass ?? "");
-      const category = categoryForPoiClass(poiClass);
+      const poiClass = String(props.class ?? "");
+      const subclass = String(props.subclass ?? "");
+      const category =
+        categoryForPoiClass(poiClass) ?? categoryForPoiClass(subclass);
       if (!category) return;
 
       const geometry = feature.geometry as
@@ -863,13 +877,17 @@ export function MapView({
       const coords = geometry?.type === "Point" ? geometry.coordinates : null;
       const lng = coords?.[0] ?? event.lngLat.lng;
       const lat = coords?.[1] ?? event.lngLat.lat;
-      const name = String(props.name ?? props.name_en ?? (poiClass || "Punkt"));
+      const kind =
+        categoryForPoiClass(subclass) != null
+          ? subclass
+          : poiClass || subclass;
+      const name = String(props.name ?? props.name_en ?? (kind || "Punkt"));
 
       const selected: SelectedPoi = {
         id: `${category}:${lng.toFixed(5)},${lat.toFixed(5)}`,
         name,
         category,
-        kind: poiClass,
+        kind: kind,
         lat,
         lng,
       };

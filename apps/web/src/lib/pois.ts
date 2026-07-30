@@ -1,4 +1,11 @@
-export const POI_CATEGORIES = ["food", "fuel", "water", "toilets"] as const;
+export const POI_CATEGORIES = [
+  "food",
+  "fuel",
+  "water",
+  "toilets",
+  "bike",
+  "rest",
+] as const;
 
 export type PoiCategory = (typeof POI_CATEGORIES)[number];
 
@@ -19,8 +26,10 @@ export const POI_CATEGORY_META: Record<
   {
     label: string;
     color: string;
-    /** OpenMapTiles `poi.class` values */
+    /** OpenMapTiles `poi.class` / subclass values */
     classes: string[];
+    /** Fallback sprite icon id when class has no matching image */
+    fallbackIcon: string;
   }
 > = {
   food: {
@@ -34,21 +43,37 @@ export const POI_CATEGORY_META: Record<
       "biergarten",
       "food_court",
     ],
+    fallbackIcon: "restaurant",
   },
   fuel: {
     label: "Stacje",
     color: "#3b82f6",
     classes: ["fuel", "charging_station"],
+    fallbackIcon: "fuel",
   },
   water: {
     label: "Woda",
     color: "#06b6d4",
     classes: ["drinking_water", "water_point", "fountain"],
+    fallbackIcon: "drinking_water",
   },
   toilets: {
     label: "Toalety",
     color: "#a78bfa",
     classes: ["toilets"],
+    fallbackIcon: "toilets",
+  },
+  bike: {
+    label: "Rower",
+    color: "#22c55e",
+    classes: ["bicycle", "bicycle_rental", "bicycle_repair_station"],
+    fallbackIcon: "bicycle",
+  },
+  rest: {
+    label: "Odpoczynek",
+    color: "#eab308",
+    classes: ["picnic_site", "shelter", "viewpoint"],
+    fallbackIcon: "picnic_site",
   },
 };
 

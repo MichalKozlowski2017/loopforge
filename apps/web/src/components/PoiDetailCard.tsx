@@ -32,6 +32,13 @@ function kindLabel(kind: string): string {
     water_point: "Punkt wody",
     fountain: "Fontanna",
     toilets: "Toaleta",
+    bicycle: "Serwis / rower",
+    bicycle_rental: "Wypożyczalnia",
+    bicycle_repair_station: "Stacja naprawy",
+    picnic_site: "Miejsce piknikowe",
+    shelter: "Schronienie",
+    park: "Park",
+    viewpoint: "Punkt widokowy",
   };
   return map[kind] ?? kind;
 }
