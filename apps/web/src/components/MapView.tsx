@@ -15,8 +15,17 @@ import {
   POI_CATEGORIES,
   POI_CATEGORY_META,
   POI_MIN_ZOOM,
+  googleMapsSearchUri,
+  poiSearchRadiusM,
   type PoiCategory,
+  type PoiDetails,
+  type PoiFeatureCollection,
+  type PoiFeatureProperties,
 } from "@/lib/pois";
+import {
+  PoiDetailCard,
+  type SelectedPoi,
+} from "@/components/PoiDetailCard";
 import { RouteDrawReveal } from "@/components/RouteDrawReveal";
 
 export interface StartPoint {
@@ -54,32 +63,14 @@ const ROUTE_SOURCE = "route";
 const ROUTE_LAYER = "route-line";
 const SEGMENTS_SOURCE = "route-segments";
 const SEGMENTS_LAYER = "route-segments-line";
-const OMT_SOURCE = "openmaptiles";
+const POI_SOURCE = "loopforge-pois";
+const POI_CIRCLE_LAYER = "loopforge-pois-circle";
+const POI_LABEL_LAYER = "loopforge-pois-label";
 
-function poiCircleLayerId(category: PoiCategory): string {
-  return `lf-poi-${category}`;
-}
-
-function poiLabelLayerId(category: PoiCategory): string {
-  return `lf-poi-${category}-label`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function categoryForPoiClass(poiClass: string): PoiCategory | null {
-  for (const category of POI_CATEGORIES) {
-    if (POI_CATEGORY_META[category].classes.includes(poiClass)) {
-      return category;
-    }
-  }
-  return null;
-}
+const EMPTY_POIS: PoiFeatureCollection = {
+  type: "FeatureCollection",
+  features: [],
+};
 
 function normalizeCoords(coords: number[][]): [number, number][] {
   return coords
@@ -226,9 +217,14 @@ export function MapView({
   const [poiCategories, setPoiCategories] = useState<Set<PoiCategory>>(
     () => new Set(),
   );
-  const [poiUnavailable, setPoiUnavailable] = useState(false);
+  const [poiStatus, setPoiStatus] = useState<"idle" | "loading" | "error">(
+    "idle",
+  );
   const [poiZoomHint, setPoiZoomHint] = useState(false);
-  const poiPopupRef = useRef<maplibregl.Popup | null>(null);
+  const [selectedPoi, setSelectedPoi] = useState<SelectedPoi | null>(null);
+  const [poiDetails, setPoiDetails] = useState<PoiDetails | null>(null);
+  const [poiDetailsLoading, setPoiDetailsLoading] = useState(false);
+  const poiAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     onStartChangeRef.current = onStartChange;
@@ -417,101 +413,91 @@ export function MapView({
     return true;
   }, [clearRouteLayers]);
 
-  const syncPoiLayers = useCallback(
-    (map: maplibregl.Map, active: Set<PoiCategory>, visible: boolean) => {
-      if (!map.isStyleLoaded()) return;
+  const ensurePoiLayers = useCallback((map: maplibregl.Map) => {
+    if (!map.isStyleLoaded()) return;
 
-      if (!map.getSource(OMT_SOURCE)) {
-        setPoiUnavailable(true);
-        return;
-      }
-      setPoiUnavailable(false);
+    if (!map.getSource(POI_SOURCE)) {
+      map.addSource(POI_SOURCE, {
+        type: "geojson",
+        data: EMPTY_POIS,
+      });
+    }
 
-      for (const category of POI_CATEGORIES) {
-        const circleId = poiCircleLayerId(category);
-        const labelId = poiLabelLayerId(category);
-        const meta = POI_CATEGORY_META[category];
-        const show = visible && active.has(category);
-        const classFilter: maplibregl.FilterSpecification = [
-          "in",
-          ["get", "class"],
-          ["literal", meta.classes],
-        ];
+    if (!map.getLayer(POI_CIRCLE_LAYER)) {
+      map.addLayer({
+        id: POI_CIRCLE_LAYER,
+        type: "circle",
+        source: POI_SOURCE,
+        minzoom: POI_MIN_ZOOM,
+        paint: {
+          "circle-radius": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            7,
+            3.5,
+            11,
+            6,
+            15,
+            8,
+          ],
+          "circle-color": [
+            "match",
+            ["get", "category"],
+            "food",
+            POI_CATEGORY_META.food.color,
+            "fuel",
+            POI_CATEGORY_META.fuel.color,
+            "water",
+            POI_CATEGORY_META.water.color,
+            "toilets",
+            POI_CATEGORY_META.toilets.color,
+            "#a1a1aa",
+          ],
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#18181b",
+          "circle-opacity": 0.92,
+        },
+      });
+    }
 
-        if (!map.getLayer(circleId)) {
-          map.addLayer({
-            id: circleId,
-            type: "circle",
-            source: OMT_SOURCE,
-            "source-layer": "poi",
-            minzoom: POI_MIN_ZOOM,
-            filter: classFilter,
-            layout: {
-              visibility: show ? "visible" : "none",
-            },
-            paint: {
-              "circle-radius": [
-                "interpolate",
-                ["linear"],
-                ["zoom"],
-                8,
-                3,
-                12,
-                5,
-                16,
-                8,
-              ],
-              "circle-color": meta.color,
-              "circle-stroke-width": 1.5,
-              "circle-stroke-color": "#18181b",
-              "circle-opacity": 0.92,
-            },
-          });
-        } else {
-          map.setLayoutProperty(
-            circleId,
-            "visibility",
-            show ? "visible" : "none",
-          );
-        }
+    if (!map.getLayer(POI_LABEL_LAYER)) {
+      map.addLayer({
+        id: POI_LABEL_LAYER,
+        type: "symbol",
+        source: POI_SOURCE,
+        minzoom: 11,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-size": 11,
+          "text-offset": [0, 1.15],
+          "text-anchor": "top",
+          "text-max-width": 10,
+          "text-optional": true,
+        },
+        paint: {
+          "text-color": "#fafafa",
+          "text-halo-color": "#18181b",
+          "text-halo-width": 1.2,
+        },
+      });
+    }
 
-        if (!map.getLayer(labelId)) {
-          map.addLayer({
-            id: labelId,
-            type: "symbol",
-            source: OMT_SOURCE,
-            "source-layer": "poi",
-            minzoom: 10,
-            filter: classFilter,
-            layout: {
-              visibility: show ? "visible" : "none",
-              "text-field": ["coalesce", ["get", "name"], ["get", "class"]],
-              "text-size": 11,
-              "text-offset": [0, 1.15],
-              "text-anchor": "top",
-              "text-max-width": 10,
-              "text-optional": true,
-            },
-            paint: {
-              "text-color": "#fafafa",
-              "text-halo-color": "#18181b",
-              "text-halo-width": 1.2,
-            },
-          });
-        } else {
-          map.setLayoutProperty(
-            labelId,
-            "visibility",
-            show ? "visible" : "none",
-          );
-        }
+    if (map.getLayer(POI_CIRCLE_LAYER)) map.moveLayer(POI_CIRCLE_LAYER);
+    if (map.getLayer(POI_LABEL_LAYER)) map.moveLayer(POI_LABEL_LAYER);
+  }, []);
 
-        // Keep POIs above the route line.
-        if (map.getLayer(circleId)) map.moveLayer(circleId);
-        if (map.getLayer(labelId)) map.moveLayer(labelId);
-      }
+  const setPoiData = useCallback(
+    (data: PoiFeatureCollection) => {
+      const map = mapRef.current;
+      if (!map || !map.isStyleLoaded()) return;
+      ensurePoiLayers(map);
+      const source = map.getSource(POI_SOURCE) as
+        | maplibregl.GeoJSONSource
+        | undefined;
+      source?.setData(data);
     },
-    [],
+    [ensurePoiLayers],
   );
 
   const togglePoiCategory = useCallback((category: PoiCategory) => {
@@ -521,6 +507,12 @@ export function MapView({
       else next.add(category);
       return next;
     });
+  }, []);
+
+  const closePoiDetail = useCallback(() => {
+    setSelectedPoi(null);
+    setPoiDetails(null);
+    setPoiDetailsLoading(false);
   }, []);
 
   const scheduleRouteSync = useCallback(() => {
@@ -554,12 +546,6 @@ export function MapView({
       closeOnClick: false,
       className: "loopforge-popup",
     });
-    poiPopupRef.current = new maplibregl.Popup({
-      closeButton: false,
-      closeOnClick: true,
-      className: "loopforge-popup",
-      offset: 12,
-    });
 
     const onLoad = () => {
       const container = map.getContainer();
@@ -592,8 +578,7 @@ export function MapView({
       viaMarkerRefs.current = [];
       popupRef.current?.remove();
       popupRef.current = null;
-      poiPopupRef.current?.remove();
-      poiPopupRef.current = null;
+      poiAbortRef.current?.abort();
       map.remove();
       mapRef.current = null;
       setMapReady(false);
@@ -805,28 +790,75 @@ export function MapView({
     if (!map || !mapReady) return;
 
     const picking = pickStart || pickVia;
-    const show = !picking && !mapVeiled && poiCategories.size > 0;
+    if (picking || mapVeiled || poiCategories.size === 0) {
+      poiAbortRef.current?.abort();
+      setPoiData(EMPTY_POIS);
+      setPoiStatus("idle");
+      setPoiZoomHint(false);
+      closePoiDetail();
+      return;
+    }
 
-    const apply = () => {
-      syncPoiLayers(map, poiCategories, show);
-      if (show) {
-        setPoiZoomHint(map.getZoom() < POI_MIN_ZOOM);
-      } else {
-        setPoiZoomHint(false);
-        poiPopupRef.current?.remove();
+    ensurePoiLayers(map);
+
+    let debounceId: number | null = null;
+
+    const loadPois = () => {
+      const zoom = map.getZoom();
+      if (zoom < POI_MIN_ZOOM) {
+        setPoiZoomHint(true);
+        setPoiData(EMPTY_POIS);
+        setPoiStatus("idle");
+        return;
       }
+      setPoiZoomHint(false);
+
+      const center = map.getCenter();
+      const radiusM = poiSearchRadiusM(zoom);
+      const categories = [...poiCategories].join(",");
+
+      poiAbortRef.current?.abort();
+      const controller = new AbortController();
+      poiAbortRef.current = controller;
+      setPoiStatus("loading");
+
+      const url =
+        `/api/pois?lat=${center.lat.toFixed(5)}` +
+        `&lng=${center.lng.toFixed(5)}` +
+        `&radiusM=${Math.round(radiusM)}` +
+        `&categories=${categories}`;
+
+      void fetch(url, { signal: controller.signal })
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`POI HTTP ${res.status}`);
+          return (await res.json()) as PoiFeatureCollection;
+        })
+        .then((data) => {
+          if (controller.signal.aborted) return;
+          setPoiData(data);
+          setPoiStatus("idle");
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) return;
+          console.warn("[loopforge] POI load failed:", error);
+          setPoiStatus("error");
+        });
     };
 
-    apply();
-    const onZoom = () => {
-      if (show) setPoiZoomHint(map.getZoom() < POI_MIN_ZOOM);
+    const scheduleLoad = () => {
+      if (debounceId != null) window.clearTimeout(debounceId);
+      debounceId = window.setTimeout(loadPois, 500);
     };
-    map.on("zoom", onZoom);
-    map.on("zoomend", onZoom);
+
+    loadPois();
+    map.on("moveend", scheduleLoad);
+    map.on("zoomend", scheduleLoad);
 
     return () => {
-      map.off("zoom", onZoom);
-      map.off("zoomend", onZoom);
+      if (debounceId != null) window.clearTimeout(debounceId);
+      map.off("moveend", scheduleLoad);
+      map.off("zoomend", scheduleLoad);
+      poiAbortRef.current?.abort();
     };
   }, [
     mapReady,
@@ -834,47 +866,70 @@ export function MapView({
     pickStart,
     pickVia,
     mapVeiled,
-    syncPoiLayers,
-    route,
-    mapGeojson,
+    ensurePoiLayers,
+    setPoiData,
+    closePoiDetail,
   ]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
 
-    const layerIds = POI_CATEGORIES.map(poiCircleLayerId);
-
     const onClick = (event: maplibregl.MapLayerMouseEvent) => {
       const feature = event.features?.[0];
       if (!feature?.properties) return;
-      const props = feature.properties as Record<string, unknown>;
-      const poiClass = String(props.class ?? props.subclass ?? "");
-      const category = categoryForPoiClass(poiClass);
-      const name = escapeHtml(
-        String(props.name ?? props.name_en ?? (poiClass || "Punkt")),
-      );
-      const label = escapeHtml(
-        category ? POI_CATEGORY_META[category].label : poiClass || "POI",
-      );
+      event.originalEvent.stopPropagation();
+
+      const props = feature.properties as PoiFeatureProperties &
+        Record<string, unknown>;
       const geometry = feature.geometry as
         | { type: string; coordinates?: [number, number] }
         | undefined;
       const coords = geometry?.type === "Point" ? geometry.coordinates : null;
-      const lngLat =
-        coords && Number.isFinite(coords[0]) && Number.isFinite(coords[1])
-          ? coords
-          : ([event.lngLat.lng, event.lngLat.lat] as [number, number]);
+      const lng = coords?.[0] ?? event.lngLat.lng;
+      const lat = coords?.[1] ?? event.lngLat.lat;
+      const category = props.category as PoiCategory;
+      if (!POI_CATEGORIES.includes(category)) return;
 
-      poiPopupRef.current
-        ?.setLngLat(lngLat)
-        .setHTML(
-          `<div style="color:#fafafa;font:12px/1.4 system-ui,sans-serif">
-            <div style="font-weight:600">${name}</div>
-            <div style="color:#a1a1aa;margin-top:2px">${label}</div>
-          </div>`,
-        )
-        .addTo(map);
+      const selected: SelectedPoi = {
+        id: String(props.id),
+        name: String(props.name ?? "Punkt"),
+        category,
+        kind: String(props.kind ?? ""),
+        lat,
+        lng,
+        cuisine: props.cuisine ? String(props.cuisine) : undefined,
+        openingHours: props.openingHours
+          ? String(props.openingHours)
+          : undefined,
+        phone: props.phone ? String(props.phone) : undefined,
+        website: props.website ? String(props.website) : undefined,
+        brand: props.brand ? String(props.brand) : undefined,
+        wheelchair: props.wheelchair ? String(props.wheelchair) : undefined,
+      };
+
+      setSelectedPoi(selected);
+      setPoiDetails({
+        googleMapsUri: googleMapsSearchUri(selected.name, lat, lng),
+        source: "maps-link",
+      });
+      setPoiDetailsLoading(true);
+
+      void fetch(
+        `/api/pois/details?name=${encodeURIComponent(selected.name)}` +
+          `&lat=${lat.toFixed(5)}&lng=${lng.toFixed(5)}`,
+      )
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`details ${res.status}`);
+          return (await res.json()) as PoiDetails;
+        })
+        .then((details) => {
+          setPoiDetails(details);
+        })
+        .catch(() => {
+          /* keep maps-link fallback */
+        })
+        .finally(() => setPoiDetailsLoading(false));
     };
 
     const onEnter = () => {
@@ -885,20 +940,16 @@ export function MapView({
         pickStart || pickVia ? "crosshair" : "";
     };
 
-    for (const id of layerIds) {
-      map.on("click", id, onClick);
-      map.on("mouseenter", id, onEnter);
-      map.on("mouseleave", id, onLeave);
-    }
+    map.on("click", POI_CIRCLE_LAYER, onClick);
+    map.on("mouseenter", POI_CIRCLE_LAYER, onEnter);
+    map.on("mouseleave", POI_CIRCLE_LAYER, onLeave);
 
     return () => {
-      for (const id of layerIds) {
-        map.off("click", id, onClick);
-        map.off("mouseenter", id, onEnter);
-        map.off("mouseleave", id, onLeave);
-      }
+      map.off("click", POI_CIRCLE_LAYER, onClick);
+      map.off("mouseenter", POI_CIRCLE_LAYER, onEnter);
+      map.off("mouseleave", POI_CIRCLE_LAYER, onLeave);
     };
-  }, [mapReady, pickStart, pickVia, poiCategories]);
+  }, [mapReady, pickStart, pickVia]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -957,6 +1008,14 @@ export function MapView({
           onComplete={handleRevealComplete}
         />
       ) : null}
+      {!mapVeiled && selectedPoi ? (
+        <PoiDetailCard
+          poi={selectedPoi}
+          details={poiDetails}
+          detailsLoading={poiDetailsLoading}
+          onClose={closePoiDetail}
+        />
+      ) : null}
       {!mapVeiled ? (
         <div className="absolute bottom-3 left-3 z-10 flex max-w-[min(100%,18rem)] flex-col gap-1.5">
           <div className="flex flex-wrap gap-1.5 rounded-lg border border-zinc-700/80 bg-zinc-950/90 p-1.5 shadow-lg backdrop-blur-sm">
@@ -968,12 +1027,11 @@ export function MapView({
                   key={category}
                   type="button"
                   onClick={() => togglePoiCategory(category)}
-                  disabled={poiUnavailable}
                   className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${
                     active
                       ? "text-zinc-950"
                       : "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
-                  } disabled:cursor-not-allowed disabled:opacity-40`}
+                  }`}
                   style={active ? { backgroundColor: meta.color } : undefined}
                   aria-pressed={active}
                 >
@@ -982,15 +1040,15 @@ export function MapView({
               );
             })}
           </div>
-          {poiUnavailable ? (
-            <p className="rounded-md bg-zinc-950/80 px-2 py-1 text-[10px] text-zinc-400">
-              Punkty niedostępne (brak warstwy wektorowej).
-            </p>
-          ) : poiCategories.size > 0 ? (
+          {poiCategories.size > 0 ? (
             <p className="rounded-md bg-zinc-950/80 px-2 py-1 text-[10px] text-zinc-400">
               {poiZoomHint
                 ? `Przybliż mapę (zoom ≥ ${POI_MIN_ZOOM}), żeby zobaczyć punkty.`
-                : "Warstwa próbna · OpenStreetMap / OpenFreeMap"}
+                : poiStatus === "loading"
+                  ? "Ładuję punkty z OSM…"
+                  : poiStatus === "error"
+                    ? "Nie udało się pobrać punktów (Overpass)."
+                    : "OSM · kliknij punkt po szczegóły / oceny"}
             </p>
           ) : null}
         </div>
