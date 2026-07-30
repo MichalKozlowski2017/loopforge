@@ -23,7 +23,13 @@ import { FirstRunDialog, hasSeenFirstRun } from "@/components/FirstRunDialog";
 import { useGeolocation } from "@/lib/use-geolocation";
 import { consumeGenerationStream } from "@/lib/parse-generation-stream";
 import { downloadRouteGpx } from "@/lib/download-route-gpx";
-import { validateViaPointsForRoute } from "@loopforge/generator/via-validation";
+import {
+  bearingBetween,
+  directionFromBearing,
+  MAX_WAYPOINT_MODE_POINTS,
+  validateViaPointsForRoute,
+  validateWaypointsModePoints,
+} from "@loopforge/generator/via-validation";
 import { createClient } from "@/lib/supabase/client";
 import { isAuthRequired } from "@/lib/supabase/env";
 
@@ -247,6 +253,7 @@ function extractLoopEntry(route: StoredRoute | null): { lat: number; lng: number
 }
 
 const DEFAULT_FORM: RouteFormValues = {
+  planningMode: "loop",
   bikeType: "gravel",
   distanceKm: 45,
   direction: "NE",
@@ -277,6 +284,7 @@ export default function HomePage() {
   );
   const [showFirstRun, setShowFirstRun] = useState(false);
   const [pickOnMap, setPickOnMap] = useState(false);
+  const [pickViaOnMap, setPickViaOnMap] = useState(false);
   const mapSectionRef = useRef<HTMLElement>(null);
   const loopEntry = useMemo(() => extractLoopEntry(route), [route]);
   const [locationMode, setLocationMode] = useState<
@@ -327,6 +335,7 @@ export default function HomePage() {
 
         setRoute(data);
         setForm({
+          planningMode: data.planningMode ?? "loop",
           bikeType: data.bikeType,
           distanceKm: Math.round(
             data.metrics.loopDistanceKm ?? data.metrics.distanceKm,
@@ -362,15 +371,37 @@ export default function HomePage() {
     }));
     setLocationMode("manual");
     setPickOnMap(false);
+    setPickViaOnMap(false);
   }
 
   function handleFormChange(values: RouteFormValues) {
     setForm(values);
     setLocationMode("manual");
+    if (values.planningMode !== "waypoints") setPickViaOnMap(false);
+  }
+
+  function handleViaAdd(point: { lat: number; lng: number }) {
+    setForm((current) => {
+      const placed = current.viaPoints.filter(
+        (p) =>
+          Number.isFinite(p.lat) &&
+          Number.isFinite(p.lng) &&
+          !(Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001),
+      );
+      if (placed.length >= MAX_WAYPOINT_MODE_POINTS) return current;
+      return {
+        ...current,
+        viaPoints: [...placed, { lat: point.lat, lng: point.lng }],
+      };
+    });
+    setPickViaOnMap(false);
+    setPickOnMap(false);
+    setLocationMode("manual");
   }
 
   function handleUseMyLocation() {
     setPickOnMap(false);
+    setPickViaOnMap(false);
     setLocationMode("loading");
     refreshGeolocation();
   }
@@ -431,6 +462,7 @@ export default function HomePage() {
     setError(null);
     setSummaryDialog(null);
     setPickOnMap(false);
+    setPickViaOnMap(false);
     setRoute(null);
 
     const tick = window.setInterval(() => {
@@ -438,33 +470,61 @@ export default function HomePage() {
     }, 1000);
 
     try {
+      const viaPoints =
+        form.viaPoints.length > 0
+          ? form.viaPoints.filter(
+              (p) =>
+                Number.isFinite(p.lat) &&
+                Number.isFinite(p.lng) &&
+                !(Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001),
+            )
+          : [];
+
+      const waypointsMode = form.planningMode === "waypoints";
+
+      if (waypointsMode) {
+        const viaCheck = validateWaypointsModePoints(
+          { lat: form.lat, lng: form.lng },
+          viaPoints,
+        );
+        if (!viaCheck.ok) {
+          setError(viaCheck.message ?? "Nieprawidłowe punkty.");
+          window.clearInterval(tick);
+          setLoading(false);
+          return;
+        }
+      }
+
       const request = {
         start: { lat: form.lat, lng: form.lng },
         bikeType: form.bikeType,
+        planningMode: form.planningMode,
         distanceKm: form.distanceKm,
-        direction: form.direction,
+        direction: waypointsMode
+          ? directionFromBearing(
+              bearingBetween(
+                { lat: form.lat, lng: form.lng },
+                viaPoints[0]!,
+              ),
+            )
+          : form.direction,
         profile: form.profile,
         avoidAsphalt:
           form.bikeType === "gravel" || form.bikeType === "mtb"
             ? form.avoidAsphalt
             : undefined,
         preferQuietRoutes: form.preferQuietRoutes || undefined,
-        approachEnabled: form.approachEnabled || undefined,
-        approachDistanceKm: form.approachEnabled
-          ? form.approachDistanceKm
-          : undefined,
-        viaPoints:
-          form.viaPoints.length > 0
-            ? form.viaPoints.filter(
-                (p) =>
-                  Number.isFinite(p.lat) &&
-                  Number.isFinite(p.lng) &&
-                  !(Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001),
-              )
+        approachEnabled: waypointsMode
+          ? undefined
+          : form.approachEnabled || undefined,
+        approachDistanceKm:
+          !waypointsMode && form.approachEnabled
+            ? form.approachDistanceKm
             : undefined,
+        viaPoints: viaPoints.length > 0 ? viaPoints : undefined,
       };
 
-      if (request.viaPoints?.length) {
+      if (!waypointsMode && request.viaPoints?.length) {
         const viaCheck = validateViaPointsForRoute(
           {
             start: request.start,
@@ -477,6 +537,8 @@ export default function HomePage() {
         );
         if (!viaCheck.ok) {
           setError(viaCheck.message ?? "Nieprawidłowe punkty przejazdu.");
+          window.clearInterval(tick);
+          setLoading(false);
           return;
         }
       }
@@ -547,8 +609,22 @@ export default function HomePage() {
           start={{ lat: form.lat, lng: form.lng }}
           route={route?.geojson ?? null}
           mapGeojson={route?.mapGeojson ?? null}
-          pickStart={pickOnMap && !loading && !overlayExiting && !routeRevealActive}
+          pickStart={
+            pickOnMap &&
+            !pickViaOnMap &&
+            !loading &&
+            !overlayExiting &&
+            !routeRevealActive
+          }
+          pickVia={
+            pickViaOnMap &&
+            !pickOnMap &&
+            !loading &&
+            !overlayExiting &&
+            !routeRevealActive
+          }
           onStartChange={handleStartChange}
+          onViaAdd={handleViaAdd}
           loopEntry={loopEntry}
           approachEnabled={Boolean(route?.approachEnabled ?? form.approachEnabled)}
           approachDistanceKm={route?.metrics.approachDistanceKm ?? null}
@@ -582,8 +658,9 @@ export default function HomePage() {
       <aside className="scrollbar-hidden order-2 w-full border-b border-amber-950/30 p-4 lg:order-1 lg:h-full lg:min-h-0 lg:w-96 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-6">
         <div className="mb-6">
           <p className="text-sm text-zinc-400">
-            Ustaw punkt startu (GPS, wyszukiwarka lub mapa), wybierz dystans i
-            kierunek — generowanie zwykle trwa 1–2 minuty i wymaga konta.
+            {form.planningMode === "waypoints"
+              ? "Ustaw start, dodaj punkty na mapie — generator złoży pętlę przez nie. Zwykle 1–2 minuty, wymaga konta."
+              : "Ustaw punkt startu (GPS, wyszukiwarka lub mapa), wybierz dystans i kierunek — generowanie zwykle trwa 1–2 minuty i wymaga konta."}
           </p>
         </div>
 
@@ -591,11 +668,19 @@ export default function HomePage() {
           values={form}
           loading={loading}
           pickOnMap={pickOnMap}
+          pickViaOnMap={pickViaOnMap}
           locationStatus={locationMode}
           onChange={handleFormChange}
           onSubmit={handleGenerate}
           onUseMyLocation={handleUseMyLocation}
-          onTogglePickOnMap={() => setPickOnMap((active) => !active)}
+          onTogglePickOnMap={() => {
+            setPickViaOnMap(false);
+            setPickOnMap((active) => !active);
+          }}
+          onTogglePickViaOnMap={() => {
+            setPickOnMap(false);
+            setPickViaOnMap((active) => !active);
+          }}
         />
 
         {error ? (

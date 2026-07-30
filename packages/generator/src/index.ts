@@ -24,7 +24,12 @@ import {
 import { buildGpx, densifyTrackForNavigation, GPX_NAV_MAX_EDGE_M } from "@loopforge/gpx";
 import { scoreRoute } from "@loopforge/scoring";
 import { buildLoopWaypointsWithVia } from "./via-points";
-import { validateViaPointsForRoute } from "./via-validation";
+import {
+  directionFromBearing,
+  bearingBetween,
+  validateViaPointsForRoute,
+  validateWaypointsModePoints,
+} from "./via-validation";
 import {
   createGenerationJitter,
   isGoodLoopQuality,
@@ -3615,6 +3620,139 @@ async function generateRouteWithApproach(
   );
 }
 
+async function generateWaypointsLoop(
+  request: GenerateRouteRequest,
+  options?: GenerateRouteOptions,
+): Promise<GeneratedRoute> {
+  const vias = (request.viaPoints ?? []).filter(
+    (p) =>
+      Number.isFinite(p.lat) &&
+      Number.isFinite(p.lng) &&
+      !(Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001),
+  );
+  const check = validateWaypointsModePoints(request.start, vias);
+  if (!check.ok) {
+    throw new Error(check.message ?? "Nieprawidłowe punkty trasy.");
+  }
+
+  const direction =
+    request.direction ??
+    directionFromBearing(bearingBetween(request.start, vias[0]!));
+
+  reportProgress(options?.onProgress, {
+    phase: "planning",
+    message: "Planuję trasę przez punkty",
+    detail: `${vias.length} punktów · start → … → start`,
+    progress: 8,
+  });
+
+  type FetchFn = (params: {
+    start: LatLng;
+    bikeType: GenerateRouteRequest["bikeType"];
+    waypoints: LatLng[];
+    rideProfile?: GenerateRouteRequest["profile"];
+    avoidAsphalt?: boolean;
+    preferQuietRoutes?: boolean;
+    urbanRouting?: boolean;
+    skipGpx: boolean;
+  }) => Promise<RoutedLoopResult>;
+
+  let fetchRoute: FetchFn | null = null;
+  const preference = routingEnginePreference();
+
+  if (preference !== "brouter") {
+    const pgReady = await isRoutingReady();
+    if (pgReady) {
+      fetchRoute = async (params) => {
+        const routed = await fetchPgRoute(params);
+        return {
+          coordinates: routed.coordinates,
+          distanceKm: routed.distanceKm,
+          elevationGainM: routed.elevationGainM,
+          segments: routed.segments,
+          mapGeojson: routed.mapGeojson,
+          gpx: routed.gpx,
+        };
+      };
+    } else if (preference === "pgrouting") {
+      throw new Error(
+        "pgRouting is not ready — run supabase db push and pnpm import:osm",
+      );
+    }
+  }
+
+  if (!fetchRoute) {
+    const brouterConfig = getBrouterConfig();
+    if (!brouterConfig) {
+      throw new Error(
+        "Brak silnika routingu (BRouter) — nie można wygenerować trasy przez punkty.",
+      );
+    }
+    fetchRoute = async (params) => {
+      const routed = await fetchBrouterRoute(brouterConfig, params);
+      return {
+        coordinates: routed.coordinates,
+        distanceKm: routed.distanceKm,
+        elevationGainM: routed.elevationGainM,
+        segments: routed.segments,
+        mapGeojson: routed.mapGeojson ?? undefined,
+        gpx: routed.gpx,
+        brouterMessages: routed.brouterMessages,
+      };
+    };
+  }
+
+  reportProgress(options?.onProgress, {
+    phase: "routing",
+    message: "Liczą się odcinki między punktami",
+    detail: "Jedno żądanie do silnika routingu",
+    progress: 35,
+  });
+
+  const routed = await fetchLoopRouteResilient(fetchRoute, {
+    start: request.start,
+    bikeType: request.bikeType,
+    waypoints: vias.map((p) => ({ lat: p.lat, lng: p.lng })),
+    rideProfile: request.profile,
+    avoidAsphalt: request.avoidAsphalt,
+    preferQuietRoutes: request.preferQuietRoutes,
+    skipGpx: false,
+  });
+
+  reportProgress(options?.onProgress, {
+    phase: "scoring",
+    message: "Składam pętlę",
+    detail: `~${routed.distanceKm.toFixed(1)} km`,
+    progress: 78,
+  });
+
+  const normalizedRequest: GenerateRouteRequest = {
+    ...request,
+    direction,
+    distanceKm: Math.max(request.distanceKm || routed.distanceKm, routed.distanceKm),
+    planningMode: "waypoints",
+    viaPoints: vias,
+    approachEnabled: false,
+  };
+
+  return buildGeneratedRoute(normalizedRequest, routed.coordinates, {
+    placeholder: false,
+    elevationGainM: routed.elevationGainM,
+    segments: routed.segments,
+    mapGeojson: routed.mapGeojson,
+    brouterMessages: routed.brouterMessages,
+    gpx: routed.gpx,
+    skipMirrorGate: true,
+    generationQuality: {
+      mode: "normal",
+      warnings: [
+        "Tryb przez punkty — dystans i przebieg wynikają z wybranych miejsc.",
+      ],
+      actualDistanceKm: routed.distanceKm,
+    },
+  });
+}
+
 async function generateLoopRoute(
   request: GenerateRouteRequest,
   options?: GenerateRouteOptions,
@@ -3702,9 +3840,13 @@ export {
 } from "./urban-context";
 export {
   MAX_VIA_POINTS,
+  MAX_WAYPOINT_MODE_POINTS,
   estimateLoopAnchor,
   validateViaPointForRoute,
   validateViaPointsForRoute,
+  validateWaypointsModePoints,
+  directionFromBearing,
+  bearingBetween,
 } from "./via-validation";
 export type {
   ViaPointRouteContext,
@@ -3771,6 +3913,22 @@ export async function generateRoute(
   request: GenerateRouteRequest,
   options?: GenerateRouteOptions,
 ): Promise<GeneratedRoute> {
+  if (request.planningMode === "waypoints") {
+    const absoluteDeadlineMs =
+      options?.absoluteDeadlineMs ?? Date.now() + ABSOLUTE_GENERATION_WALL_MS;
+    const scopedOptions: GenerateRouteOptions = {
+      ...options,
+      absoluteDeadlineMs,
+    };
+    const generated = await generateWaypointsLoop(request, scopedOptions);
+    return polishGeneratedRouteGeometry(
+      request,
+      generated,
+      options?.onProgress,
+      absoluteDeadlineMs,
+    );
+  }
+
   if (request.viaPoints?.length) {
     const validation = validateViaPointsForRoute(
       {

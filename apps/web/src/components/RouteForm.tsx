@@ -1,12 +1,20 @@
 "use client";
 
-import type { BikeType, Direction, RideProfile, RouteViaPoint } from "@loopforge/osm-types";
+import type {
+  BikeType,
+  Direction,
+  PlanningMode,
+  RideProfile,
+  RouteViaPoint,
+} from "@loopforge/osm-types";
 import { getRideProfileOptions } from "@loopforge/osm-types";
+import { MAX_WAYPOINT_MODE_POINTS } from "@loopforge/generator/via-validation";
 import { DirectionCompass } from "@/components/DirectionCompass";
 import { LocationSearch } from "@/components/LocationSearch";
 import { ViaPointsEditor } from "@/components/ViaPointsEditor";
 
 export interface RouteFormValues {
+  planningMode: PlanningMode;
   bikeType: BikeType;
   distanceKm: number;
   direction: Direction;
@@ -24,11 +32,13 @@ interface RouteFormProps {
   values: RouteFormValues;
   loading: boolean;
   pickOnMap: boolean;
+  pickViaOnMap: boolean;
   locationStatus: "loading" | "ready" | "denied" | "unavailable" | "manual";
   onChange: (values: RouteFormValues) => void;
   onSubmit: () => void;
   onUseMyLocation: () => void;
   onTogglePickOnMap: () => void;
+  onTogglePickViaOnMap: () => void;
 }
 
 const BIKE_TYPES: { value: BikeType; label: string }[] = [
@@ -45,14 +55,23 @@ export function RouteForm({
   values,
   loading,
   pickOnMap,
+  pickViaOnMap,
   locationStatus,
   onChange,
   onSubmit,
   onUseMyLocation,
   onTogglePickOnMap,
+  onTogglePickViaOnMap,
 }: RouteFormProps) {
   const profiles = getRideProfileOptions(values.bikeType);
   const selectedProfile = profiles.find((profile) => profile.value === values.profile);
+  const waypointsMode = values.planningMode === "waypoints";
+  const viaCount = values.viaPoints.filter(
+    (p) =>
+      Number.isFinite(p.lat) &&
+      Number.isFinite(p.lng) &&
+      !(Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001),
+  ).length;
 
   return (
     <form
@@ -62,6 +81,49 @@ export function RouteForm({
         onSubmit();
       }}
     >
+      <div>
+        <label className="mb-2 block text-sm font-medium text-zinc-300">
+          Tryb generowania
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          {(
+            [
+              { value: "loop" as const, label: "Pętla", hint: "km + kierunek" },
+              {
+                value: "waypoints" as const,
+                label: "Przez punkty",
+                hint: "zalicz pinezki",
+              },
+            ] as const
+          ).map((mode) => (
+            <button
+              key={mode.value}
+              type="button"
+              title={mode.hint}
+              onClick={() =>
+                onChange({
+                  ...values,
+                  planningMode: mode.value,
+                  approachEnabled:
+                    mode.value === "waypoints" ? false : values.approachEnabled,
+                  viaPoints: mode.value !== values.planningMode ? [] : values.viaPoints,
+                })
+              }
+              className={`rounded-lg border px-3 py-2 text-left text-sm transition ${
+                values.planningMode === mode.value
+                  ? "border-amber-500 bg-amber-500/10 text-amber-300"
+                  : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-amber-700/40"
+              }`}
+            >
+              <span className="block font-medium">{mode.label}</span>
+              <span className="mt-0.5 block text-[11px] text-zinc-500">
+                {mode.hint}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div>
         <label className="mb-2 block text-sm font-medium text-zinc-300">
           Tryb jazdy
@@ -152,27 +214,29 @@ export function RouteForm({
         </span>
       </label>
 
-      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3 transition hover:border-amber-800/45">
-        <input
-          type="checkbox"
-          checked={values.approachEnabled}
-          onChange={(event) =>
-            onChange({ ...values, approachEnabled: event.target.checked })
-          }
-          className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-amber-600 focus:ring-amber-500"
-        />
-        <span>
-          <span className="block text-sm font-medium text-zinc-200">
-            Dojazd do pętli
+      {!waypointsMode ? (
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3 transition hover:border-amber-800/45">
+          <input
+            type="checkbox"
+            checked={values.approachEnabled}
+            onChange={(event) =>
+              onChange({ ...values, approachEnabled: event.target.checked })
+            }
+            className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-amber-600 focus:ring-amber-500"
+          />
+          <span>
+            <span className="block text-sm font-medium text-zinc-200">
+              Dojazd do pętli
+            </span>
+            <span className="mt-0.5 block text-xs text-zinc-500">
+              Najszybsza trasa z domu do startu pętli. Dystans poniżej dotyczy
+              samej pętli — dojazd i powrót liczą się osobno.
+            </span>
           </span>
-          <span className="mt-0.5 block text-xs text-zinc-500">
-            Najszybsza trasa z domu do startu pętli. Dystans poniżej dotyczy
-            samej pętli — dojazd i powrót liczą się osobno.
-          </span>
-        </span>
-      </label>
+        </label>
+      ) : null}
 
-      {values.approachEnabled ? (
+      {!waypointsMode && values.approachEnabled ? (
         <div>
           <label
             htmlFor="approachDistance"
@@ -308,79 +372,146 @@ export function RouteForm({
         </details>
 
         <p className="mt-2 text-[11px] text-zinc-500">
-          Zielony — dom. Pomarańczowy — start pętli. Fioletowy z numerem —
-          przejazd przez. Przy dojeździe GPX kończy się z powrotem w domu (dojazd
-          + pętla + powrót).
+          {waypointsMode
+            ? "Zielony — start. Fioletowy z numerem — punkty do zaliczenia (kolejność jazdy)."
+            : "Zielony — dom. Pomarańczowy — start pętli. Fioletowy z numerem — przejazd przez. Przy dojeździe GPX kończy się z powrotem w domu (dojazd + pętla + powrót)."}
         </p>
       </div>
 
-      <div>
-        <label
-          htmlFor="distance"
-          className="mb-2 block text-sm font-medium text-zinc-300"
-        >
-          {values.approachEnabled ? "Dystans pętli (km)" : "Dystans (km)"}
-        </label>
-        <input
-          id="distance"
-          type="number"
-          min={10}
-          max={200}
-          step={1}
-          value={values.distanceKm}
-          onChange={(event) =>
-            onChange({ ...values, distanceKm: Number(event.target.value) })
-          }
-          className="mb-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
-        />
-        <div className="flex flex-wrap gap-1.5">
-          {DISTANCE_PRESETS.map((km) => (
-            <button
-              key={km}
-              type="button"
-              onClick={() => onChange({ ...values, distanceKm: km })}
-              className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
-                values.distanceKm === km
-                  ? "border-amber-500/70 bg-amber-500/10 text-amber-300"
-                  : "border-zinc-700 text-zinc-400 hover:border-amber-700/40 hover:text-amber-200"
-              }`}
-            >
-              {km} km
-            </button>
-          ))}
+      {waypointsMode ? (
+        <div className="space-y-3 rounded-lg border border-violet-500/25 bg-zinc-900/60 p-3">
+          <div>
+            <p className="text-sm font-medium text-zinc-200">
+              Punkty do zaliczenia ({viaCount}/{MAX_WAYPOINT_MODE_POINTS})
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Kliknij mapę, aby dodać pinezki. Generator złoży pętlę: start →
+              punkty → start. Dystans wynika z trasy.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onTogglePickViaOnMap}
+            disabled={viaCount >= MAX_WAYPOINT_MODE_POINTS}
+            className={`w-full rounded-lg border px-3 py-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              pickViaOnMap
+                ? "border-violet-400 bg-violet-500/15 text-violet-200"
+                : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-violet-500/40"
+            }`}
+          >
+            {pickViaOnMap
+              ? "Kliknij mapę…"
+              : viaCount >= MAX_WAYPOINT_MODE_POINTS
+                ? "Limit punktów"
+                : "Dodaj punkt na mapie"}
+          </button>
+          {viaCount === 0 ? (
+            <p className="text-xs text-zinc-500">Brak punktów — dodaj przynajmniej jeden.</p>
+          ) : (
+            <ul className="space-y-2">
+              {values.viaPoints.map((point, index) => (
+                <li
+                  key={`${point.lat}-${point.lng}-${index}`}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 px-3 py-2 text-sm"
+                >
+                  <span className="text-zinc-300">
+                    <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold text-white">
+                      {index + 1}
+                    </span>
+                    {point.lat.toFixed(4)}, {point.lng.toFixed(4)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onChange({
+                        ...values,
+                        viaPoints: values.viaPoints.filter((_, i) => i !== index),
+                      })
+                    }
+                    className="text-xs text-zinc-500 hover:text-red-300"
+                  >
+                    Usuń
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-        {values.approachEnabled ? (
-          <p className="mt-2 text-xs text-zinc-500">
-            Szacowany cały wyjazd (dojazd + pętla + powrót): ok.{" "}
-            {values.approachDistanceKm * 2 + values.distanceKm} km — odcinek
-            pętli w terenie może wyjść krótszy niż cel.
-          </p>
-        ) : null}
-      </div>
+      ) : (
+        <>
+          <div>
+            <label
+              htmlFor="distance"
+              className="mb-2 block text-sm font-medium text-zinc-300"
+            >
+              {values.approachEnabled ? "Dystans pętli (km)" : "Dystans (km)"}
+            </label>
+            <input
+              id="distance"
+              type="number"
+              min={10}
+              max={200}
+              step={1}
+              value={values.distanceKm}
+              onChange={(event) =>
+                onChange({ ...values, distanceKm: Number(event.target.value) })
+              }
+              className="mb-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {DISTANCE_PRESETS.map((km) => (
+                <button
+                  key={km}
+                  type="button"
+                  onClick={() => onChange({ ...values, distanceKm: km })}
+                  className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
+                    values.distanceKm === km
+                      ? "border-amber-500/70 bg-amber-500/10 text-amber-300"
+                      : "border-zinc-700 text-zinc-400 hover:border-amber-700/40 hover:text-amber-200"
+                  }`}
+                >
+                  {km} km
+                </button>
+              ))}
+            </div>
+            {values.approachEnabled ? (
+              <p className="mt-2 text-xs text-zinc-500">
+                Szacowany cały wyjazd (dojazd + pętla + powrót): ok.{" "}
+                {values.approachDistanceKm * 2 + values.distanceKm} km — odcinek
+                pętli w terenie może wyjść krótszy niż cel.
+              </p>
+            ) : null}
+          </div>
 
-      <DirectionCompass
-        value={values.direction}
-        onChange={(direction) => onChange({ ...values, direction })}
-      />
+          <DirectionCompass
+            value={values.direction}
+            onChange={(direction) => onChange({ ...values, direction })}
+          />
 
-      <ViaPointsEditor
-        viaPoints={values.viaPoints}
-        routeRequest={{
-          start: { lat: values.lat, lng: values.lng },
-          direction: values.direction,
-          distanceKm: values.distanceKm,
-          approachEnabled: values.approachEnabled,
-          approachDistanceKm: values.approachDistanceKm,
-        }}
-        onChange={(viaPoints) => onChange({ ...values, viaPoints })}
-      />
+          <ViaPointsEditor
+            viaPoints={values.viaPoints}
+            routeRequest={{
+              start: { lat: values.lat, lng: values.lng },
+              direction: values.direction,
+              distanceKm: values.distanceKm,
+              approachEnabled: values.approachEnabled,
+              approachDistanceKm: values.approachDistanceKm,
+            }}
+            onChange={(viaPoints) => onChange({ ...values, viaPoints })}
+          />
+        </>
+      )}
 
       <button
         type="submit"
         disabled={loading}
         className="w-full rounded-lg bg-linear-to-r from-amber-700 via-orange-600 to-amber-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-orange-950/25 transition hover:from-amber-600 hover:via-orange-500 hover:to-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {loading ? "Generuję…" : "Generuj pętlę"}
+        {loading
+          ? "Generuję…"
+          : waypointsMode
+            ? "Generuj przez punkty"
+            : "Generuj pętlę"}
       </button>
     </form>
   );

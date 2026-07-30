@@ -1,4 +1,10 @@
-import { generateRoute, validateViaPointsForRoute } from "@loopforge/generator";
+import {
+  bearingBetween,
+  directionFromBearing,
+  generateRoute,
+  validateViaPointsForRoute,
+  validateWaypointsModePoints,
+} from "@loopforge/generator";
 import type {
   GenerateRouteRequest,
   RouteGenerationStreamEvent,
@@ -10,6 +16,15 @@ import { logGenerationEvent } from "@/lib/admin/generation-log";
 
 function sseChunk(event: RouteGenerationStreamEvent): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+function filterViaPoints(body: GenerateRouteRequest) {
+  return body.viaPoints?.filter(
+    (p) =>
+      Number.isFinite(p.lat) &&
+      Number.isFinite(p.lng) &&
+      !(Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001),
+  );
 }
 
 export async function POST(request: Request) {
@@ -29,9 +44,7 @@ export async function POST(request: Request) {
     !body.start ||
     typeof body.start.lat !== "number" ||
     typeof body.start.lng !== "number" ||
-    !body.bikeType ||
-    !body.direction ||
-    typeof body.distanceKm !== "number"
+    !body.bikeType
   ) {
     return Response.json(
       { error: "Nieprawidłowe parametry żądania" },
@@ -39,33 +52,64 @@ export async function POST(request: Request) {
     );
   }
 
-  const viaPoints = body.viaPoints?.filter(
-    (p) =>
-      Number.isFinite(p.lat) &&
-      Number.isFinite(p.lng) &&
-      !(Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001),
-  );
-  const routeInput: GenerateRouteRequest = {
-    ...body,
-    viaPoints: viaPoints?.length ? viaPoints : undefined,
-  };
+  const viaPoints = filterViaPoints(body);
+  const waypointsMode = body.planningMode === "waypoints";
 
-  if (routeInput.viaPoints?.length) {
-    const viaCheck = validateViaPointsForRoute(
-      {
-        start: routeInput.start,
-        direction: routeInput.direction,
-        distanceKm: routeInput.distanceKm,
-        approachEnabled: routeInput.approachEnabled,
-        approachDistanceKm: routeInput.approachDistanceKm,
-      },
-      routeInput.viaPoints,
-    );
+  let routeInput: GenerateRouteRequest;
+
+  if (waypointsMode) {
+    const viaCheck = validateWaypointsModePoints(body.start, viaPoints ?? []);
     if (!viaCheck.ok) {
       return Response.json(
-        { error: viaCheck.message ?? "Nieprawidłowe punkty przejazdu." },
+        { error: viaCheck.message ?? "Nieprawidłowe punkty." },
         { status: 400 },
       );
+    }
+    const first = viaPoints![0]!;
+    routeInput = {
+      ...body,
+      planningMode: "waypoints",
+      direction:
+        body.direction ??
+        directionFromBearing(bearingBetween(body.start, first)),
+      distanceKm:
+        typeof body.distanceKm === "number" && body.distanceKm > 0
+          ? body.distanceKm
+          : 40,
+      viaPoints,
+      approachEnabled: false,
+      approachDistanceKm: undefined,
+    };
+  } else {
+    if (!body.direction || typeof body.distanceKm !== "number") {
+      return Response.json(
+        { error: "Nieprawidłowe parametry żądania" },
+        { status: 400 },
+      );
+    }
+    routeInput = {
+      ...body,
+      planningMode: body.planningMode ?? "loop",
+      viaPoints: viaPoints?.length ? viaPoints : undefined,
+    };
+
+    if (routeInput.viaPoints?.length) {
+      const viaCheck = validateViaPointsForRoute(
+        {
+          start: routeInput.start,
+          direction: routeInput.direction,
+          distanceKm: routeInput.distanceKm,
+          approachEnabled: routeInput.approachEnabled,
+          approachDistanceKm: routeInput.approachDistanceKm,
+        },
+        routeInput.viaPoints,
+      );
+      if (!viaCheck.ok) {
+        return Response.json(
+          { error: viaCheck.message ?? "Nieprawidłowe punkty przejazdu." },
+          { status: 400 },
+        );
+      }
     }
   }
 
@@ -97,6 +141,7 @@ export async function POST(request: Request) {
           bikeType: routeInput.bikeType,
           direction: routeInput.direction,
           profile: routeInput.profile,
+          planningMode: routeInput.planningMode,
           avoidAsphalt: routeInput.avoidAsphalt,
           preferQuietRoutes: routeInput.preferQuietRoutes,
           approachEnabled: routeInput.approachEnabled,
@@ -131,6 +176,7 @@ export async function POST(request: Request) {
             distanceKm: routeInput.distanceKm,
             direction: routeInput.direction,
             profile: routeInput.profile,
+            planningMode: routeInput.planningMode,
           },
         });
         const message =

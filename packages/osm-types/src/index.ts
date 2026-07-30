@@ -12,6 +12,9 @@ export type Direction =
 
 export type RideProfile = "flow" | "technical" | "fast";
 
+/** How the loop is planned: classic distance+direction, or must-pass pins. */
+export type PlanningMode = "loop" | "waypoints";
+
 export {
   RIDE_PROFILE_OPTIONS,
   getRideProfileHint,
@@ -65,6 +68,8 @@ export interface GenerateRouteRequest {
   bikeType: BikeType;
   distanceKm: number;
   direction: Direction;
+  /** Default `loop`. `waypoints` = closed route through user pins (viaPoints). */
+  planningMode?: PlanningMode;
   profile?: RideProfile;
   /** Penalize paved surfaces (gravel / MTB). Not a hard ban — asphalt when no alternative. */
   avoidAsphalt?: boolean;
@@ -74,7 +79,11 @@ export interface GenerateRouteRequest {
   approachEnabled?: boolean;
   /** Target approach distance in km (air-line anchor along direction). */
   approachDistanceKm?: number;
-  /** Must-pass places on the loop (max 3), validated against loop zone. */
+  /**
+   * Must-pass places on the loop.
+   * Loop mode: optional (max 3), validated against distance/direction zone.
+   * Waypoints mode: required (1–5), order is ride order.
+   */
   viaPoints?: RouteViaPoint[];
 }
 
@@ -165,6 +174,7 @@ export interface StoredRoute extends GeneratedRoute {
   direction: Direction;
   start: LatLng;
   profile?: RideProfile;
+  planningMode?: PlanningMode;
   avoidAsphalt?: boolean;
   preferQuietRoutes?: boolean;
   approachEnabled?: boolean;

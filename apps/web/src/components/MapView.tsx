@@ -33,7 +33,10 @@ interface MapViewProps {
   approachDistanceKm?: number | null;
   returnApproachDistanceKm?: number | null;
   pickStart?: boolean;
+  /** When true, map clicks append a via/waypoint pin (not start). */
+  pickVia?: boolean;
   onStartChange?: (start: StartPoint) => void;
+  onViaAdd?: (point: StartPoint) => void;
   /** Hide the map under a dark veil and suppress route layers (during loading/reveal). */
   mapVeiled?: boolean;
   /** When true, the route is drawn over a dark mask before the map is unveiled. */
@@ -145,7 +148,9 @@ export function MapView({
   approachDistanceKm = null,
   returnApproachDistanceKm = null,
   pickStart = false,
+  pickVia = false,
   onStartChange,
+  onViaAdd,
   mapVeiled = false,
   routeRevealActive = false,
   onRouteRevealComplete,
@@ -157,6 +162,7 @@ export function MapView({
   const loopEntryMarkerRef = useRef<maplibregl.Marker | null>(null);
   const viaMarkerRefs = useRef<maplibregl.Marker[]>([]);
   const onStartChangeRef = useRef(onStartChange);
+  const onViaAddRef = useRef(onViaAdd);
   const routeHandlersRef = useRef<{
     enter?: () => void;
     leave?: () => void;
@@ -189,6 +195,10 @@ export function MapView({
   useEffect(() => {
     onStartChangeRef.current = onStartChange;
   }, [onStartChange]);
+
+  useEffect(() => {
+    onViaAddRef.current = onViaAdd;
+  }, [onViaAdd]);
   const distanceHints = useMemo(
     () => ({
       approachDistanceKm,
@@ -642,13 +652,19 @@ export function MapView({
     const map = mapRef.current;
     if (!map || !mapReady) return;
 
+    const picking = pickStart || pickVia;
     const canvas = map.getCanvas();
-    canvas.style.cursor = pickStart ? "crosshair" : "";
+    canvas.style.cursor = picking ? "crosshair" : "";
 
     const handleClick = (event: maplibregl.MapMouseEvent) => {
-      if (!pickStart) return;
       const { lat, lng } = event.lngLat;
-      onStartChangeRef.current?.({ lat, lng });
+      if (pickVia) {
+        onViaAddRef.current?.({ lat, lng });
+        return;
+      }
+      if (pickStart) {
+        onStartChangeRef.current?.({ lat, lng });
+      }
     };
 
     map.on("click", handleClick);
@@ -656,7 +672,7 @@ export function MapView({
       map.off("click", handleClick);
       canvas.style.cursor = "";
     };
-  }, [pickStart, mapReady]);
+  }, [pickStart, pickVia, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -692,6 +708,11 @@ export function MapView({
       {pickStart ? (
         <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-amber-500/50 bg-zinc-950/90 px-4 py-1.5 text-xs text-amber-300 shadow-lg">
           Kliknij mapę, aby ustawić punkt startu
+        </div>
+      ) : null}
+      {pickVia ? (
+        <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-violet-400/50 bg-zinc-950/90 px-4 py-1.5 text-xs text-violet-200 shadow-lg">
+          Kliknij mapę, aby dodać punkt do zaliczenia
         </div>
       ) : null}
     </div>

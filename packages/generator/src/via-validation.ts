@@ -2,6 +2,8 @@ import type { Direction, LatLng, RouteViaPoint } from "@loopforge/osm-types";
 import { computeLoopEntryTarget } from "./loop-anchor";
 
 export const MAX_VIA_POINTS = 3;
+/** Closed through-points mode (start → pins → start). */
+export const MAX_WAYPOINT_MODE_POINTS = 5;
 
 export interface ViaPointRouteContext {
   start: LatLng;
@@ -158,4 +160,74 @@ export function validateViaPointsForRoute(
   }
 
   return { ok: true, results };
+}
+
+/** Validate pins for planningMode=waypoints (no distance/direction zone). */
+export function validateWaypointsModePoints(
+  start: LatLng,
+  points: RouteViaPoint[],
+): { ok: boolean; message?: string } {
+  if (points.length < 1) {
+    return {
+      ok: false,
+      message: "Dodaj co najmniej jeden punkt na mapie.",
+    };
+  }
+  if (points.length > MAX_WAYPOINT_MODE_POINTS) {
+    return {
+      ok: false,
+      message: `Maksymalnie ${MAX_WAYPOINT_MODE_POINTS} punktów w trybie przez punkty.`,
+    };
+  }
+
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i]!;
+    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) {
+      return { ok: false, message: `Punkt ${i + 1} ma nieprawidłowe współrzędne.` };
+    }
+    if (Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001) {
+      return { ok: false, message: `Punkt ${i + 1} nie został ustawiony na mapie.` };
+    }
+    if (haversineM(start, p) < 250) {
+      return {
+        ok: false,
+        message: `Punkt ${i + 1} jest zbyt blisko startu (min. ~250 m).`,
+      };
+    }
+  }
+
+  for (let i = 0; i < points.length; i++) {
+    for (let j = i + 1; j < points.length; j++) {
+      if (haversineM(points[i]!, points[j]!) < 200) {
+        return {
+          ok: false,
+          message: `Punkty ${i + 1} i ${j + 1} są zbyt blisko siebie.`,
+        };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
+const DIRECTIONS_CLOCKWISE: Direction[] = [
+  "N",
+  "NE",
+  "E",
+  "SE",
+  "S",
+  "SW",
+  "W",
+  "NW",
+];
+
+/** Map a bearing (0–360) to the nearest compass Direction. */
+export function directionFromBearing(bearingDeg: number): Direction {
+  const normalized = ((bearingDeg % 360) + 360) % 360;
+  const idx = Math.round(normalized / 45) % 8;
+  return DIRECTIONS_CLOCKWISE[idx]!;
+}
+
+export function bearingBetween(a: LatLng, b: LatLng): number {
+  return bearingDeg(a, b);
 }
