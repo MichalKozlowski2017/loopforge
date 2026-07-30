@@ -11,6 +11,12 @@ import {
   flattenLoopDrawPath,
   type LngLat,
 } from "@/lib/route-draw-path";
+import {
+  POI_CATEGORIES,
+  POI_CATEGORY_META,
+  POI_MIN_ZOOM,
+  type PoiCategory,
+} from "@/lib/pois";
 import { RouteDrawReveal } from "@/components/RouteDrawReveal";
 
 export interface StartPoint {
@@ -48,6 +54,32 @@ const ROUTE_SOURCE = "route";
 const ROUTE_LAYER = "route-line";
 const SEGMENTS_SOURCE = "route-segments";
 const SEGMENTS_LAYER = "route-segments-line";
+const OMT_SOURCE = "openmaptiles";
+
+function poiCircleLayerId(category: PoiCategory): string {
+  return `lf-poi-${category}`;
+}
+
+function poiLabelLayerId(category: PoiCategory): string {
+  return `lf-poi-${category}-label`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function categoryForPoiClass(poiClass: string): PoiCategory | null {
+  for (const category of POI_CATEGORIES) {
+    if (POI_CATEGORY_META[category].classes.includes(poiClass)) {
+      return category;
+    }
+  }
+  return null;
+}
 
 function normalizeCoords(coords: number[][]): [number, number][] {
   return coords
@@ -191,6 +223,12 @@ export function MapView({
   const [mapReady, setMapReady] = useState(false);
   const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
   const [mapStyle, setMapStyle] = useState<StyleSpecification | null>(null);
+  const [poiCategories, setPoiCategories] = useState<Set<PoiCategory>>(
+    () => new Set(),
+  );
+  const [poiUnavailable, setPoiUnavailable] = useState(false);
+  const [poiZoomHint, setPoiZoomHint] = useState(false);
+  const poiPopupRef = useRef<maplibregl.Popup | null>(null);
 
   useEffect(() => {
     onStartChangeRef.current = onStartChange;
@@ -379,6 +417,110 @@ export function MapView({
     return true;
   }, [clearRouteLayers]);
 
+  const syncPoiLayers = useCallback(
+    (map: maplibregl.Map, active: Set<PoiCategory>, visible: boolean) => {
+      if (!map.isStyleLoaded()) return;
+
+      if (!map.getSource(OMT_SOURCE)) {
+        setPoiUnavailable(true);
+        return;
+      }
+      setPoiUnavailable(false);
+
+      for (const category of POI_CATEGORIES) {
+        const circleId = poiCircleLayerId(category);
+        const labelId = poiLabelLayerId(category);
+        const meta = POI_CATEGORY_META[category];
+        const show = visible && active.has(category);
+        const classFilter: maplibregl.FilterSpecification = [
+          "in",
+          ["get", "class"],
+          ["literal", meta.classes],
+        ];
+
+        if (!map.getLayer(circleId)) {
+          map.addLayer({
+            id: circleId,
+            type: "circle",
+            source: OMT_SOURCE,
+            "source-layer": "poi",
+            minzoom: POI_MIN_ZOOM,
+            filter: classFilter,
+            layout: {
+              visibility: show ? "visible" : "none",
+            },
+            paint: {
+              "circle-radius": [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                12,
+                5,
+                16,
+                8,
+              ],
+              "circle-color": meta.color,
+              "circle-stroke-width": 1.5,
+              "circle-stroke-color": "#18181b",
+              "circle-opacity": 0.92,
+            },
+          });
+        } else {
+          map.setLayoutProperty(
+            circleId,
+            "visibility",
+            show ? "visible" : "none",
+          );
+        }
+
+        if (!map.getLayer(labelId)) {
+          map.addLayer({
+            id: labelId,
+            type: "symbol",
+            source: OMT_SOURCE,
+            "source-layer": "poi",
+            minzoom: 14,
+            filter: classFilter,
+            layout: {
+              visibility: show ? "visible" : "none",
+              "text-field": ["coalesce", ["get", "name"], ["get", "class"]],
+              "text-size": 11,
+              "text-offset": [0, 1.15],
+              "text-anchor": "top",
+              "text-max-width": 10,
+              "text-optional": true,
+            },
+            paint: {
+              "text-color": "#fafafa",
+              "text-halo-color": "#18181b",
+              "text-halo-width": 1.2,
+            },
+          });
+        } else {
+          map.setLayoutProperty(
+            labelId,
+            "visibility",
+            show ? "visible" : "none",
+          );
+        }
+
+        // Keep POIs above the route line.
+        if (map.getLayer(circleId)) map.moveLayer(circleId);
+        if (map.getLayer(labelId)) map.moveLayer(labelId);
+      }
+    },
+    [],
+  );
+
+  const togglePoiCategory = useCallback((category: PoiCategory) => {
+    setPoiCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      return next;
+    });
+  }, []);
+
   const scheduleRouteSync = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -409,6 +551,12 @@ export function MapView({
       closeButton: false,
       closeOnClick: false,
       className: "loopforge-popup",
+    });
+    poiPopupRef.current = new maplibregl.Popup({
+      closeButton: false,
+      closeOnClick: true,
+      className: "loopforge-popup",
+      offset: 12,
     });
 
     const onLoad = () => {
@@ -442,6 +590,8 @@ export function MapView({
       viaMarkerRefs.current = [];
       popupRef.current?.remove();
       popupRef.current = null;
+      poiPopupRef.current?.remove();
+      poiPopupRef.current = null;
       map.remove();
       mapRef.current = null;
       setMapReady(false);
@@ -653,6 +803,106 @@ export function MapView({
     if (!map || !mapReady) return;
 
     const picking = pickStart || pickVia;
+    const show = !picking && !mapVeiled && poiCategories.size > 0;
+
+    const apply = () => {
+      syncPoiLayers(map, poiCategories, show);
+      if (show) {
+        setPoiZoomHint(map.getZoom() < POI_MIN_ZOOM);
+      } else {
+        setPoiZoomHint(false);
+        poiPopupRef.current?.remove();
+      }
+    };
+
+    apply();
+    const onZoom = () => {
+      if (show) setPoiZoomHint(map.getZoom() < POI_MIN_ZOOM);
+    };
+    map.on("zoom", onZoom);
+    map.on("zoomend", onZoom);
+
+    return () => {
+      map.off("zoom", onZoom);
+      map.off("zoomend", onZoom);
+    };
+  }, [
+    mapReady,
+    poiCategories,
+    pickStart,
+    pickVia,
+    mapVeiled,
+    syncPoiLayers,
+    route,
+    mapGeojson,
+  ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const layerIds = POI_CATEGORIES.map(poiCircleLayerId);
+
+    const onClick = (event: maplibregl.MapLayerMouseEvent) => {
+      const feature = event.features?.[0];
+      if (!feature?.properties) return;
+      const props = feature.properties as Record<string, unknown>;
+      const poiClass = String(props.class ?? props.subclass ?? "");
+      const category = categoryForPoiClass(poiClass);
+      const name = escapeHtml(
+        String(props.name ?? props.name_en ?? (poiClass || "Punkt")),
+      );
+      const label = escapeHtml(
+        category ? POI_CATEGORY_META[category].label : poiClass || "POI",
+      );
+      const geometry = feature.geometry as
+        | { type: string; coordinates?: [number, number] }
+        | undefined;
+      const coords = geometry?.type === "Point" ? geometry.coordinates : null;
+      const lngLat =
+        coords && Number.isFinite(coords[0]) && Number.isFinite(coords[1])
+          ? coords
+          : ([event.lngLat.lng, event.lngLat.lat] as [number, number]);
+
+      poiPopupRef.current
+        ?.setLngLat(lngLat)
+        .setHTML(
+          `<div style="color:#fafafa;font:12px/1.4 system-ui,sans-serif">
+            <div style="font-weight:600">${name}</div>
+            <div style="color:#a1a1aa;margin-top:2px">${label}</div>
+          </div>`,
+        )
+        .addTo(map);
+    };
+
+    const onEnter = () => {
+      if (!pickStart && !pickVia) map.getCanvas().style.cursor = "pointer";
+    };
+    const onLeave = () => {
+      map.getCanvas().style.cursor =
+        pickStart || pickVia ? "crosshair" : "";
+    };
+
+    for (const id of layerIds) {
+      map.on("click", id, onClick);
+      map.on("mouseenter", id, onEnter);
+      map.on("mouseleave", id, onLeave);
+    }
+
+    return () => {
+      for (const id of layerIds) {
+        map.off("click", id, onClick);
+        map.off("mouseenter", id, onEnter);
+        map.off("mouseleave", id, onLeave);
+      }
+    };
+  }, [mapReady, pickStart, pickVia, poiCategories]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const picking = pickStart || pickVia;
     const canvas = map.getCanvas();
     canvas.style.cursor = picking ? "crosshair" : "";
 
@@ -704,6 +954,44 @@ export function MapView({
           onDrawingComplete={handleDrawingComplete}
           onComplete={handleRevealComplete}
         />
+      ) : null}
+      {!mapVeiled ? (
+        <div className="absolute bottom-3 left-3 z-10 flex max-w-[min(100%,18rem)] flex-col gap-1.5">
+          <div className="flex flex-wrap gap-1.5 rounded-lg border border-zinc-700/80 bg-zinc-950/90 p-1.5 shadow-lg backdrop-blur-sm">
+            {POI_CATEGORIES.map((category) => {
+              const meta = POI_CATEGORY_META[category];
+              const active = poiCategories.has(category);
+              return (
+                <button
+                  key={category}
+                  type="button"
+                  onClick={() => togglePoiCategory(category)}
+                  disabled={poiUnavailable}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${
+                    active
+                      ? "text-zinc-950"
+                      : "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+                  } disabled:cursor-not-allowed disabled:opacity-40`}
+                  style={active ? { backgroundColor: meta.color } : undefined}
+                  aria-pressed={active}
+                >
+                  {meta.label}
+                </button>
+              );
+            })}
+          </div>
+          {poiUnavailable ? (
+            <p className="rounded-md bg-zinc-950/80 px-2 py-1 text-[10px] text-zinc-400">
+              Punkty niedostępne (brak warstwy wektorowej).
+            </p>
+          ) : poiCategories.size > 0 ? (
+            <p className="rounded-md bg-zinc-950/80 px-2 py-1 text-[10px] text-zinc-400">
+              {poiZoomHint
+                ? `Przybliż mapę (zoom ≥ ${POI_MIN_ZOOM}), żeby zobaczyć punkty.`
+                : "Warstwa próbna · OpenStreetMap / OpenFreeMap"}
+            </p>
+          ) : null}
+        </div>
       ) : null}
       {pickStart ? (
         <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-amber-500/50 bg-zinc-950/90 px-4 py-1.5 text-xs text-amber-300 shadow-lg">
