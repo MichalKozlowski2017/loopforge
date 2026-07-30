@@ -157,6 +157,9 @@ export interface GeneratedRoute {
   generationQuality?: RouteGenerationQuality;
 }
 
+/** Post-ride star rating (1 = poor, 5 = great). */
+export type RouteRating = 1 | 2 | 3 | 4 | 5;
+
 export interface StoredRoute extends GeneratedRoute {
   bikeType: BikeType;
   direction: Direction;
@@ -169,8 +172,13 @@ export interface StoredRoute extends GeneratedRoute {
   approachDistanceKm?: number;
   loopEntry?: LatLng;
   viaPoints?: RouteViaPoint[];
-  rating?: "up" | "down";
+  /** Post-ride star rating; set after the user rides the loop. */
+  rating?: RouteRating;
+  /** Problem / quality tags from post-ride feedback. */
+  feedbackTags?: string[];
   notes?: string;
+  /** When the user first submitted post-ride feedback. */
+  riddenAt?: string;
 }
 
 export type RouteGenerationPhase =

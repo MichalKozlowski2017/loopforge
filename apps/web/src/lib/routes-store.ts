@@ -31,7 +31,7 @@ export async function loadRoutes(): Promise<StoredRoute[]> {
         map_geojson: StoredRoute["mapGeojson"] | null;
         metrics: StoredRoute["metrics"];
         gpx: string;
-        rating: "up" | "down" | null;
+        rating: number | null;
         notes: string | null;
         created_at: string;
       }>(
@@ -67,7 +67,11 @@ export async function loadRoutes(): Promise<StoredRoute[]> {
         mapGeojson: row.map_geojson ?? undefined,
         metrics: row.metrics,
         gpx: row.gpx,
-        rating: row.rating ?? undefined,
+        rating: (row.rating != null &&
+        row.rating >= 1 &&
+        row.rating <= 5
+          ? (row.rating as StoredRoute["rating"])
+          : undefined),
         notes: row.notes ?? undefined,
         createdAt: row.created_at,
       }));
@@ -147,7 +151,7 @@ export async function saveRoute(route: StoredRoute): Promise<void> {
 
 export async function updateRouteRating(
   id: string,
-  rating: "up" | "down",
+  rating: 1 | 2 | 3 | 4 | 5,
   notes?: string,
 ): Promise<StoredRoute | null> {
   if (shouldUseDatabaseStore()) {

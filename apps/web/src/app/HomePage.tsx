@@ -276,7 +276,6 @@ export default function HomePage() {
     null,
   );
   const [showFirstRun, setShowFirstRun] = useState(false);
-  const [notes, setNotes] = useState("");
   const [pickOnMap, setPickOnMap] = useState(false);
   const mapSectionRef = useRef<HTMLElement>(null);
   const loopEntry = useMemo(() => extractLoopEntry(route), [route]);
@@ -327,7 +326,6 @@ export default function HomePage() {
         if (!data || cancelled) return;
 
         setRoute(data);
-        setNotes(data.notes ?? "");
         setForm({
           bikeType: data.bikeType,
           distanceKm: Math.round(
@@ -504,7 +502,6 @@ export default function HomePage() {
       });
       setRoute(generated);
       setSummaryDialog(buildRouteSummaryDialogState(generated, request));
-      setNotes("");
       // Cloud history is best-effort — never fail the ride on save errors.
       try {
         await fetch("/api/routes", {
@@ -535,26 +532,6 @@ export default function HomePage() {
       window.clearInterval(tick);
       setOverlayExiting(true);
     }
-  }
-
-  function handleRate(rating: "up" | "down") {
-    if (!route) return;
-
-    setRoute({ ...route, rating, notes });
-    void (async () => {
-      try {
-        const response = await fetch(`/api/routes/${route.id}/rate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rating, notes }),
-        });
-        if (!response.ok) return;
-        const payload = (await response.json()) as { route?: StoredRoute };
-        if (payload.route) setRoute(payload.route);
-      } catch {
-        // Rating persist is best-effort.
-      }
-    })();
   }
 
   const mapVeiled = loading || overlayExiting || routeRevealActive;
@@ -685,53 +662,20 @@ export default function HomePage() {
 
             <SurfaceBreakdown breakdown={route.metrics.surfaceBreakdown} />
 
-            <div>
-              <label
-                htmlFor="notes"
-                className="mb-1 block text-xs font-medium text-zinc-400"
-              >
-                Notatka (opcjonalnie)
-              </label>
-              <textarea
-                id="notes"
-                rows={2}
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                placeholder="np. za dużo szosy na początku…"
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2">
               <button
                 type="button"
                 onClick={() => downloadRouteGpx(route)}
-                className="flex-1 rounded-lg border border-zinc-700 px-3 py-2 text-center text-sm transition hover:border-amber-700/40 hover:text-amber-100"
+                className="w-full rounded-lg border border-zinc-700 px-3 py-2 text-center text-sm transition hover:border-amber-700/40 hover:text-amber-100"
               >
                 Pobierz GPX
               </button>
-              <button
-                type="button"
-                onClick={() => handleRate("up")}
-                className={`rounded-lg border px-3 py-2 text-sm ${
-                  route.rating === "up"
-                    ? "border-amber-500 text-amber-300"
-                    : "border-zinc-700 hover:border-amber-700/40 hover:text-amber-100"
-                }`}
+              <Link
+                href={`/routes/${route.id}#feedback`}
+                className="w-full rounded-lg border border-amber-950/40 px-3 py-2 text-center text-sm text-zinc-400 transition hover:border-amber-700/40 hover:text-amber-100"
               >
-                👍
-              </button>
-              <button
-                type="button"
-                onClick={() => handleRate("down")}
-                className={`rounded-lg border px-3 py-2 text-sm transition ${
-                  route.rating === "down"
-                    ? "border-red-500 text-red-300"
-                    : "border-zinc-700 hover:border-amber-700/40 hover:text-amber-100"
-                }`}
-              >
-                👎
-              </button>
+                Oceń po przejeździe →
+              </Link>
             </div>
           </section>
         ) : null}

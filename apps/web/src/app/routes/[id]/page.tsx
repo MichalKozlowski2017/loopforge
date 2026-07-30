@@ -6,9 +6,11 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { StoredRoute } from "@loopforge/osm-types";
 import { getRideProfileLabel } from "@loopforge/osm-types";
+import { RouteFeedbackForm } from "@/components/RouteFeedbackForm";
 import { SurfaceBreakdown } from "@/components/SurfaceBreakdown";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
 import { downloadRouteGpx } from "@/lib/download-route-gpx";
+import { feedbackTagLabel } from "@/lib/route-feedback";
 
 const MapView = dynamic(
   () => import("@/components/MapView").then((mod) => mod.MapView),
@@ -97,7 +99,7 @@ export default function RouteDetailPage() {
 
   return (
     <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
-      <aside className="w-full space-y-4 border-b border-amber-950/30 p-6 lg:w-96 lg:border-b-0 lg:border-r">
+      <aside className="w-full space-y-4 border-b border-amber-950/30 p-6 lg:w-96 lg:border-b-0 lg:border-r lg:overflow-y-auto">
         <Link href="/routes" className="text-sm text-amber-400 hover:underline">
           ← Historia
         </Link>
@@ -112,6 +114,19 @@ export default function RouteDetailPage() {
               : ""}{" "}
             · {new Date(route.createdAt).toLocaleString("pl-PL")}
           </p>
+          {route.rating != null ? (
+            <p className="mt-2 text-sm text-amber-200">
+              Ocena: {route.rating}/5
+              {route.riddenAt
+                ? ` · ${new Date(route.riddenAt).toLocaleDateString("pl-PL")}`
+                : ""}
+            </p>
+          ) : null}
+          {route.feedbackTags && route.feedbackTags.length > 0 ? (
+            <p className="mt-1 text-xs text-zinc-500">
+              {route.feedbackTags.map(feedbackTagLabel).join(" · ")}
+            </p>
+          ) : null}
         </div>
         <dl className="grid grid-cols-2 gap-2 text-sm">
           <div>
@@ -124,11 +139,6 @@ export default function RouteDetailPage() {
           </div>
         </dl>
         <SurfaceBreakdown breakdown={route.metrics.surfaceBreakdown} />
-        {route.notes ? (
-          <p className="rounded-lg border border-amber-950/25 bg-zinc-900/60 p-3 text-sm text-zinc-300">
-            {route.notes}
-          </p>
-        ) : null}
         <div className="flex gap-2">
           <Link
             href={`/?routeId=${route.id}`}
@@ -144,6 +154,13 @@ export default function RouteDetailPage() {
             GPX
           </button>
         </div>
+        <RouteFeedbackForm
+          routeId={route.id}
+          initialRating={route.rating}
+          initialTags={route.feedbackTags}
+          initialNotes={route.notes}
+          onSaved={setRoute}
+        />
       </aside>
       <section className="relative min-h-[50vh] flex-1 p-4 lg:min-h-0">
         <MapView

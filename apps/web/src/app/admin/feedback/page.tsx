@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { listDownFeedback } from "@/lib/admin/stats";
+import { feedbackTagLabel } from "@/lib/route-feedback";
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("pl-PL", {
@@ -16,11 +17,11 @@ export default async function AdminFeedbackPage() {
   return (
     <div className="space-y-3">
       <p className="text-sm text-zinc-400">
-        Ostatnie trasy z oceną 👎 (i opcjonalnymi notatkami).
+        Trasy z oceną 1–3 po przejeździe (tagi + notatki).
       </p>
       {feedback.length === 0 ? (
         <p className="rounded-xl border border-zinc-800 px-4 py-8 text-center text-zinc-500">
-          Brak negatywnych ocen.
+          Brak niskich ocen.
         </p>
       ) : (
         <ul className="space-y-3">
@@ -32,7 +33,8 @@ export default async function AdminFeedbackPage() {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <p className="font-medium text-zinc-100">
-                    {item.bikeType} · {item.distanceKm.toFixed(1)} km
+                    {item.rating}/5 · {item.bikeType} ·{" "}
+                    {item.distanceKm.toFixed(1)} km
                     {item.score != null
                       ? ` · score ${(item.score * 100).toFixed(0)}%`
                       : ""}
@@ -48,10 +50,15 @@ export default async function AdminFeedbackPage() {
                   Otwórz trasę
                 </Link>
               </div>
+              {item.feedbackTags.length > 0 ? (
+                <p className="mt-3 text-xs text-zinc-400">
+                  {item.feedbackTags.map(feedbackTagLabel).join(" · ")}
+                </p>
+              ) : null}
               {item.notes ? (
-                <p className="mt-3 text-sm italic text-zinc-300">„{item.notes}”</p>
+                <p className="mt-2 text-sm italic text-zinc-300">„{item.notes}”</p>
               ) : (
-                <p className="mt-3 text-sm text-zinc-600">Bez notatki</p>
+                <p className="mt-2 text-sm text-zinc-600">Bez notatki</p>
               )}
             </li>
           ))}

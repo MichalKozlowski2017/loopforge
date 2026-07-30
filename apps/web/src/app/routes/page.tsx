@@ -79,7 +79,7 @@ export default function RoutesPage() {
         <h1 className="text-2xl font-semibold">Historia tras</h1>
         <p className="mt-1 text-sm text-zinc-400">
           Twoje wygenerowane pętle — zapisane w chmurze na Twoim koncie (do{" "}
-          {MAX_CLOUD_ROUTES} ostatnich).
+          {MAX_CLOUD_ROUTES} ostatnich). Oceń trasę dopiero po przejeździe.
         </p>
       </div>
 
@@ -115,12 +115,9 @@ export default function RoutesPage() {
         <ul className="space-y-3">
           {routes.map((route) => (
             <li key={route.id}>
-              <Link
-                href={`/routes/${route.id}`}
-                className="block rounded-xl border border-amber-950/25 bg-zinc-900/50 p-4 transition hover:border-amber-700/35"
-              >
+              <div className="rounded-xl border border-amber-950/25 bg-zinc-900/50 p-4 transition hover:border-amber-700/35">
                 <div className="flex items-start justify-between gap-4">
-                  <div>
+                  <Link href={`/routes/${route.id}`} className="min-w-0 flex-1">
                     <p className="font-medium text-zinc-100">
                       {BIKE_LABELS[route.bikeType]} · {route.distanceKm.toFixed(1)}{" "}
                       km · {route.direction}
@@ -137,16 +134,26 @@ export default function RoutesPage() {
                         „{route.notes}&rdquo;
                       </p>
                     ) : null}
-                  </div>
-                  <div className="text-lg">
-                    {route.rating === "up"
-                      ? "👍"
-                      : route.rating === "down"
-                        ? "👎"
-                        : "—"}
+                  </Link>
+                  <div className="shrink-0 text-right">
+                    {route.rating != null ? (
+                      <Link
+                        href={`/routes/${route.id}#feedback`}
+                        className="text-sm font-medium text-amber-200 hover:underline"
+                      >
+                        {route.rating}/5
+                      </Link>
+                    ) : (
+                      <Link
+                        href={`/routes/${route.id}#feedback`}
+                        className="rounded-lg border border-amber-700/40 px-2.5 py-1 text-xs text-amber-100 transition hover:bg-amber-500/10"
+                      >
+                        Oceń
+                      </Link>
+                    )}
                   </div>
                 </div>
-              </Link>
+              </div>
             </li>
           ))}
         </ul>

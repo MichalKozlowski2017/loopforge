@@ -21,7 +21,7 @@ export interface LocalRouteSummary {
   distanceKm: number;
   score: number;
   elevationGainM: number;
-  rating?: "up" | "down";
+  rating?: 1 | 2 | 3 | 4 | 5;
   notes?: string;
   createdAt: string;
   placeholder: boolean;
@@ -295,7 +295,7 @@ export function saveLocalRoute(route: StoredRoute): void {
 
 export function updateLocalRouteRating(
   id: string,
-  rating: "up" | "down",
+  rating: 1 | 2 | 3 | 4 | 5,
   notes?: string,
 ): StoredRoute | null {
   const routes = readRoutes();

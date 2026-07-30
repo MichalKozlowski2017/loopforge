@@ -45,10 +45,29 @@ export default async function AdminHomePage() {
           }
         />
         <StatCard
-          label="Ratingi"
-          value={`👍 ${stats.ratings.up} · 👎 ${stats.ratings.down}`}
-          hint={`bez oceny: ${stats.ratings.none}`}
+          label="Oceny po jeździe"
+          value={
+            stats.ratings.average != null
+              ? `${stats.ratings.average}/5`
+              : "—"
+          }
+          hint={
+            stats.ratings.goodShare != null
+              ? `≥4★: ${stats.ratings.goodShare}% · bez oceny: ${stats.ratings.none}`
+              : `bez oceny: ${stats.ratings.none}`
+          }
         />
+      </section>
+
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
+        <h2 className="text-sm font-medium text-zinc-200">Rozkład ocen (1–5)</h2>
+        <ul className="mt-3 flex flex-wrap gap-3 text-sm text-zinc-400">
+          {([1, 2, 3, 4, 5] as const).map((star) => (
+            <li key={star} className="rounded-lg border border-zinc-800 px-3 py-1.5">
+              {star}★ · {stats.ratings.distribution[star]}
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">

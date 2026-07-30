@@ -6,7 +6,12 @@ export interface AdminDashboardStats {
   routesLast7d: number;
   routesTotal: number;
   generationsLast24h: { success: number; error: number; avgLatencyMs: number | null };
-  ratings: { up: number; down: number; none: number };
+  ratings: {
+    none: number;
+    average: number | null;
+    distribution: Record<1 | 2 | 3 | 4 | 5, number>;
+    goodShare: number | null;
+  };
   topBikeTypes: { bikeType: string; count: number }[];
   topProfiles: { profile: string; count: number }[];
 }
@@ -62,12 +67,35 @@ export async function getDashboardStats(): Promise<AdminDashboardStats> {
     }
   }
 
-  const ratings = { up: 0, down: 0, none: 0 };
+  const distribution: Record<1 | 2 | 3 | 4 | 5, number> = {
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 0,
+    5: 0,
+  };
+  let none = 0;
+  let sum = 0;
+  let rated = 0;
+  let good = 0;
   for (const row of ratingsRows.data ?? []) {
-    if (row.rating === "up") ratings.up += 1;
-    else if (row.rating === "down") ratings.down += 1;
-    else ratings.none += 1;
+    const value = row.rating as number | null;
+    if (value == null || value < 1 || value > 5) {
+      none += 1;
+      continue;
+    }
+    const star = value as 1 | 2 | 3 | 4 | 5;
+    distribution[star] += 1;
+    sum += star;
+    rated += 1;
+    if (star >= 4) good += 1;
   }
+  const ratings = {
+    none,
+    average: rated ? Math.round((sum / rated) * 10) / 10 : null,
+    distribution,
+    goodShare: rated ? Math.round((good / rated) * 100) : null,
+  };
 
   const bikeCounts = new Map<string, number>();
   for (const row of bikeRows.data ?? []) {
@@ -185,19 +213,25 @@ export interface AdminFeedbackRow {
   userId: string;
   bikeType: string;
   distanceKm: number;
+  rating: number;
+  feedbackTags: string[];
   notes: string | null;
   createdAt: string;
   score: number | null;
 }
 
+/** Low post-ride ratings (1–3) for ops review. */
 export async function listDownFeedback(
   limit = 50,
 ): Promise<AdminFeedbackRow[]> {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("routes")
-    .select("id, user_id, bike_type, metrics, notes, created_at, rating")
-    .eq("rating", "down")
+    .select(
+      "id, user_id, bike_type, metrics, notes, created_at, rating, feedback_tags",
+    )
+    .not("rating", "is", null)
+    .lte("rating", 3)
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw new Error(error.message);
@@ -209,6 +243,8 @@ export async function listDownFeedback(
       userId: row.user_id as string,
       bikeType: String(row.bike_type),
       distanceKm: metrics?.distanceKm ?? 0,
+      rating: Number(row.rating),
+      feedbackTags: (row.feedback_tags as string[] | null) ?? [],
       notes: (row.notes as string | null) ?? null,
       createdAt: row.created_at as string,
       score: metrics?.score ?? null,

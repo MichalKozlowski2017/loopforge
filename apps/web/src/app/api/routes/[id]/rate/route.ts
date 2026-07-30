@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { updateRouteRating } from "@/lib/cloud-routes-store";
+import {
+  isRouteRating,
+  sanitizeFeedbackTags,
+} from "@/lib/route-feedback";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/require-user";
 
@@ -22,16 +26,31 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ error: "Brak id trasy." }, { status: 400 });
   }
 
-  let body: { rating?: "up" | "down"; notes?: string };
+  let body: { rating?: unknown; notes?: unknown; tags?: unknown };
   try {
-    body = (await request.json()) as { rating?: "up" | "down"; notes?: string };
+    body = (await request.json()) as {
+      rating?: unknown;
+      notes?: unknown;
+      tags?: unknown;
+    };
   } catch {
     return NextResponse.json({ error: "Nieprawidłowe JSON" }, { status: 400 });
   }
 
-  if (body.rating !== "up" && body.rating !== "down") {
-    return NextResponse.json({ error: "Nieprawidłowa ocena." }, { status: 400 });
+  const ratingRaw =
+    typeof body.rating === "string" ? Number(body.rating) : body.rating;
+  if (!isRouteRating(ratingRaw)) {
+    return NextResponse.json(
+      { error: "Ocena musi być liczbą od 1 do 5." },
+      { status: 400 },
+    );
   }
+
+  const notes =
+    typeof body.notes === "string"
+      ? body.notes.trim().slice(0, 2000)
+      : undefined;
+  const tags = sanitizeFeedbackTags(body.tags);
 
   try {
     const supabase = await createClient();
@@ -39,8 +58,9 @@ export async function POST(request: Request, { params }: Params) {
       supabase,
       auth.user.id,
       id,
-      body.rating,
-      body.notes,
+      ratingRaw,
+      notes,
+      tags,
     );
     if (!route) {
       return NextResponse.json({ error: "Nie znaleziono trasy." }, { status: 404 });

@@ -2,9 +2,11 @@ import type {
   BikeType,
   Direction,
   RideProfile,
+  RouteRating,
   StoredRoute,
 } from "@loopforge/osm-types";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RouteFeedbackTagId } from "@/lib/route-feedback";
 
 export const MAX_CLOUD_ROUTES = 25;
 
@@ -16,8 +18,10 @@ export interface CloudRouteSummary {
   distanceKm: number;
   score: number;
   elevationGainM: number;
-  rating?: "up" | "down";
+  rating?: RouteRating;
+  feedbackTags?: string[];
   notes?: string;
+  riddenAt?: string;
   createdAt: string;
 }
 
@@ -32,8 +36,10 @@ type RouteRow = {
   map_geojson: StoredRoute["mapGeojson"] | null;
   metrics: StoredRoute["metrics"];
   gpx: string;
-  rating: "up" | "down" | null;
+  rating: number | null;
+  feedback_tags: string[] | null;
   notes: string | null;
+  ridden_at: string | null;
   created_at: string;
 };
 
@@ -43,10 +49,20 @@ type SummaryRow = {
   direction: string;
   profile: string | null;
   metrics: StoredRoute["metrics"];
-  rating: "up" | "down" | null;
+  rating: number | null;
+  feedback_tags: string[] | null;
   notes: string | null;
+  ridden_at: string | null;
   created_at: string;
 };
+
+function asRouteRating(value: number | null): RouteRating | undefined {
+  if (value == null) return undefined;
+  if (value >= 1 && value <= 5 && Number.isInteger(value)) {
+    return value as RouteRating;
+  }
+  return undefined;
+}
 
 function rowToStored(row: RouteRow): StoredRoute {
   return {
@@ -59,8 +75,10 @@ function rowToStored(row: RouteRow): StoredRoute {
     mapGeojson: row.map_geojson ?? undefined,
     metrics: row.metrics,
     gpx: row.gpx ?? "",
-    rating: row.rating ?? undefined,
+    rating: asRouteRating(row.rating),
+    feedbackTags: row.feedback_tags?.length ? row.feedback_tags : undefined,
     notes: row.notes ?? undefined,
+    riddenAt: row.ridden_at ?? undefined,
     createdAt: row.created_at,
   };
 }
@@ -74,11 +92,16 @@ function rowToSummary(row: SummaryRow): CloudRouteSummary {
     distanceKm: row.metrics?.distanceKm ?? 0,
     score: row.metrics?.score ?? 0,
     elevationGainM: row.metrics?.elevationGainM ?? 0,
-    rating: row.rating ?? undefined,
+    rating: asRouteRating(row.rating),
+    feedbackTags: row.feedback_tags?.length ? row.feedback_tags : undefined,
     notes: row.notes ?? undefined,
+    riddenAt: row.ridden_at ?? undefined,
     createdAt: row.created_at,
   };
 }
+
+const FULL_SELECT =
+  "id, bike_type, direction, profile, start_lat, start_lng, geojson, map_geojson, metrics, gpx, rating, feedback_tags, notes, ridden_at, created_at";
 
 export async function listRouteSummaries(
   supabase: SupabaseClient,
@@ -86,7 +109,9 @@ export async function listRouteSummaries(
 ): Promise<CloudRouteSummary[]> {
   const { data, error } = await supabase
     .from("routes")
-    .select("id, bike_type, direction, profile, metrics, rating, notes, created_at")
+    .select(
+      "id, bike_type, direction, profile, metrics, rating, feedback_tags, notes, ridden_at, created_at",
+    )
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(MAX_CLOUD_ROUTES);
@@ -102,9 +127,7 @@ export async function getRouteById(
 ): Promise<StoredRoute | null> {
   const { data, error } = await supabase
     .from("routes")
-    .select(
-      "id, bike_type, direction, profile, start_lat, start_lng, geojson, map_geojson, metrics, gpx, rating, notes, created_at",
-    )
+    .select(FULL_SELECT)
     .eq("user_id", userId)
     .eq("id", id)
     .maybeSingle();
@@ -144,7 +167,9 @@ export async function saveRoute(
       metrics: stored.metrics,
       gpx: stored.gpx ?? "",
       rating: stored.rating ?? null,
+      feedback_tags: stored.feedbackTags ?? [],
       notes: stored.notes ?? null,
+      ridden_at: stored.riddenAt ?? null,
       created_at: stored.createdAt,
     },
     { onConflict: "id" },
@@ -178,20 +203,33 @@ export async function updateRouteRating(
   supabase: SupabaseClient,
   userId: string,
   id: string,
-  rating: "up" | "down",
+  rating: RouteRating,
   notes?: string,
+  tags?: RouteFeedbackTagId[],
 ): Promise<StoredRoute | null> {
-  const patch: { rating: "up" | "down"; notes?: string } = { rating };
+  const existing = await getRouteById(supabase, userId, id);
+  if (!existing) return null;
+
+  const patch: {
+    rating: RouteRating;
+    notes?: string;
+    feedback_tags: string[];
+    ridden_at?: string;
+  } = {
+    rating,
+    feedback_tags: tags ?? existing.feedbackTags ?? [],
+  };
   if (notes !== undefined) patch.notes = notes;
+  if (!existing.riddenAt) {
+    patch.ridden_at = new Date().toISOString();
+  }
 
   const { data, error } = await supabase
     .from("routes")
     .update(patch)
     .eq("user_id", userId)
     .eq("id", id)
-    .select(
-      "id, bike_type, direction, profile, start_lat, start_lng, geojson, map_geojson, metrics, gpx, rating, notes, created_at",
-    )
+    .select(FULL_SELECT)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
