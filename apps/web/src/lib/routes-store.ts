@@ -32,7 +32,9 @@ export async function loadRoutes(): Promise<StoredRoute[]> {
         metrics: StoredRoute["metrics"];
         gpx: string;
         rating: number | null;
+        feedback_tags: string[] | null;
         notes: string | null;
+        ridden_at: string | null;
         created_at: string;
       }>(
         `
@@ -48,7 +50,9 @@ export async function loadRoutes(): Promise<StoredRoute[]> {
             metrics,
             gpx,
             rating,
+            feedback_tags,
             notes,
+            ridden_at,
             created_at
           from public.routes
           order by created_at desc
@@ -72,7 +76,11 @@ export async function loadRoutes(): Promise<StoredRoute[]> {
         row.rating <= 5
           ? (row.rating as StoredRoute["rating"])
           : undefined),
+        feedbackTags: row.feedback_tags?.length
+          ? row.feedback_tags
+          : undefined,
         notes: row.notes ?? undefined,
+        riddenAt: row.ridden_at ?? undefined,
         createdAt: row.created_at,
       }));
     });
