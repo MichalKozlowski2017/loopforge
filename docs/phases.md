@@ -8,7 +8,7 @@
 - [ ] Formularz: dystans, kierunek, podprofil
 - [ ] `POST /api/routes/generate` → BRouter JAR (lokalnie)
 - [ ] Trasa na mapie z kolorami nawierzchni
-- [ ] Panel metryk + ocena wstępna 👍/👎
+- [x] Panel metryk + ocena **po przejeździe** (1–5★ + tagi w historii)
 - [ ] Eksport GPX
 - [ ] Zapis tras w `data/routes.json`
 - [ ] **8–12 tras testowych** (2–3 per tryb) w terenie

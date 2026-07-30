@@ -297,16 +297,20 @@ export function updateLocalRouteRating(
   id: string,
   rating: 1 | 2 | 3 | 4 | 5,
   notes?: string,
+  tags?: string[],
 ): StoredRoute | null {
   const routes = readRoutes();
   const index = routes.findIndex((route) => route.id === id);
   if (index === -1) return null;
 
+  const existing = routes[index]!;
   routes[index] = {
-    ...routes[index],
+    ...existing,
     rating,
     ...(notes !== undefined ? { notes } : {}),
+    ...(tags !== undefined ? { feedbackTags: tags } : {}),
+    riddenAt: existing.riddenAt ?? new Date().toISOString(),
   };
   writeRoutes(routes);
-  return routes[index];
+  return routes[index]!;
 }

@@ -1,6 +1,6 @@
 # Panel admina (`/admin`)
 
-Wewnętrzny panel ops: statystyki, użytkownicy (ban), feedback 👎, log generowań, ping BRouter.
+Wewnętrzny panel ops: statystyki, użytkownicy (ban), feedback po przejeździe (1–5★), log generowań, ping BRouter.
 
 ## Dostęp
 
@@ -33,7 +33,7 @@ Bez roli albo bez service role → redirect na `/` (layout) / 403 na API.
 |--------|-----------|
 | `/admin` | Users, trasy 24h/7d, generate ok/err + latency, ratingi, top bike/profile, BRouter health |
 | `/admin/users` | Lista Auth users, #tras, ban/unban |
-| `/admin/feedback` | Trasy z `rating=down` + notes |
+| `/admin/feedback` | Trasy z oceną 1–3 + tagi + notes |
 | `/admin/generations` | `public.generation_events` (sukces/błąd) |
 
 ## Schema
