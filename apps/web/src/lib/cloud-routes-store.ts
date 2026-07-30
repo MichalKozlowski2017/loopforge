@@ -7,6 +7,7 @@ import type {
 } from "@loopforge/osm-types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RouteFeedbackTagId } from "@/lib/route-feedback";
+import { extractPreviewPath } from "@/lib/route-shape-preview";
 
 export const MAX_CLOUD_ROUTES = 25;
 
@@ -23,6 +24,8 @@ export interface CloudRouteSummary {
   notes?: string;
   riddenAt?: string;
   createdAt: string;
+  /** Downsampled [lng, lat] polyline for list thumbnails. */
+  previewPath?: [number, number][];
 }
 
 type RouteRow = {
@@ -54,6 +57,7 @@ type SummaryRow = {
   notes: string | null;
   ridden_at: string | null;
   created_at: string;
+  geojson?: StoredRoute["geojson"] | null;
 };
 
 function asRouteRating(value: number | null): RouteRating | undefined {
@@ -84,6 +88,7 @@ function rowToStored(row: RouteRow): StoredRoute {
 }
 
 function rowToSummary(row: SummaryRow): CloudRouteSummary {
+  const previewPath = extractPreviewPath(row.geojson);
   return {
     id: row.id,
     bikeType: row.bike_type as BikeType,
@@ -97,6 +102,7 @@ function rowToSummary(row: SummaryRow): CloudRouteSummary {
     notes: row.notes ?? undefined,
     riddenAt: row.ridden_at ?? undefined,
     createdAt: row.created_at,
+    previewPath: previewPath.length >= 2 ? previewPath : undefined,
   };
 }
 
@@ -110,7 +116,7 @@ export async function listRouteSummaries(
   const { data, error } = await supabase
     .from("routes")
     .select(
-      "id, bike_type, direction, profile, metrics, rating, feedback_tags, notes, ridden_at, created_at",
+      "id, bike_type, direction, profile, metrics, rating, feedback_tags, notes, ridden_at, created_at, geojson",
     )
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
