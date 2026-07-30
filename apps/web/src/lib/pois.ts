@@ -28,4 +28,5 @@ export const POI_CATEGORY_META: Record<
   },
 };
 
-export const POI_MIN_ZOOM = 12;
+/** Circles appear from this zoom (city / metro overview). */
+export const POI_MIN_ZOOM = 8;

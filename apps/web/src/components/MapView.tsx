@@ -454,6 +454,8 @@ export function MapView({
                 "interpolate",
                 ["linear"],
                 ["zoom"],
+                8,
+                3,
                 12,
                 5,
                 16,
@@ -479,7 +481,7 @@ export function MapView({
             type: "symbol",
             source: OMT_SOURCE,
             "source-layer": "poi",
-            minzoom: 14,
+            minzoom: 10,
             filter: classFilter,
             layout: {
               visibility: show ? "visible" : "none",
