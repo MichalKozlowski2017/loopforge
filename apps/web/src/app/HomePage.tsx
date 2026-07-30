@@ -180,7 +180,13 @@ function buildRouteSummaryDialogState(
     planningMode?: "loop" | "waypoints";
   },
 ): RouteSummaryDialogState {
-  const waypointsMode = request.planningMode === "waypoints";
+  // Prefer the stored route flag — request can lag behind / miss the field after stream.
+  const waypointsMode =
+    route.planningMode === "waypoints" ||
+    request.planningMode === "waypoints" ||
+    (route.generationQuality?.warnings ?? []).some((w) =>
+      /tryb przez punkty/i.test(w),
+    );
   const requestedKm = request.distanceKm;
   const actualKm = route.metrics.loopDistanceKm ?? route.metrics.distanceKm;
   const distanceError = Math.abs(actualKm - requestedKm) / Math.max(1, requestedKm);
@@ -197,8 +203,13 @@ function buildRouteSummaryDialogState(
     waypointsMode ? Math.max(actualKm, 20) : requestedKm,
   );
   const mirrorRatio = mirrorM / Math.max(1, mirrorBudget);
-  const returnScore =
-    mirrorRatio <= 1
+  const returnScore = waypointsMode
+    ? clampScore(
+        mirrorRatio <= 1.5
+          ? 100 - mirrorRatio * 25
+          : 55 - Math.min(40, (mirrorRatio - 1.5) * 30),
+      )
+    : mirrorRatio <= 1
       ? clampScore(100 - mirrorRatio * 35)
       : clampScore(68 - (mirrorRatio - 1) * 80);
 
@@ -645,7 +656,15 @@ export default function HomePage() {
         setGenerationProgress(progress);
       });
       setRoute(generated);
-      setSummaryDialog(buildRouteSummaryDialogState(generated, request));
+      setSummaryDialog(
+        buildRouteSummaryDialogState(generated, {
+          ...request,
+          planningMode:
+            generated.planningMode ??
+            request.planningMode ??
+            form.planningMode,
+        }),
+      );
       // Cloud history is best-effort — never fail the ride on save errors.
       try {
         await fetch("/api/routes", {

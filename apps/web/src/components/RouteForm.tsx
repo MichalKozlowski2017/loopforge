@@ -385,10 +385,38 @@ export function RouteForm({
               Punkty do zaliczenia ({viaCount}/{MAX_WAYPOINT_MODE_POINTS})
             </p>
             <p className="mt-1 text-xs text-zinc-500">
-              Kliknij mapę, aby dodać pinezki. Generator złoży pętlę: start →
-              punkty → start. Dystans wynika z trasy.
+              Dodaj pinezki z mapy albo wyszukaj miejsce. Generator złoży pętlę:
+              start → punkty → start. Dystans wynika z trasy.
             </p>
           </div>
+          <LocationSearch
+            lat={values.lat}
+            lng={values.lng}
+            inputId="waypoint-place-search"
+            compact
+            addPointMode
+            placeholder="Szukaj miejsca / adresu do zaliczenia…"
+            onSelect={(location) => {
+              const placed = values.viaPoints.filter(
+                (p) =>
+                  Number.isFinite(p.lat) &&
+                  Number.isFinite(p.lng) &&
+                  !(Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001),
+              );
+              if (placed.length >= MAX_WAYPOINT_MODE_POINTS) return;
+              onChange({
+                ...values,
+                viaPoints: [
+                  ...placed,
+                  {
+                    lat: location.lat,
+                    lng: location.lng,
+                    label: location.label,
+                  },
+                ],
+              });
+            }}
+          />
           <button
             type="button"
             onClick={onTogglePickViaOnMap}
@@ -403,10 +431,12 @@ export function RouteForm({
               ? "Kliknij mapę…"
               : viaCount >= MAX_WAYPOINT_MODE_POINTS
                 ? "Limit punktów"
-                : "Dodaj punkt na mapie"}
+                : "Albo dodaj punkt na mapie"}
           </button>
           {viaCount === 0 ? (
-            <p className="text-xs text-zinc-500">Brak punktów — dodaj przynajmniej jeden.</p>
+            <p className="text-xs text-zinc-500">
+              Brak punktów — wyszukaj adres albo kliknij mapę.
+            </p>
           ) : (
             <ul className="space-y-2">
               {values.viaPoints.map((point, index) => (
@@ -414,11 +444,14 @@ export function RouteForm({
                   key={`${point.lat}-${point.lng}-${index}`}
                   className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 px-3 py-2 text-sm"
                 >
-                  <span className="text-zinc-300">
-                    <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold text-white">
+                  <span className="flex min-w-0 items-center gap-2 text-zinc-300">
+                    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold text-white">
                       {index + 1}
                     </span>
-                    {point.lat.toFixed(4)}, {point.lng.toFixed(4)}
+                    <span className="truncate">
+                      {point.label ??
+                        `${point.lat.toFixed(4)}, ${point.lng.toFixed(4)}`}
+                    </span>
                   </span>
                   <button
                     type="button"
@@ -428,7 +461,7 @@ export function RouteForm({
                         viaPoints: values.viaPoints.filter((_, i) => i !== index),
                       })
                     }
-                    className="text-xs text-zinc-500 hover:text-red-300"
+                    className="shrink-0 text-xs text-zinc-500 hover:text-red-300"
                   >
                     Usuń
                   </button>

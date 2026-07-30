@@ -15,6 +15,9 @@ interface LocationSearchProps {
   onSelect: (location: { lat: number; lng: number; label: string }) => void;
   inputId?: string;
   compact?: boolean;
+  /** Add-a-point UX: no “selected coords” footer; clear query after pick. */
+  addPointMode?: boolean;
+  placeholder?: string;
 }
 
 export function LocationSearch({
@@ -23,6 +26,8 @@ export function LocationSearch({
   onSelect,
   inputId = "location-search",
   compact = false,
+  addPointMode = false,
+  placeholder,
 }: LocationSearchProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<GeocodeResult[]>([]);
@@ -34,13 +39,14 @@ export function LocationSearch({
   const fromSearchRef = useRef(false);
 
   useEffect(() => {
+    if (addPointMode) return;
     if (fromSearchRef.current) {
       fromSearchRef.current = false;
       return;
     }
     setSelectedLabel(null);
     setQuery("");
-  }, [lat, lng]);
+  }, [lat, lng, addPointMode]);
 
   const search = useCallback(async (text: string) => {
     if (text.trim().length < 2) {
@@ -91,8 +97,13 @@ export function LocationSearch({
 
   function handleSelect(result: GeocodeResult) {
     fromSearchRef.current = true;
-    setQuery(result.place);
-    setSelectedLabel(result.label);
+    if (addPointMode) {
+      setQuery("");
+      setSelectedLabel(null);
+    } else {
+      setQuery(result.place);
+      setSelectedLabel(result.label);
+    }
     setOpen(false);
     setResults([]);
     onSelect({ lat: result.lat, lng: result.lng, label: result.label });
@@ -117,7 +128,10 @@ export function LocationSearch({
           onFocus={() => {
             if (results.length > 0) setOpen(true);
           }}
-          placeholder={compact ? "Szukaj miejsca…" : "np. Candelo, Milano, Warszawa…"}
+          placeholder={
+            placeholder ??
+            (compact ? "Szukaj miejsca…" : "np. Candelo, Milano, Warszawa…")
+          }
           autoComplete="off"
           className="w-full rounded-lg border border-zinc-700 bg-zinc-900 py-2 pl-3 pr-9 text-sm placeholder:text-zinc-600"
         />
@@ -145,15 +159,17 @@ export function LocationSearch({
         </ul>
       ) : null}
 
-      {selectedLabel ? (
-        <p className="mt-1.5 truncate text-[11px] text-amber-400/80">
-          {selectedLabel}
-        </p>
-      ) : (
-        <p className="mt-1.5 text-[11px] text-zinc-500">
-          Wybrany punkt: {lat.toFixed(4)}°, {lng.toFixed(4)}°
-        </p>
-      )}
+      {!addPointMode ? (
+        selectedLabel ? (
+          <p className="mt-1.5 truncate text-[11px] text-amber-400/80">
+            {selectedLabel}
+          </p>
+        ) : (
+          <p className="mt-1.5 text-[11px] text-zinc-500">
+            Wybrany punkt: {lat.toFixed(4)}°, {lng.toFixed(4)}°
+          </p>
+        )
+      ) : null}
     </div>
   );
 }
