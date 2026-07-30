@@ -117,7 +117,7 @@ export function LocationSearch({
           onFocus={() => {
             if (results.length > 0) setOpen(true);
           }}
-          placeholder={compact ? "Szukaj adresu…" : "np. Warszawa, Kraków, Biskupice…"}
+          placeholder={compact ? "Szukaj miejsca…" : "np. Candelo, Milano, Warszawa…"}
           autoComplete="off"
           className="w-full rounded-lg border border-zinc-700 bg-zinc-900 py-2 pl-3 pr-9 text-sm placeholder:text-zinc-600"
         />
