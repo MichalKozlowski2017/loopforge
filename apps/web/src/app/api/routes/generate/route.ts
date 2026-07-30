@@ -4,6 +4,7 @@ import type {
   RouteGenerationStreamEvent,
   StoredRoute,
 } from "@loopforge/osm-types";
+import * as Sentry from "@sentry/nextjs";
 import { requireUser } from "@/lib/supabase/require-user";
 import { logGenerationEvent } from "@/lib/admin/generation-log";
 
@@ -123,6 +124,15 @@ export async function POST(request: Request) {
         send({ type: "complete", route: stored });
       } catch (error) {
         console.error(error);
+        Sentry.captureException(error, {
+          tags: { area: "route-generate" },
+          extra: {
+            bikeType: routeInput.bikeType,
+            distanceKm: routeInput.distanceKm,
+            direction: routeInput.direction,
+            profile: routeInput.profile,
+          },
+        });
         const message =
           error instanceof Error ? error.message : "Błąd generowania trasy";
         void logGenerationEvent({

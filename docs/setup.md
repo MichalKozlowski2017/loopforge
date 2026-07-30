@@ -53,6 +53,10 @@ ROUTING_ENGINE=pgrouting
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
+
+# Monitoring (Sentry)
+NEXT_PUBLIC_SENTRY_DSN=
+SENTRY_DSN=
 ```
 
 Na Vercel użyj **connection pooler** Supabase (Transaction mode) jako `DATABASE_URL`.
