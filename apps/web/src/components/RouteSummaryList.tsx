@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState, type MouseEvent } from "react";
 import { getRideProfileLabel } from "@loopforge/osm-types";
 import { RouteShapeThumb } from "@/components/RouteShapeThumb";
 import type { CloudRouteSummary } from "@/lib/cloud-routes-store";
@@ -21,7 +22,90 @@ function formatDate(iso: string): string {
   });
 }
 
-export function RouteSummaryList({ routes }: { routes: CloudRouteSummary[] }) {
+function FavoriteToggle({
+  route,
+  onChanged,
+}: {
+  route: CloudRouteSummary;
+  onChanged: (next: CloudRouteSummary, enabled: boolean) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const isFavorite = Boolean(route.isFavorite);
+
+  async function toggle(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/routes/${route.id}/favorite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !isFavorite }),
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        route?: { isFavorite?: boolean };
+        error?: string;
+      } | null;
+      if (!response.ok) {
+        window.alert(payload?.error ?? "Nie udało się zapisać ulubionej.");
+        return;
+      }
+      onChanged(
+        { ...route, isFavorite: !isFavorite },
+        !isFavorite,
+      );
+    } catch {
+      window.alert("Nie udało się zapisać ulubionej.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={(event) => void toggle(event)}
+      aria-label={isFavorite ? "Usuń z ulubionych" : "Zapisz w ulubionych"}
+      aria-pressed={isFavorite}
+      title={isFavorite ? "Usuń z ulubionych" : "Zapisz w ulubionych"}
+      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-lg transition disabled:opacity-50 ${
+        isFavorite
+          ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
+          : "border-zinc-700 text-zinc-500 hover:border-amber-700/40 hover:text-amber-200"
+      }`}
+    >
+      {isFavorite ? "★" : "☆"}
+    </button>
+  );
+}
+
+export function RouteSummaryList({
+  routes: initialRoutes,
+  removeOnUnfavorite = false,
+}: {
+  routes: CloudRouteSummary[];
+  /** When true (favorites page), unfavoriting removes the row. */
+  removeOnUnfavorite?: boolean;
+}) {
+  const [routes, setRoutes] = useState(initialRoutes);
+
+  useEffect(() => {
+    setRoutes(initialRoutes);
+  }, [initialRoutes]);
+
+  function handleFavoriteChange(next: CloudRouteSummary, enabled: boolean) {
+    setRoutes((current) => {
+      if (!enabled && removeOnUnfavorite) {
+        return current.filter((route) => route.id !== next.id);
+      }
+      return current.map((route) =>
+        route.id === next.id ? { ...route, isFavorite: enabled } : route,
+      );
+    });
+  }
+
   return (
     <ul className="space-y-3">
       {routes.map((route) => (
@@ -39,11 +123,6 @@ export function RouteSummaryList({ routes }: { routes: CloudRouteSummary[] }) {
                 />
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-zinc-100">
-                    {route.isFavorite ? (
-                      <span className="mr-1.5 text-amber-300" aria-label="Ulubiona">
-                        ★
-                      </span>
-                    ) : null}
                     {BIKE_LABELS[route.bikeType]} · {route.distanceKm.toFixed(1)}{" "}
                     km · {route.direction}
                   </p>
@@ -61,7 +140,11 @@ export function RouteSummaryList({ routes }: { routes: CloudRouteSummary[] }) {
                   ) : null}
                 </div>
               </Link>
-              <div className="shrink-0 self-start pt-0.5 text-right">
+              <div className="flex shrink-0 flex-col items-end gap-2 self-start pt-0.5">
+                <FavoriteToggle
+                  route={route}
+                  onChanged={handleFavoriteChange}
+                />
                 {route.rating != null ? (
                   <Link
                     href={`/routes/${route.id}#feedback`}

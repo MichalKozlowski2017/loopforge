@@ -101,7 +101,7 @@ export default function FavoriteRoutesPage() {
           </Link>
         </div>
       ) : (
-        <RouteSummaryList routes={routes} />
+        <RouteSummaryList routes={routes} removeOnUnfavorite />
       )}
     </main>
   );
