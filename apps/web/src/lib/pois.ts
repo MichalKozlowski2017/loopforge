@@ -10,15 +10,13 @@ export const POI_CATEGORIES = [
 export type PoiCategory = (typeof POI_CATEGORIES)[number];
 
 export interface PoiDetails {
-  rating?: number;
-  userRatingCount?: number;
   address?: string;
   cuisine?: string;
   openingHours?: string;
   phone?: string;
   website?: string;
   googleMapsUri: string;
-  source: "google" | "maps-link";
+  source: "maps-link";
 }
 
 export const POI_CATEGORY_META: Record<

@@ -50,8 +50,6 @@ export function PoiDetailCard({
   onClose,
 }: PoiDetailCardProps) {
   const meta = POI_CATEGORY_META[poi.category];
-  const rating = details?.rating;
-  const ratingCount = details?.userRatingCount;
   const mapsUri = details?.googleMapsUri;
   const cuisine = details?.cuisine;
   const openingHours = details?.openingHours;
@@ -83,22 +81,10 @@ export function PoiDetailCard({
 
       <div className="mt-2 space-y-1.5 text-[12px] text-zinc-300">
         {detailsLoading ? (
-          <p className="text-zinc-500">Szukam ocen…</p>
-        ) : rating != null ? (
-          <p>
-            <span className="font-medium text-amber-300">
-              ★ {rating.toFixed(1)}
-            </span>
-            {ratingCount != null ? (
-              <span className="text-zinc-500"> ({ratingCount} opinii)</span>
-            ) : null}
-            {details?.source === "google" ? (
-              <span className="text-zinc-600"> · Google</span>
-            ) : null}
-          </p>
+          <p className="text-zinc-500">Otwieram szczegóły…</p>
         ) : (
           <p className="text-zinc-500">
-            Brak oceny w aplikacji — zajrzyj do Google Maps.
+            Oceny i recenzje — w Google Maps (bezpłatny link).
           </p>
         )}
 
