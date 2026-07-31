@@ -35,7 +35,9 @@ export default function RootLayout({
     >
       <body className="flex min-h-dvh flex-col bg-zinc-950 text-zinc-100 lg:h-dvh lg:overflow-hidden">
         <SiteHeader />
-        <div className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-hidden">{children}</div>
+        <div className="flex min-h-0 flex-1 flex-col lg:overflow-hidden">
+          {children}
+        </div>
         <Analytics />
       </body>
     </html>

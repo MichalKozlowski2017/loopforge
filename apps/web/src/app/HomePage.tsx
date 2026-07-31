@@ -713,10 +713,14 @@ export default function HomePage() {
   const mapVeiled = loading || overlayExiting || routeRevealActive;
 
   return (
-    <main className="flex flex-col lg:min-h-0 lg:h-full lg:flex-1 lg:flex-row lg:overflow-hidden">
+    <main className="flex min-h-0 flex-1 flex-col lg:h-full lg:flex-row lg:overflow-hidden">
       <section
         ref={mapSectionRef}
-        className="relative order-1 h-[min(46vh,26rem)] min-h-[240px] shrink-0 scroll-mt-3 p-3 lg:order-2 lg:h-full lg:min-h-0 lg:min-w-0 lg:flex-1 lg:p-4"
+        className={`relative order-1 shrink-0 scroll-mt-14 p-3 lg:order-2 lg:h-full lg:min-h-0 lg:min-w-0 lg:flex-1 lg:p-4 ${
+          pickOnMap || pickViaOnMap
+            ? "h-[min(62vh,32rem)] min-h-[280px] sticky top-14 z-20 bg-zinc-950 lg:static lg:top-auto"
+            : "h-[min(42vh,22rem)] min-h-[220px]"
+        }`}
       >
         <MapView
           center={[form.lng, form.lat]}
@@ -767,13 +771,26 @@ export default function HomePage() {
           />
         ) : null}
         {route?.mapGeojson && !mapVeiled ? <SurfaceLegend /> : null}
+        {(pickOnMap || pickViaOnMap) && !mapVeiled ? (
+          <div className="absolute bottom-5 left-1/2 z-30 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 justify-center lg:hidden">
+            <button
+              type="button"
+              onClick={() => {
+                setPickOnMap(false);
+                setPickViaOnMap(false);
+              }}
+              className="w-full rounded-full border border-amber-500/40 bg-zinc-950/95 px-4 py-3 text-sm font-semibold text-amber-100 shadow-lg backdrop-blur-sm"
+            >
+              {pickViaOnMap ? "Gotowe — wróć do formularza" : "Gotowe — punkt ustawiony"}
+            </button>
+          </div>
+        ) : null}
       </section>
 
-      <aside className="scrollbar-hidden order-2 w-full border-b border-amber-950/30 p-4 lg:order-1 lg:h-full lg:min-h-0 lg:w-96 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-6">
-        <div className="mb-6">
+      <aside className="order-2 flex min-h-0 w-full flex-col border-t border-amber-950/30 bg-zinc-950 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] lg:order-1 lg:h-full lg:w-96 lg:shrink-0 lg:overflow-y-auto lg:border-t-0 lg:border-r lg:p-6 lg:pb-6">
+        <div className="mb-4 lg:mb-6">
           <p className="text-sm text-zinc-400">
-            Trzy kroki: styl jazdy, trasa, opcje. Generowanie zwykle 1–2 min i
-            wymaga konta.
+            Trzy kroki: styl, trasa, opcje. Generowanie zwykle 1–2 min.
           </p>
         </div>
 

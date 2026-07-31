@@ -48,7 +48,7 @@ export function AuthControls({ className = "" }: { className?: string }) {
     return (
       <Link
         href="/login"
-        className={`inline-flex h-8 items-center rounded-md border border-zinc-600 px-2.5 text-sm font-medium text-zinc-200 transition hover:border-amber-500/50 hover:text-amber-200 ${className}`}
+        className={`inline-flex h-10 items-center justify-center rounded-lg border border-zinc-600 px-3 text-sm font-medium text-zinc-200 transition hover:border-amber-500/50 hover:text-amber-200 sm:h-8 sm:rounded-md sm:px-2.5 ${className}`}
       >
         Zaloguj się
       </Link>
@@ -64,14 +64,14 @@ export function AuthControls({ className = "" }: { className?: string }) {
   return (
     <div className={`flex items-center gap-2 ${className}`}>
       <span
-        className="hidden max-w-[9rem] truncate text-sm text-zinc-400 sm:inline"
+        className="min-w-0 flex-1 truncate text-sm text-zinc-400 sm:max-w-[9rem] sm:flex-none"
         title={user.email ?? undefined}
       >
         {label}
       </span>
       <button
         type="button"
-        className="inline-flex h-8 items-center rounded-md border border-zinc-600 px-2.5 text-sm font-medium text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+        className="inline-flex h-10 shrink-0 items-center rounded-lg border border-zinc-600 px-3 text-sm font-medium text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100 sm:h-8 sm:rounded-md sm:px-2.5"
         onClick={() => {
           void createClient()
             .auth.signOut()

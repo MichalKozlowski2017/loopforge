@@ -169,19 +169,19 @@ export function RouteForm({
         if (step < 3) handleNext();
       }}
     >
-      <nav aria-label="Kroki generowania" className="flex items-center gap-1">
+      <nav aria-label="Kroki generowania" className="flex items-center gap-1.5">
         {STEPS.map((item, index) => {
           const active = step === item.id;
           const reachable = item.id <= step;
           return (
-            <div key={item.id} className="flex min-w-0 flex-1 items-center gap-1">
+            <div key={item.id} className="flex min-w-0 flex-1 items-center gap-1.5">
               <button
                 type="button"
                 disabled={!reachable}
                 onClick={() => {
                   if (item.id < step) goToStep(item.id);
                 }}
-                className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition ${
+                className={`flex w-full items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-center transition sm:justify-start sm:px-2.5 sm:text-left ${
                   active
                     ? "border-amber-500 bg-amber-500/10 text-amber-200"
                     : reachable
@@ -200,10 +200,12 @@ export function RouteForm({
                 >
                   {item.id}
                 </span>
-                <span className="truncate text-xs font-medium">{item.label}</span>
+                <span className="hidden truncate text-xs font-medium sm:inline">
+                  {item.label}
+                </span>
               </button>
               {index < STEPS.length - 1 ? (
-                <span className="shrink-0 text-zinc-700" aria-hidden>
+                <span className="hidden shrink-0 text-zinc-700 sm:inline" aria-hidden>
                   ·
                 </span>
               ) : null}
@@ -706,12 +708,12 @@ export function RouteForm({
         </p>
       ) : null}
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 pt-1">
         {step > 1 ? (
           <button
             type="button"
             onClick={handleBack}
-            className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-zinc-300 transition hover:border-amber-700/40 hover:text-amber-100"
+            className="min-h-11 rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-zinc-300 transition hover:border-amber-700/40 hover:text-amber-100"
           >
             Wstecz
           </button>
@@ -721,7 +723,7 @@ export function RouteForm({
           <button
             type="button"
             onClick={handleNext}
-            className="flex-1 rounded-lg bg-linear-to-r from-amber-700 via-orange-600 to-amber-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-orange-950/25 transition hover:from-amber-600 hover:via-orange-500 hover:to-amber-400"
+            className="min-h-11 flex-1 rounded-lg bg-linear-to-r from-amber-700 via-orange-600 to-amber-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-orange-950/25 transition hover:from-amber-600 hover:via-orange-500 hover:to-amber-400"
           >
             Dalej
           </button>
@@ -730,7 +732,7 @@ export function RouteForm({
             type="button"
             disabled={loading}
             onClick={handleGenerateClick}
-            className="flex-1 rounded-lg bg-linear-to-r from-amber-700 via-orange-600 to-amber-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-orange-950/25 transition hover:from-amber-600 hover:via-orange-500 hover:to-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
+            className="min-h-11 flex-1 rounded-lg bg-linear-to-r from-amber-700 via-orange-600 to-amber-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-orange-950/25 transition hover:from-amber-600 hover:via-orange-500 hover:to-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading
               ? "Generuję…"
