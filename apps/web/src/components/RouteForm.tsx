@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   BikeType,
   Direction,
@@ -83,6 +83,8 @@ export function RouteForm({
 }: RouteFormProps) {
   const [step, setStep] = useState<WizardStep>(1);
   const [stepError, setStepError] = useState<string | null>(null);
+  /** Prevent Dalej→Generuj click-through when the footer button swaps in place. */
+  const allowGenerateRef = useRef(false);
 
   const profiles = getRideProfileOptions(values.bikeType);
   const selectedProfile = profiles.find((profile) => profile.value === values.profile);
@@ -108,6 +110,14 @@ export function RouteForm({
   function goToStep(next: WizardStep) {
     setStepError(null);
     setStep(next);
+    if (next === 3) {
+      allowGenerateRef.current = false;
+      window.setTimeout(() => {
+        allowGenerateRef.current = true;
+      }, 400);
+    } else {
+      allowGenerateRef.current = false;
+    }
   }
 
   function canLeaveStep2(): boolean {
@@ -145,16 +155,18 @@ export function RouteForm({
     goToStep((step - 1) as WizardStep);
   }
 
+  function handleGenerateClick() {
+    if (step !== 3 || !allowGenerateRef.current || loading) return;
+    onSubmit();
+  }
+
   return (
     <form
       className="space-y-4"
       onSubmit={(event) => {
+        // Enter in inputs advances steps — never starts generation.
         event.preventDefault();
-        if (step !== 3) {
-          handleNext();
-          return;
-        }
-        onSubmit();
+        if (step < 3) handleNext();
       }}
     >
       <nav aria-label="Kroki generowania" className="flex items-center gap-1">
@@ -715,8 +727,9 @@ export function RouteForm({
           </button>
         ) : (
           <button
-            type="submit"
+            type="button"
             disabled={loading}
+            onClick={handleGenerateClick}
             className="flex-1 rounded-lg bg-linear-to-r from-amber-700 via-orange-600 to-amber-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-orange-950/25 transition hover:from-amber-600 hover:via-orange-500 hover:to-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading
