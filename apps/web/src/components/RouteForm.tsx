@@ -451,10 +451,10 @@ export function RouteForm({
                 }`}
               >
                 {pickViaOnMap
-                  ? "Kliknij mapę…"
+                  ? "Klikaj mapę… (ponownie = koniec)"
                   : viaCount >= MAX_WAYPOINT_MODE_POINTS
                     ? "Limit punktów"
-                    : "Albo dodaj punkt na mapie"}
+                    : "Dodawaj punkty na mapie"}
               </button>
               {viaCount === 0 ? (
                 <p className="text-xs text-zinc-500">

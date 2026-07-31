@@ -1063,7 +1063,7 @@ export function MapView({
       ) : null}
       {pickVia ? (
         <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-violet-400/50 bg-zinc-950/90 px-4 py-1.5 text-xs text-violet-200 shadow-lg">
-          Kliknij mapę, aby dodać punkt do zaliczenia
+          Klikaj mapę, żeby dodawać kolejne punkty
         </div>
       ) : null}
     </div>

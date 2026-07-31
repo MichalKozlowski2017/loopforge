@@ -482,7 +482,7 @@ export default function HomePage() {
         viaPoints: [...placed, { lat: point.lat, lng: point.lng }],
       };
     });
-    setPickViaOnMap(false);
+    // Stay in pin mode so consecutive map clicks keep adding points.
     setPickOnMap(false);
     setLocationMode("manual");
   }
@@ -493,6 +493,19 @@ export default function HomePage() {
     setLocationMode("loading");
     refreshGeolocation();
   }
+
+  useEffect(() => {
+    if (!pickViaOnMap) return;
+    const placed = form.viaPoints.filter(
+      (p) =>
+        Number.isFinite(p.lat) &&
+        Number.isFinite(p.lng) &&
+        !(Math.abs(p.lat) < 0.0001 && Math.abs(p.lng) < 0.0001),
+    ).length;
+    if (placed >= MAX_WAYPOINT_MODE_POINTS) {
+      setPickViaOnMap(false);
+    }
+  }, [form.viaPoints, pickViaOnMap]);
 
   useEffect(() => {
     const lockScroll = loading || overlayExiting || routeRevealActive;
