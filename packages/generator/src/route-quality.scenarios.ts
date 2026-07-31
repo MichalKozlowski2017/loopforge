@@ -816,7 +816,7 @@ export async function runLiveRouteScenario(
   const approach = Boolean(scenario.request.approachEnabled);
   try {
     options.onPhase?.("generate");
-    const { route } = await generateRoute(scenario.request, {
+    const route = await generateRoute(scenario.request, {
       onProgress: options.onProgress,
     });
     const durationMs = Date.now() - started;

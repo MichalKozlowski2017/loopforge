@@ -31,7 +31,7 @@ function isAbortError(err: unknown): boolean {
 export async function consumeGenerationStream(
   response: Response,
   onProgress: (progress: RouteGenerationProgress) => void,
-): Promise<{ route: StoredRoute; variants?: StoredRoute[] }> {
+): Promise<StoredRoute> {
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as {
       error?: string;
@@ -47,7 +47,6 @@ export async function consumeGenerationStream(
   const decoder = new TextDecoder();
   let buffer = "";
   let route: StoredRoute | null = null;
-  let variants: StoredRoute[] | undefined;
 
   try {
     while (true) {
@@ -78,10 +77,6 @@ export async function consumeGenerationStream(
           onProgress(event.progress);
         } else if (event?.type === "complete") {
           route = event.route;
-          variants =
-            event.variants && event.variants.length > 1
-              ? event.variants
-              : undefined;
         } else if (event?.type === "error") {
           throw new Error(event.error);
         }
@@ -101,5 +96,5 @@ export async function consumeGenerationStream(
     throw new Error("Serwer nie zwrócił trasy");
   }
 
-  return { route, variants };
+  return route;
 }
