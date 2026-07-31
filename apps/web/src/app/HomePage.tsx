@@ -759,9 +759,8 @@ export default function HomePage() {
       <aside className="scrollbar-hidden order-2 w-full border-b border-amber-950/30 p-4 lg:order-1 lg:h-full lg:min-h-0 lg:w-96 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-6">
         <div className="mb-6">
           <p className="text-sm text-zinc-400">
-            {form.planningMode === "waypoints"
-              ? "Ustaw start, dodaj punkty na mapie — generator złoży pętlę przez nie. Zwykle 1–2 minuty, wymaga konta."
-              : "Ustaw punkt startu (GPS, wyszukiwarka lub mapa), wybierz dystans i kierunek — generowanie zwykle trwa 1–2 minuty i wymaga konta."}
+            Trzy kroki: styl jazdy, trasa, opcje. Generowanie zwykle 1–2 min i
+            wymaga konta.
           </p>
         </div>
 
