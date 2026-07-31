@@ -130,14 +130,15 @@ export async function POST(request: Request) {
       };
 
       try {
-        const generated = await generateRoute(routeInput, {
-          onProgress: (progress) => {
-            send({ type: "progress", progress });
-          },
-        });
+        const { route: generated, variants: generatedVariants } =
+          await generateRoute(routeInput, {
+            onProgress: (progress) => {
+              send({ type: "progress", progress });
+            },
+          });
 
-        const stored: StoredRoute = {
-          ...generated,
+        const toStored = (generatedRoute: typeof generated): StoredRoute => ({
+          ...generatedRoute,
           bikeType: routeInput.bikeType,
           direction: routeInput.direction,
           profile: routeInput.profile,
@@ -152,11 +153,18 @@ export async function POST(request: Request) {
           start: routeInput.start,
           loopEntry:
             routeInput.approachEnabled &&
-            generated.geojson.properties.loopEntry &&
-            typeof generated.geojson.properties.loopEntry === "object"
-              ? (generated.geojson.properties.loopEntry as StoredRoute["loopEntry"])
+            generatedRoute.geojson.properties.loopEntry &&
+            typeof generatedRoute.geojson.properties.loopEntry === "object"
+              ? (generatedRoute.geojson.properties
+                  .loopEntry as StoredRoute["loopEntry"])
               : undefined,
-        };
+        });
+
+        const stored = toStored(generated);
+        const storedVariants =
+          generatedVariants && generatedVariants.length > 1
+            ? generatedVariants.map(toStored)
+            : undefined;
 
         void logGenerationEvent({
           userId,
@@ -166,7 +174,11 @@ export async function POST(request: Request) {
           routeId: stored.id,
         });
 
-        send({ type: "complete", route: stored });
+        send({
+          type: "complete",
+          route: stored,
+          variants: storedVariants,
+        });
       } catch (error) {
         console.error(error);
         Sentry.captureException(error, {

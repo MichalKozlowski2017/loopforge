@@ -85,6 +85,11 @@ export interface GenerateRouteRequest {
    * Waypoints mode: required (1–5), order is ride order.
    */
   viaPoints?: RouteViaPoint[];
+  /**
+   * How many distinct loop alternatives to return (loop mode only).
+   * Default 1. Ignored for waypoints and when approach is enabled.
+   */
+  loopVariantCount?: 1 | 2 | 3;
 }
 
 export interface SurfaceBreakdownItem {
@@ -217,5 +222,5 @@ export interface RouteGenerationProgress {
 
 export type RouteGenerationStreamEvent =
   | { type: "progress"; progress: RouteGenerationProgress }
-  | { type: "complete"; route: StoredRoute }
+  | { type: "complete"; route: StoredRoute; variants?: StoredRoute[] }
   | { type: "error"; error: string };

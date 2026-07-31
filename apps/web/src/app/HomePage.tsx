@@ -18,6 +18,7 @@ import {
   RouteSummaryDialog,
   type RouteSummaryMetric,
 } from "@/components/RouteSummaryDialog";
+import { RouteVariantPicker } from "@/components/RouteVariantPicker";
 import { SurfaceLegend } from "@/components/SurfaceLegend";
 import { FirstRunDialog, hasSeenFirstRun } from "@/components/FirstRunDialog";
 import { useGeolocation } from "@/lib/use-geolocation";
@@ -350,6 +351,7 @@ const DEFAULT_FORM: RouteFormValues = {
   preferQuietRoutes: false,
   approachEnabled: false,
   approachDistanceKm: 10,
+  loopVariantCount: 1,
   viaPoints: [],
   ...FALLBACK_START,
 };
@@ -360,6 +362,9 @@ export default function HomePage() {
 
   const [form, setForm] = useState<RouteFormValues>(DEFAULT_FORM);
   const [route, setRoute] = useState<StoredRoute | null>(null);
+  const [routeVariants, setRouteVariants] = useState<StoredRoute[] | null>(
+    null,
+  );
   const [loading, setLoading] = useState(false);
   const [overlayExiting, setOverlayExiting] = useState(false);
   const [routeRevealActive, setRouteRevealActive] = useState(false);
@@ -436,6 +441,7 @@ export default function HomePage() {
           preferQuietRoutes: data.preferQuietRoutes ?? false,
           approachEnabled: data.approachEnabled ?? false,
           approachDistanceKm: data.approachDistanceKm ?? 10,
+          loopVariantCount: 1,
           viaPoints: data.viaPoints ?? [],
           lat: data.start.lat,
           lng: data.start.lng,
@@ -538,6 +544,29 @@ export default function HomePage() {
     setRouteRevealActive(false);
   }, []);
 
+  async function confirmRouteVariant(selected: StoredRoute) {
+    setRoute(selected);
+    setRouteVariants(null);
+    setSummaryDialog(
+      buildRouteSummaryDialogState(selected, {
+        planningMode: selected.planningMode ?? form.planningMode,
+        distanceKm: form.distanceKm,
+        avoidAsphalt: form.avoidAsphalt,
+        preferQuietRoutes: form.preferQuietRoutes,
+        approachEnabled: form.approachEnabled,
+      }),
+    );
+    try {
+      await fetch("/api/routes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(selected),
+      });
+    } catch {
+      // ignore persistence errors
+    }
+  }
+
   async function handleGenerate() {
     if (isAuthRequired()) {
       try {
@@ -565,6 +594,7 @@ export default function HomePage() {
     setPickOnMap(false);
     setPickViaOnMap(false);
     setRoute(null);
+    setRouteVariants(null);
 
     const tick = window.setInterval(() => {
       setLoadingSeconds((seconds) => seconds + 1);
@@ -628,6 +658,12 @@ export default function HomePage() {
             ? form.approachDistanceKm
             : undefined,
         viaPoints: viaPoints.length > 0 ? viaPoints : undefined,
+        loopVariantCount:
+          !waypointsMode &&
+          !form.approachEnabled &&
+          form.loopVariantCount === 3
+            ? 3
+            : undefined,
       };
 
       if (!waypointsMode && request.viaPoints?.length) {
@@ -665,28 +701,39 @@ export default function HomePage() {
         return;
       }
 
-      const generated = await consumeGenerationStream(response, (progress) => {
-        setGenerationProgress(progress);
-      });
-      setRoute(generated);
-      setSummaryDialog(
-        buildRouteSummaryDialogState(generated, {
-          ...request,
-          planningMode:
-            generated.planningMode ??
-            request.planningMode ??
-            form.planningMode,
-        }),
+      const { route: generated, variants } = await consumeGenerationStream(
+        response,
+        (progress) => {
+          setGenerationProgress(progress);
+        },
       );
-      // Cloud history is best-effort — never fail the ride on save errors.
-      try {
-        await fetch("/api/routes", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(generated),
-        });
-      } catch {
-        // ignore persistence errors
+
+      if (variants && variants.length > 1) {
+        setRouteVariants(variants);
+        setRoute(variants[0]!);
+        setSummaryDialog(null);
+      } else {
+        setRouteVariants(null);
+        setRoute(generated);
+        setSummaryDialog(
+          buildRouteSummaryDialogState(generated, {
+            ...request,
+            planningMode:
+              generated.planningMode ??
+              request.planningMode ??
+              form.planningMode,
+          }),
+        );
+        // Cloud history is best-effort — never fail the ride on save errors.
+        try {
+          await fetch("/api/routes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(generated),
+          });
+        } catch {
+          // ignore persistence errors
+        }
       }
     } catch (err) {
       const aborted =
@@ -813,13 +860,24 @@ export default function HomePage() {
           }}
         />
 
+        {routeVariants && routeVariants.length > 1 && route ? (
+          <RouteVariantPicker
+            variants={routeVariants}
+            selectedId={route.id}
+            onSelect={setRoute}
+            onConfirm={(selected) => {
+              void confirmRouteVariant(selected);
+            }}
+          />
+        ) : null}
+
         {error ? (
           <p className="mt-4 rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-sm text-red-300">
             {error}
           </p>
         ) : null}
 
-        {route ? (
+        {route && !routeVariants ? (
           <section className="mt-6 space-y-4 rounded-xl border border-amber-950/30 bg-zinc-900/60 p-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium text-zinc-200">Metryki</h2>

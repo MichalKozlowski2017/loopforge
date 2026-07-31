@@ -39,6 +39,11 @@ import {
   type LoopShape,
 } from "./loop-waypoints";
 import {
+  corridorCellOverlap,
+  normalizeLoopVariantCount,
+  pickDiverseLoopCandidates,
+} from "./loop-variants";
+import {
   prepareCoordinatesForNavigation,
   pruneDeadEndSpurs,
   pruneMapGeoJson,
@@ -119,6 +124,18 @@ export interface GenerateRouteOptions {
    * 3‑minute abort so we ship a route instead of timing out empty-handed.
    */
   absoluteDeadlineMs?: number;
+  /**
+   * How many distinct shippable loops to keep from one search (1–3).
+   * Softens early-exit so more jitter variants can run.
+   */
+  desiredLoopVariants?: 1 | 2 | 3;
+}
+
+/** Outcome of generateRoute — primary route plus optional alternatives. */
+export interface GenerateRouteResult {
+  route: GeneratedRoute;
+  /** Present when loopVariantCount > 1; includes `route` as index 0. */
+  variants?: GeneratedRoute[];
 }
 
 function reportProgress(
@@ -1196,8 +1213,13 @@ async function generateRouteWithEngine(
 ): Promise<{
   route: GeneratedRoute;
   loopSegments: { tags: OsmTags; distanceM: number }[];
+  variants?: GeneratedRoute[];
 }> {
   const variants = 5;
+  const desiredLoopVariants =
+    options?.approachCoordinates != null
+      ? 1
+      : normalizeLoopVariantCount(options?.desiredLoopVariants ?? 1);
   const jitter = createGenerationJitter(variants);
   const profilePrefs = getRideProfileLoopPrefs(
     request.bikeType,
@@ -1225,6 +1247,30 @@ async function generateRouteWithEngine(
   let routedFetches = 0;
   /** After one avoid/quiet try, drop prefs so recovery clock isn't burned. */
   let prefsOneShotDone = request.bikeType === "road";
+  const acceptedPool: { result: RoutedLoopResult; quality: number }[] = [];
+  const needsMoreLoopVariants = (): boolean => {
+    if (desiredLoopVariants <= 1) return false;
+    if (Date.now() > deadlineMs - 18_000) return false;
+    const diverse = pickDiverseLoopCandidates(
+      acceptedPool.map((entry) => ({
+        coordinates: entry.result.coordinates,
+        quality: entry.quality,
+        payload: entry,
+      })),
+      desiredLoopVariants,
+    );
+    return diverse.length < desiredLoopVariants;
+  };
+  const rememberAccepted = (result: RoutedLoopResult, quality: number) => {
+    if (desiredLoopVariants <= 1) return;
+    const tooSimilar = acceptedPool.some(
+      (entry) =>
+        corridorCellOverlap(entry.result.coordinates, result.coordinates) >
+        0.55,
+    );
+    if (tooSimilar) return;
+    acceptedPool.push({ result, quality });
+  };
   const maxRoutedFetches = baseUrban
     ? MAX_ROUTED_FETCHES_URBAN
     : MAX_ROUTED_FETCHES;
@@ -1706,6 +1752,7 @@ async function generateRouteWithEngine(
             bestScore = quality;
             best = refined;
             bestApproachOverlap = metrics.approachOverlap;
+            rememberAccepted(refined, quality);
           } else if (
             options?.approachCoordinates != null &&
             quality <= bestScore + 1.2 &&
@@ -1714,7 +1761,12 @@ async function generateRouteWithEngine(
             bestScore = quality;
             best = refined;
             bestApproachOverlap = metrics.approachOverlap;
+            rememberAccepted(refined, quality);
+          } else {
+            rememberAccepted(refined, quality);
           }
+        } else {
+          rememberAccepted(refined, quality);
         }
 
         if (
@@ -1730,7 +1782,8 @@ async function generateRouteWithEngine(
             false,
             baseUrban,
           ) &&
-          refined.distanceKm >= minLoopKm
+          refined.distanceKm >= minLoopKm &&
+          !needsMoreLoopVariants()
         ) {
           variantDone = true;
           break;
@@ -1745,14 +1798,19 @@ async function generateRouteWithEngine(
             (baseUrban ? MAX_SPUR_SHARE_RELAXED_URBAN : 0.06) &&
           metrics.backtrack <
             (baseUrban ? MAX_BACKTRACK_RELAXED_URBAN : 0.08) &&
-          refined.distanceKm >= minLoopKm
+          refined.distanceKm >= minLoopKm &&
+          !needsMoreLoopVariants()
         ) {
           variantDone = true;
           break;
         }
 
         // Already have a shippable best — don't burn more scale passes.
-        if (best && (si > 0 || Date.now() > deadlineMs - 25_000)) {
+        if (
+          best &&
+          (si > 0 || Date.now() > deadlineMs - 25_000) &&
+          !needsMoreLoopVariants()
+        ) {
           variantDone = true;
           break;
         }
@@ -1777,13 +1835,19 @@ async function generateRouteWithEngine(
           request.start,
           request.direction,
         ).distanceError <=
-          maxAcceptableDistanceError(request.distanceKm, false, baseUrban)
+          maxAcceptableDistanceError(request.distanceKm, false, baseUrban) &&
+        !needsMoreLoopVariants()
       ) {
         break;
       }
 
       // After first deliverable metro loop, stop hunting for a prettier one.
-      if (best && baseUrban && Date.now() > deadlineMs - 30_000) {
+      if (
+        best &&
+        baseUrban &&
+        Date.now() > deadlineMs - 30_000 &&
+        !needsMoreLoopVariants()
+      ) {
         break;
       }
     } catch (error) {
@@ -3047,31 +3111,131 @@ async function generateRouteWithEngine(
   // Always keep pruned geometry — restoring pre-prune reintroduces dead-end stubs.
   const output = finalized;
 
+  const primaryRoute = buildGeneratedRoute(request, output.coordinates, {
+    placeholder: false,
+    elevationGainM: output.elevationGainM,
+    segments: output.segments,
+    mapGeojson: output.mapGeojson ?? undefined,
+    brouterMessages: output.brouterMessages,
+    // Same as rescue path: approach corridor mirror must not hard-fail ship.
+    skipMirrorGate: approachMode,
+    generationQuality: usedRelaxedFallback
+      ? {
+          mode: "relaxed",
+          warnings: buildDegradedWarnings(
+            request,
+            output,
+            approachMode,
+            baseUrban,
+          ),
+          requestedDistanceKm: request.distanceKm,
+          actualDistanceKm: output.distanceKm,
+        }
+      : undefined,
+  });
+
+  const alternateRoutes = buildAlternateLoopRoutes({
+    request,
+    primary: primaryRoute,
+    primaryCoordinates: output.coordinates,
+    acceptedPool,
+    desiredLoopVariants,
+    approachMode,
+    baseUrban,
+  });
+
   return {
-    route: buildGeneratedRoute(request, output.coordinates, {
-      placeholder: false,
-      elevationGainM: output.elevationGainM,
-      segments: output.segments,
-      mapGeojson: output.mapGeojson ?? undefined,
-      brouterMessages: output.brouterMessages,
-      // Same as rescue path: approach corridor mirror must not hard-fail ship.
-      skipMirrorGate: approachMode,
-      generationQuality: usedRelaxedFallback
-        ? {
-            mode: "relaxed",
-            warnings: buildDegradedWarnings(
-              request,
-              output,
-              approachMode,
-              baseUrban,
-            ),
-            requestedDistanceKm: request.distanceKm,
-            actualDistanceKm: output.distanceKm,
-          }
-        : undefined,
-    }),
+    route: primaryRoute,
     loopSegments: output.segments,
+    variants:
+      alternateRoutes.length > 0
+        ? [primaryRoute, ...alternateRoutes]
+        : undefined,
   };
+}
+
+function buildAlternateLoopRoutes(args: {
+  request: GenerateRouteRequest;
+  primary: GeneratedRoute;
+  primaryCoordinates: [number, number][];
+  acceptedPool: { result: RoutedLoopResult; quality: number }[];
+  desiredLoopVariants: 1 | 2 | 3;
+  approachMode: boolean;
+  baseUrban: boolean;
+}): GeneratedRoute[] {
+  const {
+    request,
+    primaryCoordinates,
+    acceptedPool,
+    desiredLoopVariants,
+    approachMode,
+    baseUrban,
+  } = args;
+  if (desiredLoopVariants <= 1 || acceptedPool.length === 0) return [];
+
+  const diverse = pickDiverseLoopCandidates(
+    acceptedPool.map((entry) => ({
+      coordinates: entry.result.coordinates,
+      quality: entry.quality,
+      payload: entry.result,
+    })),
+    desiredLoopVariants,
+  );
+
+  const alternates: GeneratedRoute[] = [];
+  for (const candidate of diverse) {
+    if (alternates.length >= desiredLoopVariants - 1) break;
+    if (
+      corridorCellOverlap(primaryCoordinates, candidate.coordinates) > 0.42
+    ) {
+      continue;
+    }
+    try {
+      const finalizedAlt = finalizeLoopWithoutSpurs(
+        candidate.payload,
+        request.start,
+        request.distanceKm,
+        request.direction,
+      );
+      if (
+        exceedsMirrorBudget(
+          finalizedAlt.coordinates,
+          request.distanceKm,
+          request.start,
+          approachMode,
+        )
+      ) {
+        continue;
+      }
+      if (
+        !passesDeliverableGeometry(finalizedAlt.coordinates, {
+          targetDistanceKm: request.distanceKm,
+          actualDistanceKm: finalizedAlt.distanceKm,
+          start: request.start,
+          direction: request.direction,
+          approachMode,
+          urban: baseUrban,
+          relaxed: true,
+          preferQuiet: Boolean(request.preferQuietRoutes),
+        })
+      ) {
+        continue;
+      }
+      alternates.push(
+        buildGeneratedRoute(request, finalizedAlt.coordinates, {
+          placeholder: false,
+          elevationGainM: finalizedAlt.elevationGainM,
+          segments: finalizedAlt.segments,
+          mapGeojson: finalizedAlt.mapGeojson ?? undefined,
+          brouterMessages: finalizedAlt.brouterMessages,
+          skipMirrorGate: approachMode,
+        }),
+      );
+    } catch {
+      // Skip undeliverable alternate — primary still ships.
+    }
+  }
+  return alternates;
 }
 
 function generatePlaceholderRoute(
@@ -3080,6 +3244,7 @@ function generatePlaceholderRoute(
 ): {
   route: GeneratedRoute;
   loopSegments: { tags: OsmTags; distanceM: number }[];
+  variants?: GeneratedRoute[];
 } {
   reportProgress(options?.onProgress, {
     phase: "routing",
@@ -3765,6 +3930,7 @@ async function generateLoopRoute(
 ): Promise<{
   route: GeneratedRoute;
   loopSegments: { tags: OsmTags; distanceM: number }[];
+  variants?: GeneratedRoute[];
 }> {
   const preference = routingEnginePreference();
 
@@ -3918,21 +4084,24 @@ async function polishGeneratedRouteGeometry(
 export async function generateRoute(
   request: GenerateRouteRequest,
   options?: GenerateRouteOptions,
-): Promise<GeneratedRoute> {
+): Promise<GenerateRouteResult> {
   if (request.planningMode === "waypoints") {
     const absoluteDeadlineMs =
       options?.absoluteDeadlineMs ?? Date.now() + ABSOLUTE_GENERATION_WALL_MS;
     const scopedOptions: GenerateRouteOptions = {
       ...options,
       absoluteDeadlineMs,
+      desiredLoopVariants: 1,
     };
     const generated = await generateWaypointsLoop(request, scopedOptions);
-    return polishGeneratedRouteGeometry(
-      request,
-      generated,
-      options?.onProgress,
-      absoluteDeadlineMs,
-    );
+    return {
+      route: await polishGeneratedRouteGeometry(
+        request,
+        generated,
+        options?.onProgress,
+        absoluteDeadlineMs,
+      ),
+    };
   }
 
   if (request.viaPoints?.length) {
@@ -3953,11 +4122,17 @@ export async function generateRoute(
     }
   }
 
+  const desiredLoopVariants =
+    request.approachEnabled
+      ? 1
+      : normalizeLoopVariantCount(request.loopVariantCount);
+
   const absoluteDeadlineMs =
     options?.absoluteDeadlineMs ?? Date.now() + ABSOLUTE_GENERATION_WALL_MS;
   const scopedOptions: GenerateRouteOptions = {
     ...options,
     absoluteDeadlineMs,
+    desiredLoopVariants,
   };
 
   // Approach already pays for a long corridor fetch — prefer one solid attempt
@@ -3965,6 +4140,7 @@ export async function generateRoute(
   const maxNetworkAttempts = 2;
   let lastNetworkError: Error | null = null;
   let lastGenerated: GeneratedRoute | null = null;
+  let lastVariants: GeneratedRoute[] | undefined;
 
   for (let attempt = 1; attempt <= maxNetworkAttempts; attempt++) {
     // Not enough clock for another full search — ship what we have.
@@ -3976,10 +4152,16 @@ export async function generateRoute(
     }
 
     let generated: GeneratedRoute;
+    let variants: GeneratedRoute[] | undefined;
     try {
-      generated = request.approachEnabled
-        ? await generateRouteWithApproach(request, scopedOptions)
-        : (await generateLoopRoute(request, scopedOptions)).route;
+      if (request.approachEnabled) {
+        generated = await generateRouteWithApproach(request, scopedOptions);
+        variants = undefined;
+      } else {
+        const loop = await generateLoopRoute(request, scopedOptions);
+        generated = loop.route;
+        variants = loop.variants;
+      }
     } catch (error) {
       lastNetworkError =
         error instanceof Error ? error : new Error("Route generation failed");
@@ -4001,9 +4183,10 @@ export async function generateRoute(
       throw lastNetworkError;
     }
     lastGenerated = generated;
+    lastVariants = variants;
 
     if (generated.geojson.properties.placeholder === true) {
-      return generated;
+      return { route: generated };
     }
 
     // Out of time for repair/assert — ship now rather than abort at 3 minutes.
@@ -4018,12 +4201,20 @@ export async function generateRoute(
         requestedDistanceKm: existing?.requestedDistanceKm,
         actualDistanceKm: existing?.actualDistanceKm,
       };
-      return polishGeneratedRouteGeometry(
-        request,
-        generated,
-        options?.onProgress,
-        absoluteDeadlineMs,
-      );
+      return {
+        route: await polishGeneratedRouteGeometry(
+          request,
+          generated,
+          options?.onProgress,
+          absoluteDeadlineMs,
+        ),
+        variants: await polishVariantRoutes(
+          request,
+          variants,
+          options?.onProgress,
+          absoluteDeadlineMs,
+        ),
+      };
     }
 
     try {
@@ -4066,12 +4257,24 @@ export async function generateRoute(
         request,
         generated.geojson.geometry.coordinates as [number, number][],
       );
-      return polishGeneratedRouteGeometry(
+      const polished = await polishGeneratedRouteGeometry(
         request,
         generated,
         options?.onProgress,
         absoluteDeadlineMs,
       );
+      const polishedVariants = await polishVariantRoutes(
+        request,
+        variants,
+        options?.onProgress,
+        absoluteDeadlineMs,
+      );
+      return {
+        route: polished,
+        variants: polishedVariants
+          ? [polished, ...polishedVariants.slice(1)]
+          : undefined,
+      };
     } catch (error) {
       lastNetworkError =
         error instanceof Error ? error : new Error("Route left road network");
@@ -4105,16 +4308,57 @@ export async function generateRoute(
       requestedDistanceKm: existing?.requestedDistanceKm,
       actualDistanceKm: existing?.actualDistanceKm,
     };
-    return polishGeneratedRouteGeometry(
+    const polished = await polishGeneratedRouteGeometry(
       request,
       lastGenerated,
       options?.onProgress,
       absoluteDeadlineMs,
     );
+    const polishedVariants = await polishVariantRoutes(
+      request,
+      lastVariants,
+      options?.onProgress,
+      absoluteDeadlineMs,
+    );
+    return {
+      route: polished,
+      variants: polishedVariants
+        ? [polished, ...polishedVariants.slice(1)]
+        : undefined,
+    };
   }
 
   if (lastNetworkError) {
     throw lastNetworkError;
   }
   throw new Error("Nie udało się wygenerować trasy na sieci dróg.");
+}
+
+async function polishVariantRoutes(
+  request: GenerateRouteRequest,
+  variants: GeneratedRoute[] | undefined,
+  onProgress: GenerateRouteOptions["onProgress"],
+  absoluteDeadlineMs: number,
+): Promise<GeneratedRoute[] | undefined> {
+  if (!variants || variants.length < 2) return undefined;
+  const polished: GeneratedRoute[] = [];
+  for (const variant of variants) {
+    if (msLeftOnAbsoluteDeadline({ absoluteDeadlineMs }) < 8_000) {
+      polished.push(variant);
+      continue;
+    }
+    try {
+      polished.push(
+        await polishGeneratedRouteGeometry(
+          request,
+          variant,
+          onProgress,
+          absoluteDeadlineMs,
+        ),
+      );
+    } catch {
+      polished.push(variant);
+    }
+  }
+  return polished.length >= 2 ? polished : undefined;
 }

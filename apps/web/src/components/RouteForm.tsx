@@ -25,6 +25,8 @@ export interface RouteFormValues {
   preferQuietRoutes: boolean;
   approachEnabled: boolean;
   approachDistanceKm: number;
+  /** Loop mode only — how many distinct loops to compare after generate. */
+  loopVariantCount: 1 | 3;
   lat: number;
   lng: number;
   viaPoints: RouteViaPoint[];
@@ -631,6 +633,42 @@ export function RouteForm({
           </label>
 
           {!waypointsMode ? (
+            <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3">
+              <p className="text-sm font-medium text-zinc-200">Warianty pętli</p>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                {values.approachEnabled
+                  ? "Przy dojeździe do pętli generujemy jeden wariant."
+                  : "Więcej wariantów = dłuższe generowanie."}
+              </p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {(
+                  [
+                    { value: 1 as const, label: "1 wariant" },
+                    { value: 3 as const, label: "3 warianty" },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    disabled={values.approachEnabled && option.value !== 1}
+                    onClick={() =>
+                      onChange({ ...values, loopVariantCount: option.value })
+                    }
+                    className={`rounded-lg border px-2 py-2 text-sm transition ${
+                      (values.approachEnabled ? 1 : values.loopVariantCount) ===
+                      option.value
+                        ? "border-amber-500 bg-amber-500/10 text-amber-300"
+                        : "border-zinc-700 bg-zinc-950 text-zinc-300 hover:border-amber-700/40 disabled:cursor-not-allowed disabled:opacity-40"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {!waypointsMode ? (
             <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3 transition hover:border-amber-800/45">
               <input
                 type="checkbox"
@@ -639,6 +677,9 @@ export function RouteForm({
                   onChange({
                     ...values,
                     approachEnabled: event.target.checked,
+                    loopVariantCount: event.target.checked
+                      ? 1
+                      : values.loopVariantCount,
                   })
                 }
                 className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-amber-600 focus:ring-amber-500"
