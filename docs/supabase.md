@@ -8,7 +8,7 @@
 
 ## Rola Supabase
 
-Supabase służy **tylko aplikacji** — auth, zapis tras (`public.routes`), metadata. **OSM i routing** → BRouter (lokalnie / osobny serwer).
+Supabase służy **tylko aplikacji** — auth, zapis tras (`public.routes`), zapisane starty (`public.start_presets`), metadata. **OSM i routing** → BRouter (lokalnie / osobny serwer).
 
 Logowanie Google/Apple: [docs/auth.md](./auth.md).  
 Panel admina: [docs/admin.md](./admin.md).
@@ -17,6 +17,7 @@ Panel admina: [docs/admin.md](./admin.md).
 
 - PostGIS, pgRouting, hstore (pgRouting opcjonalnie na przyszłość)
 - `public.routes` z `user_id` → `auth.users` (historia per konto, RLS `auth.uid()`)
+- `public.start_presets` — ulubione punkty startu (label + lat/lng, RLS)
 - `loopforge.import_status`, puste `loopforge.ways`
 - Orphan trasy bez właściciela skasowane przy migracji `routes_user_owned` (2026-07-29)
 

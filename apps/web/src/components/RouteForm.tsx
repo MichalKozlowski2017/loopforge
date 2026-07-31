@@ -12,6 +12,7 @@ import { getRideProfileOptions } from "@loopforge/osm-types";
 import { MAX_WAYPOINT_MODE_POINTS } from "@loopforge/generator/via-validation";
 import { DirectionCompass } from "@/components/DirectionCompass";
 import { LocationSearch } from "@/components/LocationSearch";
+import { StartPresetsBar } from "@/components/StartPresetsBar";
 import { ViaPointsEditor } from "@/components/ViaPointsEditor";
 
 export interface RouteFormValues {
@@ -326,6 +327,14 @@ export function RouteForm({
               lng={values.lng}
               onSelect={(location) =>
                 onChange({ ...values, lat: location.lat, lng: location.lng })
+              }
+            />
+
+            <StartPresetsBar
+              lat={values.lat}
+              lng={values.lng}
+              onApply={(preset) =>
+                onChange({ ...values, lat: preset.lat, lng: preset.lng })
               }
             />
 
